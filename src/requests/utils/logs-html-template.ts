@@ -615,7 +615,7 @@ export function generateLogsHtml(permitNo: string, logs: any[], images: any[]): 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script>
   function downloadPDF() {
-    window.location.href = "/m3south/requests/logs-design/${permitNo}/pdf";
+    window.location.href = "/development/m3south/requests/logs-design/${permitNo}/pdf";
   }
 </script>
 </body>

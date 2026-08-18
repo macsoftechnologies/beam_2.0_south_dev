@@ -932,7 +932,7 @@ export function generatePermitHtml(data: any): string {
       const filename = rawPath ? rawPath.split('/').pop().split('\\').pop() : 'Attachment';
       const fileId = file.ramsFileId !== undefined ? file.ramsFileId : (file.rams_file_id !== undefined ? file.rams_file_id : file.id);
       return `
-            <a href="/m3south/requests/files/${fileId}" target="_blank" download class="attachment-box">
+            <a href="/development/m3south/requests/files/${fileId}" target="_blank" download class="attachment-box">
               <div class="attachment-icon-wrap">
                 <svg class="attachment-file-icon text-danger" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -2918,7 +2918,7 @@ export function generatePermitHtml(data: any): string {
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     function test() {
-      window.location.href = "/m3south/requests/permit-design/${data.PermitNo}/pdf";
+      window.location.href = "/development/m3south/requests/permit-design/${data.PermitNo}/pdf";
     }
   </script>
 </body>
