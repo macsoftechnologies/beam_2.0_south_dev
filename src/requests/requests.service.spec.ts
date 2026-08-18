@@ -121,7 +121,7 @@ describe('RequestsService - Validation and Zone Logic', () => {
 
       await service['checkZoneStatusAndAssignPermitUnder'](dto);
       expect(dto.permit_under).toBe('Construction');
-      expect(dto.Zone_Id).toBe(3);
+      expect(dto.Zone_Id).toBe('3');
     });
 
     it('should assign permit_under to Commissioning if status is C', async () => {
@@ -130,7 +130,7 @@ describe('RequestsService - Validation and Zone Logic', () => {
 
       await service['checkZoneStatusAndAssignPermitUnder'](dto);
       expect(dto.permit_under).toBe('Commissioning');
-      expect(dto.Zone_Id).toBe(4);
+      expect(dto.Zone_Id).toBe('4');
     });
 
     it('should ignore zone ID if it is 0 or non-positive', async () => {
@@ -390,7 +390,7 @@ describe('RequestsService - Validation and Zone Logic', () => {
       ).rejects.toThrow(/Cannot change status from terminal state/);
     });
 
-    it('should restrict contractor from approving/pre-approving/rejecting/cancelling', async () => {
+    it('should restrict contractor from approving/pre-approving', async () => {
       mockRequest.requestStatus = 'draft';
       // Contractor (Subcontractor) user
       mockUserRepo.findOne.mockResolvedValue({ id: 2, userType: 'Subcontractor' });
@@ -404,7 +404,7 @@ describe('RequestsService - Validation and Zone Logic', () => {
       ).rejects.toThrow(/Contractor is not authorized/);
     });
 
-    it('should allow contractor to change draft <-> hold, and approved -> opened -> closed', async () => {
+    it('should allow contractor to change draft <-> hold, approved -> opened -> closed, and cancel/reject active permits', async () => {
       mockUserRepo.findOne.mockResolvedValue({ id: 2, userType: 'Subcontractor' });
       
       // draft -> hold (allowed)
@@ -424,6 +424,24 @@ describe('RequestsService - Validation and Zone Logic', () => {
       await expect(
         service['validateStatusTransitionAndRole'](mockRequest, 'closed', 2),
       ).resolves.not.toThrow();
+
+      // approved -> cancelled (allowed)
+      mockRequest.requestStatus = 'approved';
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'cancelled', 2),
+      ).resolves.not.toThrow();
+
+      // draft -> rejected (allowed for contractor)
+      mockRequest.requestStatus = 'draft';
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 2),
+      ).resolves.not.toThrow();
+
+      // approved -> rejected (restricted for contractor, allowed only for final approving dept/admin)
+      mockRequest.requestStatus = 'approved';
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 2),
+      ).rejects.toThrow(/Contractor is not authorized/);
     });
 
     it('should validate department specific pre-approval and final approval rules', async () => {

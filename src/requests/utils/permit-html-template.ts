@@ -394,48 +394,50 @@ export function generatePermitHtml(data: any): string {
     });
   }
 
-  // Branch for Rejected vs Approved
+  // Check Approved (include if permit was approved at any point, or if currently approved/opened/closed)
+  if (
+    logApproved ||
+    (requestStatus.toLowerCase() === 'approved' && !logRejected && !logCancelled)
+  ) {
+    trackingSteps.push({
+      label: 'Approved',
+      log: logApproved || (requestStatus.toLowerCase() === 'approved' ? { createdTime: new Date(), user: { username: 'System' } } : undefined),
+      iconType: 'approved',
+    });
+  }
+
+  // Check terminal or progress steps after Approval / Pre-Approval
   if (logRejected || requestStatus.toLowerCase() === 'rejected') {
     trackingSteps.push({
       label: 'Rejected',
       log: logRejected,
       iconType: 'rejected',
     });
-  } else {
-    // Approved
+  } else if (
+    logCancelled ||
+    requestStatus.toLowerCase() === 'cancelled' ||
+    requestStatus.toLowerCase() === 'auto-cancelled'
+  ) {
+    const isAutoCancelled =
+      requestStatus.toLowerCase() === 'auto-cancelled' ||
+      (logCancelled && Number(logCancelled.system) === 1);
     trackingSteps.push({
-      label: 'Approved',
-      log: logApproved,
-      iconType: 'approved',
+      label: isAutoCancelled ? 'Auto-Cancelled' : 'Cancelled',
+      log: logCancelled,
+      iconType: 'cancelled',
     });
-
-    // Check if Cancelled after approved
-    if (
-      logCancelled ||
-      requestStatus.toLowerCase() === 'cancelled' ||
-      requestStatus.toLowerCase() === 'auto-cancelled'
-    ) {
-      const isAutoCancelled =
-        requestStatus.toLowerCase() === 'auto-cancelled' ||
-        (logCancelled && Number(logCancelled.system) === 1);
-      trackingSteps.push({
-        label: isAutoCancelled ? 'Auto-Cancelled' : 'Cancelled',
-        log: logCancelled,
-        iconType: 'cancelled',
-      });
-    } else {
-      // Standard flow: Opened -> Closed
-      trackingSteps.push({
-        label: 'Opened',
-        log: logOpened,
-        iconType: 'opened',
-      });
-      trackingSteps.push({
-        label: 'Closed',
-        log: logClosed,
-        iconType: 'closed',
-      });
-    }
+  } else {
+    // Standard flow: Opened -> Closed
+    trackingSteps.push({
+      label: 'Opened',
+      log: logOpened,
+      iconType: 'opened',
+    });
+    trackingSteps.push({
+      label: 'Closed',
+      log: logClosed,
+      iconType: 'closed',
+    });
   }
 
   // Find active step index: the last step in the list that has a log record
