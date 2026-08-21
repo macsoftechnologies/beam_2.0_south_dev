@@ -76,10 +76,8 @@ export class CreateByCountDto {
   @IsOptional()
   Building_Id?: number;
 
-  @Type(() => Number)
-  @IsNumber()
   @IsOptional()
-  Floor_Id?: number;
+  Floor_Id?: any;
 
   @IsString()
   @IsOptional()

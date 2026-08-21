@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, Brackets, DeepPartial } from 'typeorm';
@@ -52,7 +52,7 @@ import { CreateByCountDto } from './dtos/create-by-count.dto';
 import { PlanSearchDto } from './dtos/planssearch.dto';
 
 @Injectable()
-export class RequestsService {
+export class RequestsService implements OnModuleInit {
   constructor(
     @InjectRepository(RequestEntity)
     private readonly requestRepo: Repository<RequestEntity>,
@@ -120,6 +120,14 @@ export class RequestsService {
     private readonly redisCacheService: RedisCacheService,
     private readonly notificationsService: NotificationsService,
   ) { }
+
+  async onModuleInit() {
+    try {
+      await this.requestRepo.query('ALTER TABLE requests MODIFY COLUMN Floor_Id VARCHAR(255) NULL');
+    } catch (err) {
+      // Ignored if column already modified or table not ready
+    }
+  }
 
   private areEqual(val1: any, val2: any): boolean {
     if (val1 === val2) return true;
@@ -501,7 +509,7 @@ export class RequestsService {
       assignStartDate: dto.Assign_Start_Date,
       assignEndDate: dto.Assign_End_Date,
       buildingId: dto.Building_Id,
-      floorId: dto.Floor_Id,
+      floorId: dto.Floor_Id !== undefined && dto.Floor_Id !== null ? String(dto.Floor_Id) : undefined,
       plansId: dto.Plans_Id,
       zoneId: Array.isArray(dto.Zone_Id)
         ? dto.Zone_Id.join(',')
@@ -2317,7 +2325,7 @@ export class RequestsService {
 
     await this.redisCacheService.deleteByPattern('requests:*');
 
-    const message = `Successfully updated permits: [${successfulUpdates.join(', ')}].` +
+    const message = `Successfully updated permits: [${successfulUpdates.join(', ')}].` + 
       (failedUpdates.length > 0 ? ` Failed/Skipped: ${failedUpdates.map((f) => `ID ${f.id} (${f.error})`).join('; ')}` : '');
 
     return {
@@ -2496,7 +2504,7 @@ export class RequestsService {
             if (base) floorNamesSet.add(base);
           }
         });
-      } catch (e) { }
+      } catch (e) {}
     }
 
     if (nameTerms.length > 0) {
@@ -2530,7 +2538,7 @@ export class RequestsService {
               if (base) floorNamesSet.add(base);
             }
           });
-        } catch (e) { }
+        } catch (e) {}
       }
     }
 
@@ -2593,7 +2601,7 @@ export class RequestsService {
             if (z.id) resolvedZoneIdsSet.add(z.id);
             if (z.zone) resolvedZoneNamesSet.add(z.zone.trim());
           });
-        } catch (e) { }
+        } catch (e) {}
       }
     }
 
@@ -2603,7 +2611,7 @@ export class RequestsService {
         foundZones.forEach((z) => {
           if (z.zone) resolvedZoneNamesSet.add(z.zone.trim());
         });
-      } catch (e) { }
+      } catch (e) {}
     }
 
     const selectedZoneIds = Array.from(resolvedZoneIdsSet);
@@ -2691,7 +2699,7 @@ export class RequestsService {
           try {
             const room = await this.roomRepo.findOne({ where: { room_id: id } });
             if (room && room.room_name) terms.add(room.room_name.trim());
-          } catch { }
+          } catch {}
         }
       }
     }
@@ -2707,7 +2715,7 @@ export class RequestsService {
             terms.add(String(r.room_id));
             if (r && r.room_name) terms.add(r.room_name.trim());
           });
-        } catch { }
+        } catch {}
       }
     }
 
@@ -3427,484 +3435,484 @@ export class RequestsService {
 
     const subContractorId = await this.getSubcontractorIdForUser(loggedInUserId);
     // --- Week parsing ---
-    let weekStart: string | null = null;
-    let weekEnd: string | null = null;
-    let weekValue: string | null = null;
+        let weekStart: string | null = null;
+        let weekEnd: string | null = null;
+        let weekValue: string | null = null;
 
-    if (searchDto.Week) {
-      const dateParts = searchDto.Week.split('  -  ');
-      weekStart = dateParts[0] ? dateParts[0].trim() : null;
-      weekEnd = dateParts[1] ? dateParts[1].trim() : null;
-      weekValue = dateParts[2] ? dateParts[2].trim() : null;
-    }
-
-    const qb = this.requestRepo
-      .createQueryBuilder('requests')
-      .leftJoinAndMapOne('requests.chemical', RequestChemicalHazard, 'chemical', 'requests.id = chemical.request_id')
-      .leftJoinAndMapOne('requests.confined', RequestConfined, 'confined', 'requests.id = confined.request_id')
-      .leftJoinAndMapOne('requests.electrical', RequestElectrical, 'electrical', 'requests.id = electrical.request_id')
-      .leftJoinAndMapOne('requests.energisingElectrical', RequestEnergisingElectrical, 'energisingElectrical', 'requests.id = energisingElectrical.request_id')
-      .leftJoinAndMapOne('requests.energisingMechanical', RequestEnergisingMechanical, 'energisingMechanical', 'requests.id = energisingMechanical.request_id')
-      .leftJoinAndMapOne('requests.excavation', RequestExcavation, 'excavation', 'requests.id = excavation.request_id')
-      .leftJoinAndMapOne('requests.extraMisc', RequestExtraMisc, 'extraMisc', 'requests.id = extraMisc.request_id')
-      .leftJoinAndMapOne('requests.fireHotwork', RequestFireHotwork, 'fireHotwork', 'requests.id = fireHotwork.request_id')
-      .leftJoinAndMapOne('requests.general', RequestGeneral, 'general', 'requests.id = general.request_id')
-      .leftJoinAndMapOne('requests.height', RequestHeight, 'height', 'requests.id = height.request_id')
-      .leftJoinAndMapOne('requests.lifting', RequestLifting, 'lifting', 'requests.id = lifting.request_id')
-      .leftJoinAndMapOne('requests.ppe', RequestPpe, 'ppe', 'requests.id = ppe.request_id')
-      .leftJoinAndMapOne('requests.pressureTesting', RequestPressureTesting, 'pressureTesting', 'requests.id = pressureTesting.request_id')
-      .leftJoinAndMapOne('requests.building', Building, 'building', 'requests.Building_Id = building.build_id')
-      .leftJoinAndMapOne('requests.floor', Floor, 'floor', 'requests.Floor_Id = floor.fl_id')
-      .leftJoinAndMapOne('requests.zone', Zone, 'zone', 'requests.Zone_Id = zone.id')
-      .leftJoinAndMapOne('requests.subcontractor', Subcontractor, 'subcontractor', 'requests.Sub_Contractor_Id = subcontractor.id')
-      .leftJoinAndMapOne('requests.activityRelation', Activity, 'activityRelation', 'requests.Type_Of_Activity_Id = activityRelation.id')
-      .where('requests.status = :status', { status: 1 });
-
-    // --- Date Filters ---
-    if (searchDto.Date) {
-      qb.andWhere('DATE(requests.Working_Date) = :date', { date: searchDto.Date });
-    }
-    if (searchDto.from_date && searchDto.to_date) {
-      qb.andWhere('DATE(requests.Working_Date) BETWEEN :fromDate AND :toDate', {
-        fromDate: searchDto.from_date,
-        toDate: searchDto.to_date,
-      });
-    } else if (searchDto.from_date) {
-      qb.andWhere('DATE(requests.Working_Date) >= :fromDate', {
-        fromDate: searchDto.from_date,
-      });
-    } else if (searchDto.to_date) {
-      qb.andWhere('DATE(requests.Working_Date) <= :toDate', {
-        toDate: searchDto.to_date,
-      });
-    }
-
-    // Only apply Year/Month if Week is NOT provided
-    if (!searchDto.Week) {
-      if (searchDto.Year) {
-        qb.andWhere('YEAR(requests.Working_Date) = :year', { year: searchDto.Year });
-      }
-      if (searchDto.Month) {
-        qb.andWhere('MONTH(requests.Working_Date) = :month', { month: searchDto.Month });
-      }
-    }
-
-    // Week range filter
-    if (weekStart && weekEnd) {
-      qb.andWhere('DATE(requests.Working_Date) BETWEEN :weekStart AND :weekEnd', {
-        weekStart,
-        weekEnd,
-      });
-    }
-
-    // --- Other Filters ---
-    if (searchDto.Site_Id && Number(searchDto.Site_Id) !== 0) {
-      qb.andWhere('requests.Site_Id = :siteId', { siteId: searchDto.Site_Id });
-    }
-    const planBuildingIds = this.parseIdList(searchDto.Building_Id);
-    if (planBuildingIds.length > 1) {
-      qb.andWhere('requests.Building_Id IN (:...planBuildingIds)', { planBuildingIds });
-    } else if (planBuildingIds.length === 1) {
-      qb.andWhere('requests.Building_Id = :buildingId', { buildingId: planBuildingIds[0] });
-    }
-    const planSubconIds = this.parseIdList(searchDto.Sub_Contractor_Id);
-    if (planSubconIds.length > 1) {
-      qb.andWhere('requests.Sub_Contractor_Id IN (:...planSubconIds)', { planSubconIds });
-    } else if (planSubconIds.length === 1) {
-      qb.andWhere('requests.Sub_Contractor_Id = :subContractorId', { subContractorId: planSubconIds[0] });
-    } else if (subContractorId) {
-      qb.andWhere('requests.Sub_Contractor_Id = :subContractorId', { subContractorId });
-    }
-    // Level / Floor filtering (supports single or multi-level, floor IDs or floor names, across old & new DB records)
-    const planLevelRes = await this.resolveLevelFilters(searchDto.Floor_Id, searchDto.Room_Type, searchDto.Building_Id);
-    if (planLevelRes) {
-      const { resolvedFloorIds, resolvedFloorNames, rawTerms } = planLevelRes;
-      const allTerms = Array.from(new Set([...resolvedFloorNames, ...rawTerms]));
-      if (resolvedFloorIds.length > 0 || allTerms.length > 0) {
-        qb.andWhere(
-          new Brackets((levelQb) => {
-            let hasCondition = false;
-            if (resolvedFloorIds.length > 0) {
-              levelQb.where('requests.Floor_Id IN (:...resolvedFloorIds)', { resolvedFloorIds });
-              hasCondition = true;
-            }
-            allTerms.forEach((fTerm, idx) => {
-              const paramName = `fTerm_${idx}`;
-              if (hasCondition) {
-                levelQb.orWhere(`requests.Room_Type LIKE :${paramName}`, { [paramName]: `%${fTerm}%` });
-              } else {
-                levelQb.where(`requests.Room_Type LIKE :${paramName}`, { [paramName]: `%${fTerm}%` });
-                hasCondition = true;
-              }
-            });
-          }),
-        );
-      } else {
-        qb.andWhere('1 = 0');
-      }
-    }
-    if (searchDto.start_time) {
-      qb.andWhere('requests.Start_Time = :startTime', { startTime: searchDto.start_time });
-    }
-    if (searchDto.end_time) {
-      qb.andWhere('requests.End_Time = :endTime', { endTime: searchDto.end_time });
-    }
-    const planRoomSearchVal = searchDto.Room_Nos !== undefined && searchDto.Room_Nos !== null && String(searchDto.Room_Nos).trim() !== ''
-      ? String(searchDto.Room_Nos)
-      : (searchDto.area !== undefined && searchDto.area !== null && String(searchDto.area).trim() !== '' ? String(searchDto.area) : '');
-
-    if (planRoomSearchVal !== '' && planRoomSearchVal !== '0') {
-      const roomTerms = await this.resolveRoomSearchTerms(planRoomSearchVal);
-      if (roomTerms && roomTerms.length > 0) {
-        const escapedTerms = roomTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        const regexPattern = `(^|,[[:space:]]*)(${escapedTerms.join('|')})([[:space:]]*,|$)`;
-        qb.andWhere(`requests.Room_Nos REGEXP :roomRegex`, { roomRegex: regexPattern });
-      } else {
-        qb.andWhere('1 = 0');
-      }
-    }
-    if (searchDto.permit_type) {
-      qb.andWhere('requests.permit_type = :permitType', { permitType: searchDto.permit_type });
-    }
-    if (searchDto.permit_under) {
-      qb.andWhere('requests.permit_under = :permitUnder', { permitUnder: searchDto.permit_under });
-    }
-    if (
-      searchDto.Type_Of_Activity_Id !== undefined &&
-      searchDto.Type_Of_Activity_Id !== null &&
-      Number(String(searchDto.Type_Of_Activity_Id).replace(/'/g, '').trim()) !== 0
-    ) {
-      qb.andWhere('requests.Type_Of_Activity_Id = :typeOfActivityId', {
-        typeOfActivityId: Number(String(searchDto.Type_Of_Activity_Id).replace(/'/g, '').trim()),
-      });
-    }
-    if (searchDto.PermitNo) {
-      qb.andWhere('requests.PermitNo LIKE :permitNo', {
-        permitNo: `%${searchDto.PermitNo}%`,
-      });
-    }
-    if (searchDto.Activity) {
-      qb.andWhere('requests.Activity LIKE :activityName', {
-        activityName: `%${searchDto.Activity}%`,
-      });
-    }
-    if (searchDto.night_shift !== undefined && searchDto.night_shift !== null && String(searchDto.night_shift).trim() !== '') {
-      const nsVal = String(searchDto.night_shift).trim();
-      if (nsVal === '1' || nsVal === 'true') {
-        qb.andWhere('(requests.night_shift = :nsOne OR requests.night_shift = 1)', { nsOne: '1' });
-      } else if (nsVal === '0' || nsVal === 'false') {
-        qb.andWhere(
-          '(requests.night_shift = :nsZero OR requests.night_shift = 0 OR requests.night_shift IS NULL OR requests.night_shift = :nsEmpty)',
-          { nsZero: '0', nsEmpty: '' },
-        );
-      }
-    }
-    if (searchDto.new_date) {
-      qb.andWhere('requests.new_date = :newDate', { newDate: searchDto.new_date });
-    }
-    if (searchDto.new_end_time) {
-      qb.andWhere('requests.new_end_time = :newEndTime', { newEndTime: searchDto.new_end_time });
-    }
-    if (
-      searchDto.hras !== undefined &&
-      searchDto.hras !== null &&
-      String(searchDto.hras).trim() !== ''
-    ) {
-      const hrasVal = Number(searchDto.hras);
-      if (hrasVal === 0) {
-        qb.andWhere(
-          '(fireHotwork.Hot_work IS NULL OR fireHotwork.Hot_work = 0 OR fireHotwork.Hot_work = :zeroStr) ' +
-          'AND (electrical.working_on_electrical_system IS NULL OR electrical.working_on_electrical_system = 0 OR electrical.working_on_electrical_system = :zeroStr) ' +
-          'AND (chemical.working_hazardious_substen IS NULL OR chemical.working_hazardious_substen = 0 OR chemical.working_hazardious_substen = :zeroStr) ' +
-          'AND (pressureTesting.pressure_testing_of_equipment IS NULL OR pressureTesting.pressure_testing_of_equipment = 0 OR pressureTesting.pressure_testing_of_equipment = :zeroStr) ' +
-          'AND (height.working_at_height IS NULL OR height.working_at_height = 0 OR height.working_at_height = :zeroStr) ' +
-          'AND (confined.working_confined_spaces IS NULL OR confined.working_confined_spaces = 0 OR confined.working_confined_spaces = :zeroStr) ' +
-          'AND (excavation.excavation_works IS NULL OR excavation.excavation_works = 0 OR excavation.excavation_works = :zeroStr) ' +
-          'AND (lifting.using_cranes_or_lifting IS NULL OR lifting.using_cranes_or_lifting = 0 OR lifting.using_cranes_or_lifting = :zeroStr) ' +
-          'AND (energisingElectrical.power_on IS NULL OR energisingElectrical.power_on = 0 OR energisingElectrical.power_on = :zeroStr) ' +
-          'AND (energisingMechanical.pressurization IS NULL OR energisingMechanical.pressurization = 0 OR energisingMechanical.pressurization = :zeroStr)',
-          { zeroStr: '0' }
-        );
-      } else if (hrasVal === 1) {
-        const hasSpecificHraFilter = [
-          searchDto.Hot_work, searchDto.working_on_electrical_system, searchDto.working_hazardious_substen,
-          searchDto.using_cranes_or_lifting, searchDto.pressure_tesing_of_equipment, searchDto.working_at_height,
-          searchDto.working_confined_spaces, searchDto.power_on, searchDto.pressurization, searchDto.excavation_works
-        ].some(v => v !== undefined && v !== null && Number(v) === 1);
-
-        if (!hasSpecificHraFilter) {
-          qb.andWhere(
-            '(fireHotwork.Hot_work = 1 OR electrical.working_on_electrical_system = 1 OR ' +
-            'chemical.working_hazardious_substen = 1 OR pressureTesting.pressure_testing_of_equipment = 1 OR ' +
-            'height.working_at_height = 1 OR confined.working_confined_spaces = 1 OR ' +
-            'excavation.excavation_works = 1 OR lifting.using_cranes_or_lifting = 1 OR ' +
-            'energisingElectrical.power_on = 1 OR energisingMechanical.pressurization = 1)'
-          );
+        if (searchDto.Week) {
+          const dateParts = searchDto.Week.split('  -  ');
+          weekStart = dateParts[0] ? dateParts[0].trim() : null;
+          weekEnd = dateParts[1] ? dateParts[1].trim() : null;
+          weekValue = dateParts[2] ? dateParts[2].trim() : null;
         }
-      }
-    }
-    if (searchDto.Request_status) {
-      const rawStatus = String(searchDto.Request_status).replace(/'/g, '').trim();
-      const statusList = rawStatus
-        .split(',')
-        .map((s) => s.trim().replace(/^'|'$/g, ''))
-        .filter(Boolean);
 
-      if (statusList.length > 0) {
-        qb.andWhere(
-          new Brackets((statusQb) => {
-            statusList.forEach((st, idx) => {
-              const paramName = `reqPlanStatus_${idx}`;
-              const autoCancelMsgParam = `autoCancelPlanMsg_${idx}`;
-              if (st === 'Auto-Cancelled') {
-                const autoCancelCond = `(requests.Request_status = :${paramName} OR extraMisc.cancelReason = :${autoCancelMsgParam})`;
-                const params = {
-                  [paramName]: 'Auto-Cancelled',
-                  [autoCancelMsgParam]: 'Permit not opened so system cancelled automatically',
-                };
-                if (idx === 0) {
-                  statusQb.where(autoCancelCond, params);
-                } else {
-                  statusQb.orWhere(autoCancelCond, params);
-                }
-              } else if (st === 'Cancelled') {
-                const cancelCond = `(requests.Request_status = :${paramName} AND (extraMisc.cancelReason IS NULL OR extraMisc.cancelReason != :${autoCancelMsgParam}))`;
-                const params = {
-                  [paramName]: 'Cancelled',
-                  [autoCancelMsgParam]: 'Permit not opened so system cancelled automatically',
-                };
-                if (idx === 0) {
-                  statusQb.where(cancelCond, params);
-                } else {
-                  statusQb.orWhere(cancelCond, params);
-                }
-              } else {
-                const normalCond = `requests.Request_status = :${paramName}`;
-                const params = { [paramName]: st };
-                if (idx === 0) {
-                  statusQb.where(normalCond, params);
-                } else {
-                  statusQb.orWhere(normalCond, params);
-                }
-              }
-            });
-          }),
-        );
-      }
-    }
+        const qb = this.requestRepo
+          .createQueryBuilder('requests')
+          .leftJoinAndMapOne('requests.chemical', RequestChemicalHazard, 'chemical', 'requests.id = chemical.request_id')
+          .leftJoinAndMapOne('requests.confined', RequestConfined, 'confined', 'requests.id = confined.request_id')
+          .leftJoinAndMapOne('requests.electrical', RequestElectrical, 'electrical', 'requests.id = electrical.request_id')
+          .leftJoinAndMapOne('requests.energisingElectrical', RequestEnergisingElectrical, 'energisingElectrical', 'requests.id = energisingElectrical.request_id')
+          .leftJoinAndMapOne('requests.energisingMechanical', RequestEnergisingMechanical, 'energisingMechanical', 'requests.id = energisingMechanical.request_id')
+          .leftJoinAndMapOne('requests.excavation', RequestExcavation, 'excavation', 'requests.id = excavation.request_id')
+          .leftJoinAndMapOne('requests.extraMisc', RequestExtraMisc, 'extraMisc', 'requests.id = extraMisc.request_id')
+          .leftJoinAndMapOne('requests.fireHotwork', RequestFireHotwork, 'fireHotwork', 'requests.id = fireHotwork.request_id')
+          .leftJoinAndMapOne('requests.general', RequestGeneral, 'general', 'requests.id = general.request_id')
+          .leftJoinAndMapOne('requests.height', RequestHeight, 'height', 'requests.id = height.request_id')
+          .leftJoinAndMapOne('requests.lifting', RequestLifting, 'lifting', 'requests.id = lifting.request_id')
+          .leftJoinAndMapOne('requests.ppe', RequestPpe, 'ppe', 'requests.id = ppe.request_id')
+          .leftJoinAndMapOne('requests.pressureTesting', RequestPressureTesting, 'pressureTesting', 'requests.id = pressureTesting.request_id')
+          .leftJoinAndMapOne('requests.building', Building, 'building', 'requests.Building_Id = building.build_id')
+          .leftJoinAndMapOne('requests.floor', Floor, 'floor', 'requests.Floor_Id = floor.fl_id')
+          .leftJoinAndMapOne('requests.zone', Zone, 'zone', 'requests.Zone_Id = zone.id')
+          .leftJoinAndMapOne('requests.subcontractor', Subcontractor, 'subcontractor', 'requests.Sub_Contractor_Id = subcontractor.id')
+          .leftJoinAndMapOne('requests.activityRelation', Activity, 'activityRelation', 'requests.Type_Of_Activity_Id = activityRelation.id')
+          .where('requests.status = :status', { status: 1 });
 
-    const planZoneRes = await this.resolveZoneFilters(searchDto.zoneIds, searchDto.Zone_Id, searchDto.zone);
-    if (planZoneRes) {
-      const { selectedZoneIds, zoneNames } = planZoneRes;
-      if (selectedZoneIds.length > 0 || zoneNames.length > 0) {
-        qb.andWhere(
-          new Brackets((zoneQb) => {
-            let hasCond = false;
-            if (selectedZoneIds.length > 0) {
-              zoneQb.where('requests.Zone_Id IN (:...selectedZoneIds)', { selectedZoneIds });
-              hasCond = true;
-            }
-
-            zoneNames.forEach((zName, index) => {
-              const paramName = `zName_${index}`;
-              if (hasCond) {
-                zoneQb.orWhere(`requests.zone LIKE :${paramName}`, { [paramName]: `%${zName}%` });
-              } else {
-                zoneQb.where(`requests.zone LIKE :${paramName}`, { [paramName]: `%${zName}%` });
-                hasCond = true;
-              }
-            });
-          }),
-        );
-      } else {
-        qb.andWhere('1 = 0');
-      }
-    }
-
-    // --- Safety / PPE Filters ---
-    if (searchDto.Hot_work && Number(searchDto.Hot_work) === 1) {
-      qb.andWhere('fireHotwork.Hot_work = :hotWork', { hotWork: searchDto.Hot_work });
-    }
-    if (searchDto.working_on_electrical_system && Number(searchDto.working_on_electrical_system) === 1) {
-      qb.andWhere('electrical.working_on_electrical_system = :workElec', { workElec: searchDto.working_on_electrical_system });
-    }
-    if (searchDto.working_hazardious_substen && Number(searchDto.working_hazardious_substen) === 1) {
-      qb.andWhere('chemical.working_hazardious_substen = :workHaz', { workHaz: searchDto.working_hazardious_substen });
-    }
-    if (searchDto.using_cranes_or_lifting && Number(searchDto.using_cranes_or_lifting) === 1) {
-      qb.andWhere('lifting.using_cranes_or_lifting = :useCrane', { useCrane: searchDto.using_cranes_or_lifting });
-    }
-    if (searchDto.pressure_tesing_of_equipment && Number(searchDto.pressure_tesing_of_equipment) === 1) {
-      qb.andWhere('pressureTesting.pressure_testing_of_equipment = :pressTest', { pressTest: searchDto.pressure_tesing_of_equipment });
-    }
-    if (searchDto.working_at_height && Number(searchDto.working_at_height) === 1) {
-      qb.andWhere('height.working_at_height = :workHeight', { workHeight: searchDto.working_at_height });
-    }
-    if (searchDto.working_confined_spaces && Number(searchDto.working_confined_spaces) === 1) {
-      qb.andWhere('confined.working_confined_spaces = :workConf', { workConf: searchDto.working_confined_spaces });
-    }
-    if (searchDto.specific_gloves && Number(searchDto.specific_gloves) === 1) {
-      qb.andWhere('ppe.specific_gloves = :specGloves', { specGloves: searchDto.specific_gloves });
-    }
-    if (searchDto.eye_protection && Number(searchDto.eye_protection) === 1) {
-      qb.andWhere('ppe.eye_protection = :eyeProt', { eyeProt: searchDto.eye_protection });
-    }
-    if (searchDto.fall_protection && Number(searchDto.fall_protection) === 1) {
-      qb.andWhere('ppe.fall_protection = :fallProt', { fallProt: searchDto.fall_protection });
-    }
-    if (searchDto.hearing_protection && Number(searchDto.hearing_protection) === 1) {
-      qb.andWhere('ppe.hearing_protection = :hearProt', { hearProt: searchDto.hearing_protection });
-    }
-    if (searchDto.respiratory_protection && Number(searchDto.respiratory_protection) === 1) {
-      qb.andWhere('ppe.respiratory_protection = :respProt', { respProt: searchDto.respiratory_protection });
-    }
-    if (searchDto.power_on && Number(searchDto.power_on) === 1) {
-      qb.andWhere('energisingElectrical.power_on = :powerOn', { powerOn: searchDto.power_on });
-    }
-    if (searchDto.pressurization && Number(searchDto.pressurization) === 1) {
-      qb.andWhere('energisingMechanical.pressurization = :pressur', { pressur: searchDto.pressurization });
-    }
-
-    // --- No pagination — fetch all records ---
-    qb.orderBy('requests.id', 'DESC');
-    const [rawRequests, totalCount] = await qb.getManyAndCount();
-
-    // Build zone lookup for all zone IDs present in the search results
-    const zoneLookupMap = new Map<number, string>();
-    const allZoneIdsSet = new Set<number>();
-    rawRequests.forEach((req) => {
-      if (req.zoneId) {
-        String(req.zoneId).split(',').forEach((id) => {
-          const num = Number(id.trim());
-          if (!isNaN(num) && num > 0) allZoneIdsSet.add(num);
-        });
-      }
-    });
-    if (allZoneIdsSet.size > 0) {
-      const zoneEntities = await this.zoneRepo.findBy({ id: In([...allZoneIdsSet]) });
-      zoneEntities.forEach((z) => zoneLookupMap.set(z.id, z.zone));
-    }
-
-    // --- Build flat response ---
-    const dataList: any[] = [];
-    for (const req of rawRequests) {
-      const resolvedRooms = await this.resolveRoomNames(req.roomNos);
-
-      // Resolve all zone names string
-      let resolvedZoneNames = '';
-      if (req.zoneId) {
-        const names = String(req.zoneId)
-          .split(',')
-          .map((id) => zoneLookupMap.get(Number(id.trim())))
-          .filter(Boolean);
-        if (names.length > 0) {
-          resolvedZoneNames = names.join(', ');
+        // --- Date Filters ---
+        if (searchDto.Date) {
+          qb.andWhere('DATE(requests.Working_Date) = :date', { date: searchDto.Date });
         }
-      }
-      if (!resolvedZoneNames && typeof req.zone === 'string') {
-        resolvedZoneNames = req.zone;
-      }
-      if (!resolvedZoneNames && (req as any).zone?.zone) {
-        resolvedZoneNames = (req as any).zone.zone;
-      }
+        if (searchDto.from_date && searchDto.to_date) {
+          qb.andWhere('DATE(requests.Working_Date) BETWEEN :fromDate AND :toDate', {
+            fromDate: searchDto.from_date,
+            toDate: searchDto.to_date,
+          });
+        } else if (searchDto.from_date) {
+          qb.andWhere('DATE(requests.Working_Date) >= :fromDate', {
+            fromDate: searchDto.from_date,
+          });
+        } else if (searchDto.to_date) {
+          qb.andWhere('DATE(requests.Working_Date) <= :toDate', {
+            toDate: searchDto.to_date,
+          });
+        }
 
-      const flatObj: any = {
-        id: req.id,
-        userId: req.userId || '',
-        Company_Name: req.companyName || '',
-        PermitNo: req.permitNo || '',
-        Sub_Contractor_Id: req.subContractorId || '',
-        subContractorName: (req as any).subcontractor?.subContractorName || '',
-        Foreman: req.foreman || '',
-        Foreman_Phone_Number: req.foremanPhoneNumber || '',
-        Activity: req.activity || '',
-        activityName: (req as any).activityRelation?.activityName || '',
-        Type_Of_Activity_Id: req.typeOfActivityId || '',
-        Request_Date: req.requestDate || '',
-        Working_Date: req.workingDate || '',
-        Start_Time: req.startTime || '',
-        End_Time: req.endTime || '',
-        Assign_Start_Time: req.assignStartTime || '',
-        Assign_End_Time: req.assignEndTime || '',
-        Assign_Start_Date: req.assignStartDate || '',
-        Assign_End_Date: req.assignEndDate || '',
-        Building_Id: req.buildingId || '',
-        building_name: (req as any).building?.building_name || '',
-        Floor_Id: req.floorId || '',
-        floor_name: (req as any).floor?.floor_name || '',
-        Plans_Id: req.plansId || '',
-        Zone_Id: req.zoneId || '',
-        zone_name: resolvedZoneNames || '',
-        zone: resolvedZoneNames || '',
-        Room_Nos: resolvedRooms || '',
-        room_names: resolvedRooms,
-        Room_Type: req.roomType || '',
-        Number_Of_Workers: req.numberOfWorkers || '',
-        Badge_Numbers: req.badgeNumbers || '',
-        teamId: req.teamId || '',
-        notes: req.notes || '',
-        Request_status: req.requestStatus || '',
-        status: req.status,
-        createdTime: req.createdTime || '',
-        Site_Id: req.siteId,
-        permit_type: req.permitType || 'Construction',
-        permit_under: req.permitUnder || 'Construction',
-        new_date: req.newDate || '',
-        new_end_time: req.newEndTime || '',
-        night_shift: req.nightShift || '',
-        Safety_Precautions: req.safetyPrecautions || '',
-      };
-
-      const mergeSub = (sub: any, repo: Repository<any>) => {
-        if (!sub) return;
-        for (const column of repo.metadata.columns) {
-          if (column.propertyName !== 'requestId') {
-            const val = sub[column.propertyName];
-            flatObj[column.databaseName] = val !== undefined && val !== null ? val : '';
+        // Only apply Year/Month if Week is NOT provided
+        if (!searchDto.Week) {
+          if (searchDto.Year) {
+            qb.andWhere('YEAR(requests.Working_Date) = :year', { year: searchDto.Year });
+          }
+          if (searchDto.Month) {
+            qb.andWhere('MONTH(requests.Working_Date) = :month', { month: searchDto.Month });
           }
         }
-      };
 
-      mergeSub((req as any).chemical, this.chemicalRepo);
-      mergeSub((req as any).confined, this.confinedRepo);
-      mergeSub((req as any).electrical, this.electricalRepo);
-      mergeSub((req as any).energisingElectrical, this.energisingElecRepo);
-      mergeSub((req as any).energisingMechanical, this.energisingMechRepo);
-      mergeSub((req as any).excavation, this.excavationRepo);
-      mergeSub((req as any).extraMisc, this.extraMiscRepo);
-      mergeSub((req as any).fireHotwork, this.fireHotworkRepo);
-      mergeSub((req as any).general, this.generalRepo);
-      mergeSub((req as any).height, this.heightRepo);
-      mergeSub((req as any).lifting, this.liftingRepo);
-      mergeSub((req as any).ppe, this.ppeRepo);
-      mergeSub((req as any).pressureTesting, this.pressureTestingRepo);
+        // Week range filter
+        if (weekStart && weekEnd) {
+          qb.andWhere('DATE(requests.Working_Date) BETWEEN :weekStart AND :weekEnd', {
+            weekStart,
+            weekEnd,
+          });
+        }
 
-      if (flatObj.course_of_actions !== undefined) {
-        flatObj.course_of_action = flatObj.course_of_actions;
-      }
+        // --- Other Filters ---
+        if (searchDto.Site_Id && Number(searchDto.Site_Id) !== 0) {
+          qb.andWhere('requests.Site_Id = :siteId', { siteId: searchDto.Site_Id });
+        }
+        const planBuildingIds = this.parseIdList(searchDto.Building_Id);
+        if (planBuildingIds.length > 1) {
+          qb.andWhere('requests.Building_Id IN (:...planBuildingIds)', { planBuildingIds });
+        } else if (planBuildingIds.length === 1) {
+          qb.andWhere('requests.Building_Id = :buildingId', { buildingId: planBuildingIds[0] });
+        }
+        const planSubconIds = this.parseIdList(searchDto.Sub_Contractor_Id);
+        if (planSubconIds.length > 1) {
+          qb.andWhere('requests.Sub_Contractor_Id IN (:...planSubconIds)', { planSubconIds });
+        } else if (planSubconIds.length === 1) {
+          qb.andWhere('requests.Sub_Contractor_Id = :subContractorId', { subContractorId: planSubconIds[0] });
+        } else if (subContractorId) {
+          qb.andWhere('requests.Sub_Contractor_Id = :subContractorId', { subContractorId });
+        }
+        // Level / Floor filtering (supports single or multi-level, floor IDs or floor names, across old & new DB records)
+        const planLevelRes = await this.resolveLevelFilters(searchDto.Floor_Id, searchDto.Room_Type, searchDto.Building_Id);
+        if (planLevelRes) {
+          const { resolvedFloorIds, resolvedFloorNames, rawTerms } = planLevelRes;
+          const allTerms = Array.from(new Set([...resolvedFloorNames, ...rawTerms]));
+          if (resolvedFloorIds.length > 0 || allTerms.length > 0) {
+            qb.andWhere(
+              new Brackets((levelQb) => {
+                let hasCondition = false;
+                if (resolvedFloorIds.length > 0) {
+                  levelQb.where('requests.Floor_Id IN (:...resolvedFloorIds)', { resolvedFloorIds });
+                  hasCondition = true;
+                }
+                allTerms.forEach((fTerm, idx) => {
+                  const paramName = `fTerm_${idx}`;
+                  if (hasCondition) {
+                    levelQb.orWhere(`requests.Room_Type LIKE :${paramName}`, { [paramName]: `%${fTerm}%` });
+                  } else {
+                    levelQb.where(`requests.Room_Type LIKE :${paramName}`, { [paramName]: `%${fTerm}%` });
+                    hasCondition = true;
+                  }
+                });
+              }),
+            );
+          } else {
+            qb.andWhere('1 = 0');
+          }
+        }
+        if (searchDto.start_time) {
+          qb.andWhere('requests.Start_Time = :startTime', { startTime: searchDto.start_time });
+        }
+        if (searchDto.end_time) {
+          qb.andWhere('requests.End_Time = :endTime', { endTime: searchDto.end_time });
+        }
+        const planRoomSearchVal = searchDto.Room_Nos !== undefined && searchDto.Room_Nos !== null && String(searchDto.Room_Nos).trim() !== ''
+          ? String(searchDto.Room_Nos)
+          : (searchDto.area !== undefined && searchDto.area !== null && String(searchDto.area).trim() !== '' ? String(searchDto.area) : '');
 
-      const files = await this.ramsFileRepo.find({
-        where: { requestId: req.id, status: 1 },
-      });
-      const notes = await this.noteRepo.find({
-        where: { requestId: req.id },
-        order: { createdTime: 'DESC' },
-      });
+        if (planRoomSearchVal !== '' && planRoomSearchVal !== '0') {
+          const roomTerms = await this.resolveRoomSearchTerms(planRoomSearchVal);
+          if (roomTerms && roomTerms.length > 0) {
+            const escapedTerms = roomTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+            const regexPattern = `(^|,[[:space:]]*)(${escapedTerms.join('|')})([[:space:]]*,|$)`;
+            qb.andWhere(`requests.Room_Nos REGEXP :roomRegex`, { roomRegex: regexPattern });
+          } else {
+            qb.andWhere('1 = 0');
+          }
+        }
+        if (searchDto.permit_type) {
+          qb.andWhere('requests.permit_type = :permitType', { permitType: searchDto.permit_type });
+        }
+        if (searchDto.permit_under) {
+          qb.andWhere('requests.permit_under = :permitUnder', { permitUnder: searchDto.permit_under });
+        }
+        if (
+          searchDto.Type_Of_Activity_Id !== undefined &&
+          searchDto.Type_Of_Activity_Id !== null &&
+          Number(String(searchDto.Type_Of_Activity_Id).replace(/'/g, '').trim()) !== 0
+        ) {
+          qb.andWhere('requests.Type_Of_Activity_Id = :typeOfActivityId', {
+            typeOfActivityId: Number(String(searchDto.Type_Of_Activity_Id).replace(/'/g, '').trim()),
+          });
+        }
+        if (searchDto.PermitNo) {
+          qb.andWhere('requests.PermitNo LIKE :permitNo', {
+            permitNo: `%${searchDto.PermitNo}%`,
+          });
+        }
+        if (searchDto.Activity) {
+          qb.andWhere('requests.Activity LIKE :activityName', {
+            activityName: `%${searchDto.Activity}%`,
+          });
+        }
+        if (searchDto.night_shift !== undefined && searchDto.night_shift !== null && String(searchDto.night_shift).trim() !== '') {
+          const nsVal = String(searchDto.night_shift).trim();
+          if (nsVal === '1' || nsVal === 'true') {
+            qb.andWhere('(requests.night_shift = :nsOne OR requests.night_shift = 1)', { nsOne: '1' });
+          } else if (nsVal === '0' || nsVal === 'false') {
+            qb.andWhere(
+              '(requests.night_shift = :nsZero OR requests.night_shift = 0 OR requests.night_shift IS NULL OR requests.night_shift = :nsEmpty)',
+              { nsZero: '0', nsEmpty: '' },
+            );
+          }
+        }
+        if (searchDto.new_date) {
+          qb.andWhere('requests.new_date = :newDate', { newDate: searchDto.new_date });
+        }
+        if (searchDto.new_end_time) {
+          qb.andWhere('requests.new_end_time = :newEndTime', { newEndTime: searchDto.new_end_time });
+        }
+        if (
+          searchDto.hras !== undefined &&
+          searchDto.hras !== null &&
+          String(searchDto.hras).trim() !== ''
+        ) {
+          const hrasVal = Number(searchDto.hras);
+          if (hrasVal === 0) {
+            qb.andWhere(
+              '(fireHotwork.Hot_work IS NULL OR fireHotwork.Hot_work = 0 OR fireHotwork.Hot_work = :zeroStr) ' +
+              'AND (electrical.working_on_electrical_system IS NULL OR electrical.working_on_electrical_system = 0 OR electrical.working_on_electrical_system = :zeroStr) ' +
+              'AND (chemical.working_hazardious_substen IS NULL OR chemical.working_hazardious_substen = 0 OR chemical.working_hazardious_substen = :zeroStr) ' +
+              'AND (pressureTesting.pressure_testing_of_equipment IS NULL OR pressureTesting.pressure_testing_of_equipment = 0 OR pressureTesting.pressure_testing_of_equipment = :zeroStr) ' +
+              'AND (height.working_at_height IS NULL OR height.working_at_height = 0 OR height.working_at_height = :zeroStr) ' +
+              'AND (confined.working_confined_spaces IS NULL OR confined.working_confined_spaces = 0 OR confined.working_confined_spaces = :zeroStr) ' +
+              'AND (excavation.excavation_works IS NULL OR excavation.excavation_works = 0 OR excavation.excavation_works = :zeroStr) ' +
+              'AND (lifting.using_cranes_or_lifting IS NULL OR lifting.using_cranes_or_lifting = 0 OR lifting.using_cranes_or_lifting = :zeroStr) ' +
+              'AND (energisingElectrical.power_on IS NULL OR energisingElectrical.power_on = 0 OR energisingElectrical.power_on = :zeroStr) ' +
+              'AND (energisingMechanical.pressurization IS NULL OR energisingMechanical.pressurization = 0 OR energisingMechanical.pressurization = :zeroStr)',
+              { zeroStr: '0' }
+            );
+          } else if (hrasVal === 1) {
+            const hasSpecificHraFilter = [
+              searchDto.Hot_work, searchDto.working_on_electrical_system, searchDto.working_hazardious_substen,
+              searchDto.using_cranes_or_lifting, searchDto.pressure_tesing_of_equipment, searchDto.working_at_height,
+              searchDto.working_confined_spaces, searchDto.power_on, searchDto.pressurization, searchDto.excavation_works
+            ].some(v => v !== undefined && v !== null && Number(v) === 1);
 
-      flatObj.files = files;
-      flatObj.note = notes;
+            if (!hasSpecificHraFilter) {
+              qb.andWhere(
+                '(fireHotwork.Hot_work = 1 OR electrical.working_on_electrical_system = 1 OR ' +
+                'chemical.working_hazardious_substen = 1 OR pressureTesting.pressure_testing_of_equipment = 1 OR ' +
+                'height.working_at_height = 1 OR confined.working_confined_spaces = 1 OR ' +
+                'excavation.excavation_works = 1 OR lifting.using_cranes_or_lifting = 1 OR ' +
+                'energisingElectrical.power_on = 1 OR energisingMechanical.pressurization = 1)'
+              );
+            }
+          }
+        }
+        if (searchDto.Request_status) {
+          const rawStatus = String(searchDto.Request_status).replace(/'/g, '').trim();
+          const statusList = rawStatus
+            .split(',')
+            .map((s) => s.trim().replace(/^'|'$/g, ''))
+            .filter(Boolean);
 
-      if (flatObj.cancel_reason === 'Permit not opened so system cancelled automatically') {
-        flatObj.Request_status = 'Auto-Cancelled';
-      }
+          if (statusList.length > 0) {
+            qb.andWhere(
+              new Brackets((statusQb) => {
+                statusList.forEach((st, idx) => {
+                  const paramName = `reqPlanStatus_${idx}`;
+                  const autoCancelMsgParam = `autoCancelPlanMsg_${idx}`;
+                  if (st === 'Auto-Cancelled') {
+                    const autoCancelCond = `(requests.Request_status = :${paramName} OR extraMisc.cancelReason = :${autoCancelMsgParam})`;
+                    const params = {
+                      [paramName]: 'Auto-Cancelled',
+                      [autoCancelMsgParam]: 'Permit not opened so system cancelled automatically',
+                    };
+                    if (idx === 0) {
+                      statusQb.where(autoCancelCond, params);
+                    } else {
+                      statusQb.orWhere(autoCancelCond, params);
+                    }
+                  } else if (st === 'Cancelled') {
+                    const cancelCond = `(requests.Request_status = :${paramName} AND (extraMisc.cancelReason IS NULL OR extraMisc.cancelReason != :${autoCancelMsgParam}))`;
+                    const params = {
+                      [paramName]: 'Cancelled',
+                      [autoCancelMsgParam]: 'Permit not opened so system cancelled automatically',
+                    };
+                    if (idx === 0) {
+                      statusQb.where(cancelCond, params);
+                    } else {
+                      statusQb.orWhere(cancelCond, params);
+                    }
+                  } else {
+                    const normalCond = `requests.Request_status = :${paramName}`;
+                    const params = { [paramName]: st };
+                    if (idx === 0) {
+                      statusQb.where(normalCond, params);
+                    } else {
+                      statusQb.orWhere(normalCond, params);
+                    }
+                  }
+                });
+              }),
+            );
+          }
+        }
 
-      dataList.push(flatObj);
-    }
+        const planZoneRes = await this.resolveZoneFilters(searchDto.zoneIds, searchDto.Zone_Id, searchDto.zone);
+        if (planZoneRes) {
+          const { selectedZoneIds, zoneNames } = planZoneRes;
+          if (selectedZoneIds.length > 0 || zoneNames.length > 0) {
+            qb.andWhere(
+              new Brackets((zoneQb) => {
+                let hasCond = false;
+                if (selectedZoneIds.length > 0) {
+                  zoneQb.where('requests.Zone_Id IN (:...selectedZoneIds)', { selectedZoneIds });
+                  hasCond = true;
+                }
 
-    return [
-      { data: dataList },
-      { count: totalCount },
-    ];
+                zoneNames.forEach((zName, index) => {
+                  const paramName = `zName_${index}`;
+                  if (hasCond) {
+                    zoneQb.orWhere(`requests.zone LIKE :${paramName}`, { [paramName]: `%${zName}%` });
+                  } else {
+                    zoneQb.where(`requests.zone LIKE :${paramName}`, { [paramName]: `%${zName}%` });
+                    hasCond = true;
+                  }
+                });
+              }),
+            );
+          } else {
+            qb.andWhere('1 = 0');
+          }
+        }
+
+        // --- Safety / PPE Filters ---
+        if (searchDto.Hot_work && Number(searchDto.Hot_work) === 1) {
+          qb.andWhere('fireHotwork.Hot_work = :hotWork', { hotWork: searchDto.Hot_work });
+        }
+        if (searchDto.working_on_electrical_system && Number(searchDto.working_on_electrical_system) === 1) {
+          qb.andWhere('electrical.working_on_electrical_system = :workElec', { workElec: searchDto.working_on_electrical_system });
+        }
+        if (searchDto.working_hazardious_substen && Number(searchDto.working_hazardious_substen) === 1) {
+          qb.andWhere('chemical.working_hazardious_substen = :workHaz', { workHaz: searchDto.working_hazardious_substen });
+        }
+        if (searchDto.using_cranes_or_lifting && Number(searchDto.using_cranes_or_lifting) === 1) {
+          qb.andWhere('lifting.using_cranes_or_lifting = :useCrane', { useCrane: searchDto.using_cranes_or_lifting });
+        }
+        if (searchDto.pressure_tesing_of_equipment && Number(searchDto.pressure_tesing_of_equipment) === 1) {
+          qb.andWhere('pressureTesting.pressure_testing_of_equipment = :pressTest', { pressTest: searchDto.pressure_tesing_of_equipment });
+        }
+        if (searchDto.working_at_height && Number(searchDto.working_at_height) === 1) {
+          qb.andWhere('height.working_at_height = :workHeight', { workHeight: searchDto.working_at_height });
+        }
+        if (searchDto.working_confined_spaces && Number(searchDto.working_confined_spaces) === 1) {
+          qb.andWhere('confined.working_confined_spaces = :workConf', { workConf: searchDto.working_confined_spaces });
+        }
+        if (searchDto.specific_gloves && Number(searchDto.specific_gloves) === 1) {
+          qb.andWhere('ppe.specific_gloves = :specGloves', { specGloves: searchDto.specific_gloves });
+        }
+        if (searchDto.eye_protection && Number(searchDto.eye_protection) === 1) {
+          qb.andWhere('ppe.eye_protection = :eyeProt', { eyeProt: searchDto.eye_protection });
+        }
+        if (searchDto.fall_protection && Number(searchDto.fall_protection) === 1) {
+          qb.andWhere('ppe.fall_protection = :fallProt', { fallProt: searchDto.fall_protection });
+        }
+        if (searchDto.hearing_protection && Number(searchDto.hearing_protection) === 1) {
+          qb.andWhere('ppe.hearing_protection = :hearProt', { hearProt: searchDto.hearing_protection });
+        }
+        if (searchDto.respiratory_protection && Number(searchDto.respiratory_protection) === 1) {
+          qb.andWhere('ppe.respiratory_protection = :respProt', { respProt: searchDto.respiratory_protection });
+        }
+        if (searchDto.power_on && Number(searchDto.power_on) === 1) {
+          qb.andWhere('energisingElectrical.power_on = :powerOn', { powerOn: searchDto.power_on });
+        }
+        if (searchDto.pressurization && Number(searchDto.pressurization) === 1) {
+          qb.andWhere('energisingMechanical.pressurization = :pressur', { pressur: searchDto.pressurization });
+        }
+
+        // --- No pagination — fetch all records ---
+        qb.orderBy('requests.id', 'DESC');
+        const [rawRequests, totalCount] = await qb.getManyAndCount();
+
+        // Build zone lookup for all zone IDs present in the search results
+        const zoneLookupMap = new Map<number, string>();
+        const allZoneIdsSet = new Set<number>();
+        rawRequests.forEach((req) => {
+          if (req.zoneId) {
+            String(req.zoneId).split(',').forEach((id) => {
+              const num = Number(id.trim());
+              if (!isNaN(num) && num > 0) allZoneIdsSet.add(num);
+            });
+          }
+        });
+        if (allZoneIdsSet.size > 0) {
+          const zoneEntities = await this.zoneRepo.findBy({ id: In([...allZoneIdsSet]) });
+          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, z.zone));
+        }
+
+        // --- Build flat response ---
+        const dataList: any[] = [];
+        for (const req of rawRequests) {
+          const resolvedRooms = await this.resolveRoomNames(req.roomNos);
+
+          // Resolve all zone names string
+          let resolvedZoneNames = '';
+          if (req.zoneId) {
+            const names = String(req.zoneId)
+              .split(',')
+              .map((id) => zoneLookupMap.get(Number(id.trim())))
+              .filter(Boolean);
+            if (names.length > 0) {
+              resolvedZoneNames = names.join(', ');
+            }
+          }
+          if (!resolvedZoneNames && typeof req.zone === 'string') {
+            resolvedZoneNames = req.zone;
+          }
+          if (!resolvedZoneNames && (req as any).zone?.zone) {
+            resolvedZoneNames = (req as any).zone.zone;
+          }
+
+          const flatObj: any = {
+            id: req.id,
+            userId: req.userId || '',
+            Company_Name: req.companyName || '',
+            PermitNo: req.permitNo || '',
+            Sub_Contractor_Id: req.subContractorId || '',
+            subContractorName: (req as any).subcontractor?.subContractorName || '',
+            Foreman: req.foreman || '',
+            Foreman_Phone_Number: req.foremanPhoneNumber || '',
+            Activity: req.activity || '',
+            activityName: (req as any).activityRelation?.activityName || '',
+            Type_Of_Activity_Id: req.typeOfActivityId || '',
+            Request_Date: req.requestDate || '',
+            Working_Date: req.workingDate || '',
+            Start_Time: req.startTime || '',
+            End_Time: req.endTime || '',
+            Assign_Start_Time: req.assignStartTime || '',
+            Assign_End_Time: req.assignEndTime || '',
+            Assign_Start_Date: req.assignStartDate || '',
+            Assign_End_Date: req.assignEndDate || '',
+            Building_Id: req.buildingId || '',
+            building_name: (req as any).building?.building_name || '',
+            Floor_Id: req.floorId || '',
+            floor_name: (req as any).floor?.floor_name || '',
+            Plans_Id: req.plansId || '',
+            Zone_Id: req.zoneId || '',
+            zone_name: resolvedZoneNames || '',
+            zone: resolvedZoneNames || '',
+            Room_Nos: resolvedRooms || '',
+            room_names: resolvedRooms,
+            Room_Type: req.roomType || '',
+            Number_Of_Workers: req.numberOfWorkers || '',
+            Badge_Numbers: req.badgeNumbers || '',
+            teamId: req.teamId || '',
+            notes: req.notes || '',
+            Request_status: req.requestStatus || '',
+            status: req.status,
+            createdTime: req.createdTime || '',
+            Site_Id: req.siteId,
+            permit_type: req.permitType || 'Construction',
+            permit_under: req.permitUnder || 'Construction',
+            new_date: req.newDate || '',
+            new_end_time: req.newEndTime || '',
+            night_shift: req.nightShift || '',
+            Safety_Precautions: req.safetyPrecautions || '',
+          };
+
+          const mergeSub = (sub: any, repo: Repository<any>) => {
+            if (!sub) return;
+            for (const column of repo.metadata.columns) {
+              if (column.propertyName !== 'requestId') {
+                const val = sub[column.propertyName];
+                flatObj[column.databaseName] = val !== undefined && val !== null ? val : '';
+              }
+            }
+          };
+
+          mergeSub((req as any).chemical, this.chemicalRepo);
+          mergeSub((req as any).confined, this.confinedRepo);
+          mergeSub((req as any).electrical, this.electricalRepo);
+          mergeSub((req as any).energisingElectrical, this.energisingElecRepo);
+          mergeSub((req as any).energisingMechanical, this.energisingMechRepo);
+          mergeSub((req as any).excavation, this.excavationRepo);
+          mergeSub((req as any).extraMisc, this.extraMiscRepo);
+          mergeSub((req as any).fireHotwork, this.fireHotworkRepo);
+          mergeSub((req as any).general, this.generalRepo);
+          mergeSub((req as any).height, this.heightRepo);
+          mergeSub((req as any).lifting, this.liftingRepo);
+          mergeSub((req as any).ppe, this.ppeRepo);
+          mergeSub((req as any).pressureTesting, this.pressureTestingRepo);
+
+          if (flatObj.course_of_actions !== undefined) {
+            flatObj.course_of_action = flatObj.course_of_actions;
+          }
+
+          const files = await this.ramsFileRepo.find({
+            where: { requestId: req.id, status: 1 },
+          });
+          const notes = await this.noteRepo.find({
+            where: { requestId: req.id },
+            order: { createdTime: 'DESC' },
+          });
+
+          flatObj.files = files;
+          flatObj.note = notes;
+
+          if (flatObj.cancel_reason === 'Permit not opened so system cancelled automatically') {
+            flatObj.Request_status = 'Auto-Cancelled';
+          }
+
+          dataList.push(flatObj);
+        }
+
+        return [
+          { data: dataList },
+          { count: totalCount },
+        ];
   }
 
   // 1. Soft delete single request
@@ -4259,8 +4267,8 @@ export class RequestsService {
     const cacheKey = subContractorId
       ? `requests:counts:subcon:${subContractorId}`
       : limitToUserId
-        ? `requests:counts:user:${limitToUserId}`
-        : 'requests:counts';
+      ? `requests:counts:user:${limitToUserId}`
+      : 'requests:counts';
 
     return this.redisCacheService.getOrSet(
       cacheKey,
@@ -4375,8 +4383,8 @@ export class RequestsService {
     const cacheKey = subContractorId
       ? `requests:counts:${status}:subcon:${subContractorId}`
       : limitToUserId
-        ? `requests:counts:${status}:user:${limitToUserId}`
-        : `requests:counts:${status}`;
+      ? `requests:counts:${status}:user:${limitToUserId}`
+      : `requests:counts:${status}`;
 
     return this.redisCacheService.getOrSet(
       cacheKey,
@@ -4531,8 +4539,8 @@ export class RequestsService {
     const cacheKey = subContractorId
       ? `requests:graph:counts:subcon:${subContractorId}`
       : limitToUserId
-        ? `requests:graph:counts:user:${limitToUserId}`
-        : 'requests:graph:counts';
+      ? `requests:graph:counts:user:${limitToUserId}`
+      : 'requests:graph:counts';
 
     return this.redisCacheService.getOrSet(
       cacheKey,
@@ -5607,7 +5615,7 @@ export class RequestsService {
         assignEndDate: dto.Assign_End_Date ?? originalRequest.assignEndDate,
         workingDate: iterDate,
         buildingId: dto.Building_Id ?? originalRequest.buildingId,
-        floorId: dto.Floor_Id ?? originalRequest.floorId,
+        floorId: dto.Floor_Id !== undefined && dto.Floor_Id !== null ? String(dto.Floor_Id) : originalRequest.floorId,
         zoneId: resolvedZoneId,
         zone: resolvedZone,
         roomNos: dto.Room_Nos ?? originalRequest.roomNos,

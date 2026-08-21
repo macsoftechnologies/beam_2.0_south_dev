@@ -56,8 +56,8 @@ export class RequestEntity {
   @Column({ name: 'Building_Id', type: 'int', nullable: true })
   buildingId?: number;
 
-  @Column({ name: 'Floor_Id', type: 'int', nullable: true })
-  floorId?: number;
+  @Column({ name: 'Floor_Id', type: 'varchar', length: 255, nullable: true })
+  floorId?: string;
 
   @Column({ name: 'Plans_Id', type: 'int', nullable: true })
   plansId?: number;

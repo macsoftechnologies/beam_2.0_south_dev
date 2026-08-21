@@ -80,10 +80,8 @@ export class CreateRequestDto {
   @IsOptional()
   Building_Id?: number;
 
-  @Type(() => Number)
-  @IsNumber()
   @IsOptional()
-  Floor_Id?: number;
+  Floor_Id?: any;
 
   @Type(() => Number)
   @IsNumber()
