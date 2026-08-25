@@ -397,6 +397,8 @@ export class ObservationsService implements OnModuleInit {
     contractorId?: number;
     userRole?: string;
     search?: string;
+    page?: number;
+    limit?: number;
   }) {
     const qb = this.obsRepo.createQueryBuilder('obs');
 
@@ -438,6 +440,30 @@ export class ObservationsService implements OnModuleInit {
     }
 
     qb.orderBy('obs.id', 'DESC');
-    return await qb.getMany();
+
+    const total = await qb.getCount();
+
+    if (query.page && query.limit) {
+      const page = Math.max(1, query.page);
+      const limit = Math.max(1, query.limit);
+      qb.skip((page - 1) * limit).take(limit);
+      const data = await qb.getMany();
+      return {
+        data,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
+    }
+
+    const data = await qb.getMany();
+    return {
+      data,
+      total,
+      page: 1,
+      limit: total || 10,
+      totalPages: 1,
+    };
   }
 }

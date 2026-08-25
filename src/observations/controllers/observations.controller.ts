@@ -195,8 +195,12 @@ export class ObservationsController {
     @Query('contractorId') contractorId?: string,
     @Query('userRole') userRole?: string,
     @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     const cId = contractorId ? parseInt(contractorId, 10) : undefined;
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.obsService.findAll({
       status,
       type,
@@ -207,6 +211,8 @@ export class ObservationsController {
       contractorId: cId,
       userRole,
       search,
+      page: pageNum,
+      limit: limitNum,
     });
   }
 }
