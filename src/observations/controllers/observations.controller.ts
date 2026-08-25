@@ -65,14 +65,37 @@ export class ObservationsController {
   }
 
   /**
-   * Contractor Review Action: ACCEPT or REJECT with mandatory remarks
+   * Contractor Review Action: ACCEPT or REJECT with mandatory remarks and optional photos
    * POST /observations/:id/contractor-review
    */
   @Post(':id/contractor-review')
+  @UseInterceptors(FilesInterceptor('photos', 10, observationMulterConfig))
   async contractorReview(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ContractorReviewDto,
+    @UploadedFiles() files?: Express.Multer.File[],
   ) {
+    let photosList: string[] = [];
+
+    if (dto.photos) {
+      if (typeof dto.photos === 'string') {
+        try {
+          photosList = JSON.parse(dto.photos);
+        } catch {
+          photosList = [dto.photos];
+        }
+      } else if (Array.isArray(dto.photos)) {
+        photosList = dto.photos;
+      }
+    }
+
+    if (files && files.length > 0) {
+      const uploadedUrls = files.map((file) => `/uploads/observations/${file.filename}`);
+      photosList = [...photosList, ...uploadedUrls];
+    }
+
+    dto.photos = photosList;
+
     return await this.obsService.contractorReview(id, dto);
   }
 

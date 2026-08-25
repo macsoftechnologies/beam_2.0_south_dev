@@ -210,6 +210,7 @@ export class ObservationsService implements OnModuleInit {
       previousContractor: obs.assignedContractorName,
       newContractor: obs.assignedContractorName,
       remarks: dto.remarks,
+      photos: dto.photos,
     });
 
     await this.logRepo.save(log);
