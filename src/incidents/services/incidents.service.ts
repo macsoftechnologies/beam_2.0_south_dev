@@ -1,0 +1,664 @@
+import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Like } from 'typeorm';
+import { Incident, IncidentStage, InvestigationLevel } from '../entities/incident.entity';
+import { IncidentHeadsUp } from '../entities/incident-headsup.entity';
+import { IncidentInitialReport } from '../entities/incident-initial-report.entity';
+import { IncidentInvestigation } from '../entities/incident-investigation.entity';
+import { IncidentActionItem, ActionItemType, ActionItemStatus } from '../entities/incident-action-item.entity';
+import { CreateHeadsUpDto } from '../dtos/create-headsup.dto';
+import { CreateInitialReportDto } from '../dtos/create-initial-report.dto';
+import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
+import { CreateActionItemDto, UpdateActionItemDto } from '../dtos/action-item.dto';
+
+import { saveBase64Signature } from '../utils/signature-storage.util';
+
+@Injectable()
+export class IncidentsService implements OnModuleInit {
+  private readonly logger = new Logger(IncidentsService.name);
+
+  constructor(
+    @InjectRepository(Incident)
+    private readonly incidentRepo: Repository<Incident>,
+    @InjectRepository(IncidentHeadsUp)
+    private readonly headsUpRepo: Repository<IncidentHeadsUp>,
+    @InjectRepository(IncidentInitialReport)
+    private readonly initialReportRepo: Repository<IncidentInitialReport>,
+    @InjectRepository(IncidentInvestigation)
+    private readonly investigationRepo: Repository<IncidentInvestigation>,
+    @InjectRepository(IncidentActionItem)
+    private readonly actionItemRepo: Repository<IncidentActionItem>,
+  ) {}
+
+  /**
+   * Auto-creates missing incident tables in MySQL upon NestJS application startup
+   */
+  async onModuleInit() {
+    try {
+      await this.incidentRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`incidents\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`case_number\` VARCHAR(100) NOT NULL UNIQUE,
+          \`project_name\` VARCHAR(255) NULL,
+          \`project_id\` INT NULL,
+          \`incident_date\` DATE NULL,
+          \`incident_time\` VARCHAR(50) NULL,
+          \`incident_timestamp\` DATETIME NULL,
+          \`building_id\` INT NULL,
+          \`floor_level\` VARCHAR(150) NULL,
+          \`specific_location\` TEXT NULL,
+          \`contractors_involved\` TEXT NULL,
+          \`stage\` ENUM('HEADS_UP', 'INITIAL_REPORT', 'INVESTIGATION', 'CLOSED') NOT NULL DEFAULT 'HEADS_UP',
+          \`categories\` JSON NULL,
+          \`actual_severity\` INT NULL,
+          \`potential_severity\` INT NULL,
+          \`is_hipo\` TINYINT(1) NOT NULL DEFAULT 0,
+          \`investigation_level\` ENUM('L1', 'L2', 'L3') NOT NULL DEFAULT 'L1',
+          \`gatekeeper_informed\` TINYINT(1) NOT NULL DEFAULT 0,
+          \`gatekeeper_name\` VARCHAR(255) NULL,
+          \`sla_headsup_due\` DATETIME NULL,
+          \`sla_initial_due\` DATETIME NULL,
+          \`sla_investigation_due\` DATETIME NULL,
+          \`status\` INT NOT NULL DEFAULT 1,
+          \`created_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updated_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await this.headsUpRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`incident_headsup\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`incident_id\` INT NOT NULL,
+          \`description_what_happened\` TEXT NULL,
+          \`description_consequence\` TEXT NULL,
+          \`is_environmental\` TINYINT(1) NOT NULL DEFAULT 0,
+          \`spill_type\` JSON NULL,
+          \`spill_substance\` VARCHAR(255) NULL,
+          \`spill_cause\` TEXT NULL,
+          \`spill_quantity\` VARCHAR(100) NULL,
+          \`spill_system_entered\` JSON NULL,
+          \`immediate_actions\` JSON NULL,
+          \`submitted_by\` VARCHAR(255) NULL,
+          \`signature\` TEXT NULL,
+          \`submitted_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT \`fk_headsup_incident\` FOREIGN KEY (\`incident_id\`) REFERENCES \`incidents\` (\`id\`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await this.initialReportRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`incident_initial_reports\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`incident_id\` INT NOT NULL,
+          \`photos\` JSON NULL,
+          \`has_injury_illness\` TINYINT(1) NOT NULL DEFAULT 0,
+          \`nature_of_injury\` TEXT NULL,
+          \`treatment_prescribed\` TEXT NULL,
+          \`anticipated_absence\` VARCHAR(255) NULL,
+          \`treatment_provided\` JSON NULL,
+          \`accident_categories\` JSON NULL,
+          \`injury_types\` JSON NULL,
+          \`body_parts_injured\` JSON NULL,
+          \`submitted_by\` VARCHAR(255) NULL,
+          \`signature\` TEXT NULL,
+          \`submitted_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT \`fk_initial_incident\` FOREIGN KEY (\`incident_id\`) REFERENCES \`incidents\` (\`id\`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await this.investigationRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`incident_investigations\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`incident_id\` INT NOT NULL,
+          \`investigation_details\` TEXT NULL,
+          \`fishbone_data\` JSON NULL,
+          \`problem_statement\` TEXT NULL,
+          \`five_whys_data\` JSON NULL,
+          \`root_causes\` JSON NULL,
+          \`contributing_factors\` JSON NULL,
+          \`mandatory_attachments\` JSON NULL,
+          \`signatures\` JSON NULL,
+          \`completed_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT \`fk_investigation_incident\` FOREIGN KEY (\`incident_id\`) REFERENCES \`incidents\` (\`id\`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      await this.actionItemRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`incident_action_items\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`incident_id\` INT NOT NULL,
+          \`action_type\` ENUM('IMMEDIATE', 'CORRECTIVE') NOT NULL DEFAULT 'IMMEDIATE',
+          \`action\` TEXT NOT NULL,
+          \`responsible\` VARCHAR(255) NOT NULL,
+          \`target_date\` DATE NULL,
+          \`time_implemented\` VARCHAR(100) NULL,
+          \`status\` ENUM('PENDING', 'IN_PROGRESS', 'COMPLETED') NOT NULL DEFAULT 'PENDING',
+          \`updated_by\` VARCHAR(255) NULL,
+          \`status_history\` JSON NULL,
+          \`created_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updated_time\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          CONSTRAINT \`fk_action_item_incident\` FOREIGN KEY (\`incident_id\`) REFERENCES \`incidents\` (\`id\`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
+      // Ensure approval and review columns exist on existing tables
+      const alterQueries = [
+        `ALTER TABLE \`incidents\` ADD COLUMN \`closed_by\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`closed_time\` DATETIME NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`closure_comments\` TEXT NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`closure_signature\` TEXT NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`building_name\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`origin\` VARCHAR(100) DEFAULT 'Direct'`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`approved_by\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`approver_role\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`approver_signature\` TEXT NULL`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`approved_time\` DATETIME NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approved_by\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approver_role\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approver_signature\` TEXT NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approved_time\` DATETIME NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewed_by\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewer_role\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewer_signature\` TEXT NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewed_time\` DATETIME NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`updated_by\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`status_history\` JSON NULL`,
+      ];
+
+      for (const q of alterQueries) {
+        try {
+          await this.incidentRepo.query(q);
+        } catch (e) {
+          // Column may already exist, ignore duplicate column errors safely
+        }
+      }
+
+      this.logger.log('✅ Incident tables auto-initialization check completed successfully.');
+    } catch (err) {
+      this.logger.error('❌ Failed to auto-create incident tables in MySQL', err);
+    }
+  }
+
+  /**
+   * Auto-generates unique tracking case number: INC-2026-0001
+   */
+  private async generateCaseNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `INC-${year}-`;
+    const lastIncident = await this.incidentRepo.find({
+      where: { caseNumber: Like(`${prefix}%`) },
+      order: { id: 'DESC' },
+      take: 1,
+    });
+
+    let nextSeq = 1;
+    if (lastIncident.length > 0) {
+      const parts = lastIncident[0].caseNumber.split('-');
+      const lastSeq = parseInt(parts[2], 10);
+      if (!isNaN(lastSeq)) {
+        nextSeq = lastSeq + 1;
+      }
+    }
+    return `${prefix}${nextSeq.toString().padStart(4, '0')}`;
+  }
+
+  /**
+   * Calculates HiPo (High Potential) status and Investigation Depth Level (L1, L2, L3)
+   */
+  private deriveSeverityAndLevel(actualSeverity?: number, potentialSeverity?: number) {
+    const pot = potentialSeverity || 1;
+    const act = actualSeverity || 1;
+
+    // HiPo if potential is 4 or 5
+    const isHipo = pot >= 4;
+
+    // Determine Investigation Level
+    let investigationLevel = InvestigationLevel.L1;
+    if (act >= 4 || pot >= 5) {
+      investigationLevel = InvestigationLevel.L3;
+    } else if (act === 3 || pot === 3 || pot === 4) {
+      investigationLevel = InvestigationLevel.L2;
+    } else {
+      investigationLevel = InvestigationLevel.L1;
+    }
+
+    return { isHipo, investigationLevel };
+  }
+
+  /**
+   * Stage 1: Submit Heads-Up Notification (within 2 hours)
+   */
+  async submitHeadsUp(dto: CreateHeadsUpDto): Promise<{ incident: Incident; headsUp: IncidentHeadsUp }> {
+    const caseNumber = await this.generateCaseNumber();
+
+    // Parse timestamp
+    const incidentDateTimeStr = `${dto.incidentDate}T${dto.incidentTime}:00`;
+    const incidentTimestamp = new Date(incidentDateTimeStr);
+    const validTimestamp = isNaN(incidentTimestamp.getTime()) ? new Date() : incidentTimestamp;
+
+    // SLAs: 2h, 24h, 7d
+    const slaHeadsUpDue = new Date(validTimestamp.getTime() + 2 * 60 * 60 * 1000);
+    const slaInitialDue = new Date(validTimestamp.getTime() + 24 * 60 * 60 * 1000);
+    const slaInvestigationDue = new Date(validTimestamp.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const incident = this.incidentRepo.create({
+      caseNumber,
+      projectName: dto.projectName,
+      projectId: dto.projectId,
+      incidentDate: dto.incidentDate,
+      incidentTime: dto.incidentTime,
+      incidentTimestamp: validTimestamp,
+      buildingId: dto.buildingId,
+      buildingName: dto.buildingName,
+      origin: dto.origin || 'Direct',
+      floorLevel: dto.floorLevel,
+      specificLocation: dto.specificLocation,
+      contractorsInvolved: dto.contractorsInvolved,
+      categories: dto.categories || [],
+      gatekeeperInformed: dto.gatekeeperInformed || false,
+      gatekeeperName: dto.gatekeeperName,
+      stage: IncidentStage.HEADS_UP,
+      slaHeadsUpDue,
+      slaInitialDue,
+      slaInvestigationDue,
+    });
+
+    const savedIncident = await this.incidentRepo.save(incident);
+
+    const headsUp = this.headsUpRepo.create({
+      incidentId: savedIncident.id,
+      descriptionWhatHappened: dto.descriptionWhatHappened,
+      descriptionConsequence: dto.descriptionConsequence,
+      isEnvironmental: dto.isEnvironmental || false,
+      spillType: dto.spillType,
+      spillSubstance: dto.spillSubstance,
+      spillCause: dto.spillCause,
+      spillQuantity: dto.spillQuantity,
+      spillSystemEntered: dto.spillSystemEntered,
+      immediateActions: dto.immediateActions,
+      submittedBy: dto.submittedBy,
+      signature: dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_${savedIncident.id}`) : undefined,
+    });
+
+    const savedHeadsUp = await this.headsUpRepo.save(headsUp);
+
+    // Save immediate action items if provided
+    if (dto.immediateActions && dto.immediateActions.length > 0) {
+      const actionEntities = dto.immediateActions.map((act) =>
+        this.actionItemRepo.create({
+          incidentId: savedIncident.id,
+          actionType: ActionItemType.IMMEDIATE,
+          action: act.action,
+          responsible: act.responsible,
+          targetDate: (act.targetDate || act.date) ? ((act.targetDate || act.date) as any) : undefined,
+          timeImplemented: act.timeImplemented,
+          status: ActionItemStatus.PENDING,
+          updatedBy: dto.submittedBy,
+          statusHistory: [
+            {
+              status: ActionItemStatus.PENDING,
+              updatedBy: dto.submittedBy || 'System',
+              timestamp: new Date().toISOString(),
+              remarks: 'Initial immediate action item created during Stage 1 Heads-Up',
+            },
+          ],
+        }),
+      );
+      await this.actionItemRepo.save(actionEntities);
+    }
+
+    return { incident: savedIncident, headsUp: savedHeadsUp };
+  }
+
+  /**
+   * Stage 1 Approval
+   */
+  async approveHeadsUp(incidentId: number, dto: { approvedBy: string; approverRole?: string; signature?: string }): Promise<IncidentHeadsUp> {
+    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+    if (!headsUp) {
+      throw new NotFoundException(`Heads-up notification for incident ID ${incidentId} not found`);
+    }
+    headsUp.approvedBy = dto.approvedBy;
+    headsUp.approverRole = dto.approverRole || 'NNE Peer Reviewer';
+    headsUp.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_appr_${incidentId}`) : undefined;
+    headsUp.approvedTime = new Date();
+    return await this.headsUpRepo.save(headsUp);
+  }
+
+  /**
+   * Stage 2: Submit Initial Incident Report (within 24 hours)
+   */
+  async submitInitialReport(incidentId: number, dto: CreateInitialReportDto): Promise<{ incident: Incident; initialReport: IncidentInitialReport }> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    // Stage Gate Validation: Heads-Up Notification MUST be approved first
+    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+    if (!headsUp || !headsUp.approvedBy) {
+      throw new BadRequestException(
+        `Cannot submit Initial Incident Report. Stage 1 Heads-Up Notification for Incident ${incident.caseNumber} (ID: ${incidentId}) must be approved first.`,
+      );
+    }
+
+    const { isHipo, investigationLevel } = this.deriveSeverityAndLevel(dto.actualSeverity, dto.potentialSeverity);
+
+    incident.actualSeverity = dto.actualSeverity;
+    incident.potentialSeverity = dto.potentialSeverity;
+    incident.isHipo = dto.isHipo !== undefined ? dto.isHipo : isHipo;
+    incident.investigationLevel = investigationLevel;
+    incident.stage = IncidentStage.INITIAL_REPORT;
+
+    const savedIncident = await this.incidentRepo.save(incident);
+
+    let initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+    if (!initialReport) {
+      initialReport = this.initialReportRepo.create({ incidentId });
+    }
+
+    initialReport.photos = dto.photos || [];
+    initialReport.hasInjuryIllness = dto.hasInjuryIllness || false;
+    initialReport.natureOfInjury = dto.natureOfInjury;
+    initialReport.treatmentPrescribed = dto.treatmentPrescribed;
+    initialReport.anticipatedAbsence = dto.anticipatedAbsence;
+    initialReport.treatmentProvided = dto.treatmentProvided || [];
+    initialReport.accidentCategories = dto.accidentCategories || [];
+    initialReport.injuryTypes = dto.injuryTypes || [];
+    initialReport.bodyPartsInjured = dto.bodyPartsInjured;
+    initialReport.submittedBy = dto.submittedBy;
+    initialReport.signature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_${incidentId}`) : undefined;
+
+    const savedReport = await this.initialReportRepo.save(initialReport);
+    return { incident: savedIncident, initialReport: savedReport };
+  }
+
+  /**
+   * Stage 2 Approval
+   */
+  async approveInitialReport(incidentId: number, dto: { approvedBy: string; approverRole?: string; signature?: string }): Promise<IncidentInitialReport> {
+    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+    if (!initialReport) {
+      throw new NotFoundException(`Initial report for incident ID ${incidentId} not found`);
+    }
+    initialReport.approvedBy = dto.approvedBy;
+    initialReport.approverRole = dto.approverRole || 'Customer Approver';
+    initialReport.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_appr_${incidentId}`) : undefined;
+    initialReport.approvedTime = new Date();
+    return await this.initialReportRepo.save(initialReport);
+  }
+
+  /**
+   * Stage 3: Submit / Update Incident Investigation Report (within 7 days)
+   */
+  async saveInvestigation(incidentId: number, dto: UpdateInvestigationDto): Promise<{ incident: Incident; investigation: IncidentInvestigation }> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    // Stage Gate Validation: Initial Incident Report MUST be approved first
+    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+    if (!initialReport || !initialReport.approvedBy) {
+      throw new BadRequestException(
+        `Cannot submit Incident Investigation Report. Stage 2 Initial Incident Report for Incident ${incident.caseNumber} (ID: ${incidentId}) must be approved first.`,
+      );
+    }
+
+    incident.stage = IncidentStage.INVESTIGATION;
+    const savedIncident = await this.incidentRepo.save(incident);
+
+    let investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+    if (!investigation) {
+      investigation = this.investigationRepo.create({ incidentId });
+    }
+
+    if (dto.investigationDetails !== undefined) investigation.investigationDetails = dto.investigationDetails;
+    if (dto.fishboneData !== undefined) investigation.fishboneData = dto.fishboneData;
+    if (dto.problemStatement !== undefined) investigation.problemStatement = dto.problemStatement;
+    if (dto.fiveWhysData !== undefined) investigation.fiveWhysData = dto.fiveWhysData;
+    if (dto.rootCauses !== undefined) investigation.rootCauses = dto.rootCauses;
+    if (dto.contributingFactors !== undefined) investigation.contributingFactors = dto.contributingFactors;
+    if (dto.mandatoryAttachments !== undefined) investigation.mandatoryAttachments = dto.mandatoryAttachments;
+    if (dto.signatures !== undefined) investigation.signatures = dto.signatures;
+
+    const savedInvestigation = await this.investigationRepo.save(investigation);
+    return { incident: savedIncident, investigation: savedInvestigation };
+  }
+
+  /**
+   * Stage 3 Review
+   */
+  async reviewInvestigation(incidentId: number, dto: { reviewedBy?: string; approvedBy?: string; reviewerRole?: string; approverRole?: string; signature?: string }): Promise<IncidentInvestigation> {
+    const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+    if (!investigation) {
+      throw new NotFoundException(`Investigation report for incident ID ${incidentId} not found`);
+    }
+    const reviewerName = dto.reviewedBy || dto.approvedBy;
+    if (!reviewerName) {
+      throw new BadRequestException('reviewedBy or approvedBy is required');
+    }
+    investigation.reviewedBy = reviewerName;
+    investigation.reviewerRole = dto.reviewerRole || dto.approverRole || 'Site HSE Lead Reviewer';
+    investigation.reviewerSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_invest_rev_${incidentId}`) : undefined;
+    investigation.reviewedTime = new Date();
+    return await this.investigationRepo.save(investigation);
+  }
+
+  /**
+   * Close Incident investigation
+   */
+  async closeIncident(incidentId: number, dto?: { closedBy?: string; closureComments?: string; signature?: string }): Promise<Incident> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    // Stage Gate Validation 1: Investigation Report MUST be reviewed first
+    const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+    if (!investigation || !investigation.reviewedBy) {
+      throw new BadRequestException(
+        `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). Stage 3 Investigation Report must be reviewed and signed off first.`,
+      );
+    }
+
+    // Stage Gate Validation 2: All Action Items MUST be COMPLETED first
+    const actionItems = await this.actionItemRepo.find({ where: { incidentId } });
+    const incompleteActions = actionItems.filter((item) => item.status !== ActionItemStatus.COMPLETED);
+    if (incompleteActions.length > 0) {
+      const summaryList = incompleteActions.map((act) => `#${act.id} ("${act.action}" - Status: ${act.status})`).join(', ');
+      throw new BadRequestException(
+        `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). All action items must be COMPLETED first. Incomplete action item(s) (${incompleteActions.length}): ${summaryList}.`,
+      );
+    }
+
+    incident.stage = IncidentStage.CLOSED;
+    incident.closedBy = dto?.closedBy || 'System Admin / Site HSE';
+    incident.closedTime = new Date();
+    if (dto?.closureComments) incident.closureComments = dto.closureComments;
+    if (dto?.signature) incident.closureSignature = saveBase64Signature(dto.signature, `sig_close_${incidentId}`);
+
+    return await this.incidentRepo.save(incident);
+  }
+
+  /**
+   * Get single incident with all details
+   */
+  async getIncidentDetails(id: number) {
+    const incident = await this.incidentRepo.findOne({ where: { id } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${id} not found`);
+    }
+
+    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId: id } });
+    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId: id } });
+    const investigation = await this.investigationRepo.findOne({ where: { incidentId: id } });
+    const actionItems = await this.actionItemRepo.find({ where: { incidentId: id } });
+
+    return {
+      incident,
+      headsUp,
+      initialReport,
+      investigation,
+      actionItems,
+    };
+  }
+
+  /**
+   * List incidents with filters for all UI table dropdown columns
+   */
+  async findAll(query: {
+    stage?: IncidentStage;
+    isHipo?: boolean;
+    category?: string;
+    building?: string;
+    buildingId?: number;
+    actualSeverity?: number;
+    potentialSeverity?: number;
+    investigationLevel?: InvestigationLevel;
+    contractor?: string;
+    origin?: string;
+    search?: string;
+  }) {
+    const qb = this.incidentRepo.createQueryBuilder('incident');
+
+    if (query.stage) {
+      qb.andWhere('incident.stage = :stage', { stage: query.stage });
+    }
+    if (query.isHipo !== undefined) {
+      qb.andWhere('incident.isHipo = :isHipo', { isHipo: query.isHipo });
+    }
+    if (query.category) {
+      qb.andWhere(`JSON_CONTAINS(incident.categories, :categoryJson)`, {
+        categoryJson: JSON.stringify(query.category),
+      });
+    }
+    if (query.buildingId) {
+      qb.andWhere('incident.buildingId = :buildingId', { buildingId: query.buildingId });
+    }
+    if (query.building) {
+      qb.andWhere('incident.buildingName LIKE :building', { building: `%${query.building}%` });
+    }
+    if (query.actualSeverity) {
+      qb.andWhere('incident.actualSeverity = :actualSeverity', { actualSeverity: query.actualSeverity });
+    }
+    if (query.potentialSeverity) {
+      qb.andWhere('incident.potentialSeverity = :potentialSeverity', { potentialSeverity: query.potentialSeverity });
+    }
+    if (query.investigationLevel) {
+      qb.andWhere('incident.investigationLevel = :investigationLevel', { investigationLevel: query.investigationLevel });
+    }
+    if (query.contractor) {
+      qb.andWhere('incident.contractorsInvolved LIKE :contractor', { contractor: `%${query.contractor}%` });
+    }
+    if (query.origin) {
+      qb.andWhere('incident.origin LIKE :origin', { origin: `%${query.origin}%` });
+    }
+    if (query.search) {
+      const searchLike = `%${query.search}%`;
+      qb.andWhere(
+        `(incident.caseNumber LIKE :searchLike OR incident.projectName LIKE :searchLike OR incident.contractorsInvolved LIKE :searchLike OR incident.buildingName LIKE :searchLike OR JSON_SEARCH(incident.categories, 'one', :searchLike) IS NOT NULL)`,
+        { searchLike },
+      );
+    }
+
+    qb.orderBy('incident.id', 'DESC');
+    return await qb.getMany();
+  }
+
+  /**
+   * Add Action Item to an Incident
+   */
+  async addActionItem(incidentId: number, dto: CreateActionItemDto): Promise<IncidentActionItem> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    const targetDateVal = dto.targetDate || dto.date;
+    const statusVal = dto.status || ActionItemStatus.PENDING;
+    const userVal = dto.createdBy || dto.updatedBy || 'System';
+    const actionItem = this.actionItemRepo.create({
+      incidentId,
+      actionType: dto.actionType || ActionItemType.IMMEDIATE,
+      action: dto.action,
+      responsible: dto.responsible,
+      targetDate: targetDateVal ? (targetDateVal as any) : undefined,
+      timeImplemented: dto.timeImplemented,
+      status: statusVal,
+      updatedBy: userVal,
+      statusHistory: [
+        {
+          status: statusVal,
+          updatedBy: userVal,
+          timestamp: new Date().toISOString(),
+          remarks: 'Action item created',
+        },
+      ],
+    });
+
+    return await this.actionItemRepo.save(actionItem);
+  }
+
+  /**
+   * Get all Action Items for an Incident
+   */
+  async getActionItems(incidentId: number): Promise<IncidentActionItem[]> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+    return await this.actionItemRepo.find({
+      where: { incidentId },
+      order: { id: 'ASC' },
+    });
+  }
+
+  /**
+   * Update an Action Item
+   */
+  async updateActionItem(incidentId: number, actionId: number, dto: UpdateActionItemDto): Promise<IncidentActionItem> {
+    const actionItem = await this.actionItemRepo.findOne({ where: { id: actionId, incidentId } });
+    if (!actionItem) {
+      throw new NotFoundException(`Action item with ID ${actionId} for incident ${incidentId} not found`);
+    }
+
+    const updaterName = dto.updatedBy || dto.statusChangedBy;
+    const oldStatus = actionItem.status;
+
+    if (dto.actionType !== undefined) actionItem.actionType = dto.actionType;
+    if (dto.action !== undefined) actionItem.action = dto.action;
+    if (dto.responsible !== undefined) actionItem.responsible = dto.responsible;
+    if (dto.targetDate !== undefined || dto.date !== undefined) actionItem.targetDate = (dto.targetDate || dto.date) as any;
+    if (dto.timeImplemented !== undefined) actionItem.timeImplemented = dto.timeImplemented;
+    if (dto.status !== undefined) actionItem.status = dto.status;
+    if (updaterName) actionItem.updatedBy = updaterName;
+
+    // Record status change or update in audit history
+    if (dto.status !== undefined || updaterName !== undefined) {
+      const currentHistory = actionItem.statusHistory || [];
+      const historyLog = {
+        status: actionItem.status,
+        updatedBy: updaterName || actionItem.updatedBy || 'System',
+        timestamp: new Date().toISOString(),
+        remarks: dto.remarks || (oldStatus !== actionItem.status ? `Status changed from ${oldStatus} to ${actionItem.status}` : 'Action item updated'),
+      };
+      actionItem.statusHistory = [...currentHistory, historyLog];
+    }
+
+    return await this.actionItemRepo.save(actionItem);
+  }
+
+  /**
+   * Delete an Action Item
+   */
+  async deleteActionItem(incidentId: number, actionId: number): Promise<{ message: string }> {
+    const actionItem = await this.actionItemRepo.findOne({ where: { id: actionId, incidentId } });
+    if (!actionItem) {
+      throw new NotFoundException(`Action item with ID ${actionId} for incident ${incidentId} not found`);
+    }
+    await this.actionItemRepo.remove(actionItem);
+    return { message: `Action item ${actionId} deleted successfully` };
+  }
+}
+
+

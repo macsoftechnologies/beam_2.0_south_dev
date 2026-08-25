@@ -1,0 +1,786 @@
+{
+	"info": {
+		"_postman_id": "a9e84b2c-3d1f-4e55-891a-7b2c019284fe",
+		"name": "NNE SafetyHUB - Incident Management APIs",
+		"description": "Postman collection for NNE SafetyHUB Incident Management module with complete 9-column UI table dropdown filters (Classification, Building, Actual/Potential Severity, HiPo, Investigation Level, Contractor, Status/Stage, and Origin).",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5200",
+			"type": "string"
+		},
+		{
+			"key": "incidentId",
+			"value": "1",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Stage 1: Submit Heads-Up Notification (< 2 Hours SLA)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"projectName\": \"BioPharm Site Expansion Phase 2\",\n  \"projectId\": 101,\n  \"incidentDate\": \"2026-08-19\",\n  \"incidentTime\": \"10:30\",\n  \"buildingId\": 12,\n  \"buildingName\": \"MA\",\n  \"origin\": \"Direct\",\n  \"floorLevel\": \"Level 2 - Cleanroom Suite B\",\n  \"specificLocation\": \"Near Air Handling Unit AHU-04\",\n  \"contractorsInvolved\": \"Give Steel\",\n  \"categories\": [\n    \"Medical Treatment Injury\",\n    \"Environmental Incident\"\n  ],\n  \"descriptionWhatHappened\": \"While carrying out pipe fitting on AHU-04 coolant line, a valve pressure release caused glycol coolant spillage and minor hand laceration.\",\n  \"descriptionConsequence\": \"Worker received first aid for minor cut. Approx 15 Liters of non-toxic glycol spilled on epoxy floor.\",\n  \"isEnvironmental\": true,\n  \"spillType\": [\n    \"Chemical Spill\"\n  ],\n  \"spillSubstance\": \"Propylene Glycol Coolant (SDS-GLY-2024)\",\n  \"spillCause\": \"Pressurized line connection valve failed during torqueing.\",\n  \"spillQuantity\": \"15 Liters\",\n  \"spillSystemEntered\": [\n    \"Process Wastewater System\"\n  ],\n  \"immediateActions\": [\n    {\n      \"action\": \"Spill kit applied to contain glycol liquid\",\n      \"responsible\": \"John Doe (HSE Lead)\",\n      \"targetDate\": \"2026-08-19\",\n      \"timeImplemented\": \"10:40 AM\"\n    },\n    {\n      \"action\": \"First aid applied to technician cut on left hand\",\n      \"responsible\": \"Nurse Jane Smith\",\n      \"targetDate\": \"2026-08-19\",\n      \"timeImplemented\": \"10:35 AM\"\n    }\n  ],\n  \"gatekeeperInformed\": true,\n  \"gatekeeperName\": \"Robert Vance (Site Security Gatekeeper)\",\n  \"submittedBy\": \"John Doe (Site HSE Coordinator)\",\n  \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/headsup",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"headsup"
+					]
+				},
+				"description": "Creates a new incident and logs Stage 1 Heads-Up Notification within 2 hours of occurrence."
+			},
+			"response": []
+		},
+		{
+			"name": "Stage 1: Approve Heads-Up Notification",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"approvedBy\": \"Alexander Vance\",\n  \"approverRole\": \"NNE Peer Reviewer\",\n  \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/headsup/approve",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"headsup",
+						"approve"
+					]
+				},
+				"description": "Approves Stage 1 Heads-Up Notification by Peer Reviewer or Site HSE Lead."
+			},
+			"response": []
+		},
+		{
+			"name": "Stage 2: Submit Initial Incident Report (< 24 Hours SLA)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "photos",
+							"type": "file",
+							"src": []
+						},
+						{
+							"key": "actualSeverity",
+							"value": "2",
+							"type": "text"
+						},
+						{
+							"key": "potentialSeverity",
+							"value": "4",
+							"type": "text"
+						},
+						{
+							"key": "isHipo",
+							"value": "true",
+							"type": "text"
+						},
+						{
+							"key": "hasInjuryIllness",
+							"value": "true",
+							"type": "text"
+						},
+						{
+							"key": "natureOfInjury",
+							"value": "1.5 cm superficial laceration on left palm and mild skin redness from coolant contact.",
+							"type": "text"
+						},
+						{
+							"key": "treatmentPrescribed",
+							"value": "Wound cleansed, antiseptics applied, dressed with sterile bandage.",
+							"type": "text"
+						},
+						{
+							"key": "anticipatedAbsence",
+							"value": "0 days (Returned to light duties)",
+							"type": "text"
+						},
+						{
+							"key": "treatmentProvided",
+							"value": "[\"On-Site First Aid\",\"Medical Center\"]",
+							"type": "text"
+						},
+						{
+							"key": "accidentCategories",
+							"value": "[\"Contact with an object or equipment\",\"Exposure to hazardous materials and chemicals\"]",
+							"type": "text"
+						},
+						{
+							"key": "injuryTypes",
+							"value": "[\"Abrasion, Laceration\",\"Acute exposure\"]",
+							"type": "text"
+						},
+						{
+							"key": "bodyPartsInjured",
+							"value": "{\"selections\":[{\"part\":\"Hand\",\"side\":\"L\"},{\"part\":\"Finger(s)\",\"side\":\"L\"}],\"notes\":\"Left hand palm area near index finger base.\"}",
+							"type": "text"
+						},
+						{
+							"key": "submittedBy",
+							"value": "Michael Vance (HSE Investigator)",
+							"type": "text"
+						},
+						{
+							"key": "signature",
+							"value": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/initial-report",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"initial-report"
+					]
+				},
+				"description": "Submits Stage 2 Initial Incident Report within 24 hours using multipart/form-data for direct photo file attachment."
+			},
+			"response": []
+		},
+		{
+			"name": "UPLOAD: Multiple Incident Photos (Multer -> uploads/incidents)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "files",
+							"type": "file",
+							"src": []
+						},
+						{
+							"key": "files",
+							"type": "file",
+							"src": []
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/upload-images",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"upload-images"
+					]
+				},
+				"description": "Uploads multiple photos (JPG, PNG, WEBP, HEIC, PDF) via Multer into ./uploads/incidents/ directory and returns an array of relative image URLs."
+			},
+			"response": []
+		},
+		{
+			"name": "UPLOAD: Single Incident Photo (Multer -> uploads/incidents)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": []
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/upload-image",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"upload-image"
+					]
+				},
+				"description": "Uploads a single photo via Multer into ./uploads/incidents/ directory."
+			},
+			"response": []
+		},
+		{
+			"name": "Stage 2: Approve Initial Incident Report",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"approvedBy\": \"David Miller\",\n  \"approverRole\": \"Customer Approver\",\n  \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/initial-report/approve",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"initial-report",
+						"approve"
+					]
+				},
+				"description": "Approves Stage 2 Initial Incident Report."
+			},
+			"response": []
+		},
+		{
+			"name": "Stage 3: Save / Update Investigation Report (< 7 Days SLA)",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"investigationDetails\": \"Formal RCA investigation conducted with Site HSE, Mechanical Subcontractor Lead, and Maintenance Engineers.\",\n  \"problemStatement\": \"Coolant line valve seal failed during pressurized torqueing resulting in chemical spill and technician hand injury.\",\n  \"fishboneData\": [\n    {\n      \"category\": \"People\",\n      \"causes\": [\n        {\n          \"causeText\": \"Technician skipped double-checking line depressurization pressure gauge\",\n          \"score\": 4,\n          \"isSelectedForFiveWhys\": true\n        }\n      ]\n    }\n  ],\n  \"fiveWhysData\": [\n    {\n      \"fishboneCauseText\": \"Technician skipped double-checking line depressurization pressure gauge\",\n      \"why1\": \"Why did technician skip reading gauge? -> Line was assumed depressurized after main pump shutdown.\",\n      \"why2\": \"Why was it assumed depressurized? -> No lock-out tag was attached to secondary relief valve.\",\n      \"why3\": \"Why was no lock-out tag attached? -> Secondary valve was not listed on isolation permit checklist.\",\n      \"why4\": \"Why was it not on isolation checklist? -> PTW template was outdated.\",\n      \"why5\": \"Why was PTW template outdated? -> Recent system design modification was not synchronized with document repository.\",\n      \"rootCauseSummary\": \"Outdated PTW isolation checklist caused incomplete line depressurization verification.\"\n    }\n  ],\n  \"rootCauses\": [\n    \"Isolation Permit Checklist lacked secondary relief valve inclusion.\"\n  ],\n  \"contributingFactors\": [\n    \"Clouded pressure gauge dial lens on AHU-04.\"\n  ],\n  \"mandatoryAttachments\": {\n    \"contractorsIncidentReport\": true,\n    \"witnessStatement\": true,\n    \"rams\": true,\n    \"trainingRecords\": true,\n    \"permitsToWork\": true,\n    \"safePlanOfAction\": true,\n    \"photos\": true,\n    \"evidenceForActionsTaken\": true,\n    \"wasteDisposalInvoice\": true\n  },\n  \"signatures\": [\n    {\n      \"role\": \"Site HSE Investigator\",\n      \"name\": \"Michael Vance\",\n      \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\",\n      \"date\": \"2026-08-20\"\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/investigation",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"investigation"
+					]
+				},
+				"description": "Saves Stage 3 Investigation Report with Fishbone cause-effect data, 5 Whys root cause tree, mandatory attachments checklist, and sign-offs."
+			},
+			"response": []
+		},
+		{
+			"name": "Stage 3: Review Investigation Report",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"reviewedBy\": \"Sarah Jenkins\",\n  \"reviewerRole\": \"NNE Overall Project Manager / Lead Reviewer\",\n  \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/investigation/review",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"investigation",
+						"review"
+					]
+				},
+				"description": "Reviews and signs off Stage 3 Incident Investigation Report."
+			},
+			"response": []
+		},
+		{
+			"name": "Stage 3: Close Incident Investigation",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"closedBy\": \"Sarah Jenkins (Site HSE Overall Manager)\",\n  \"closureComments\": \"All corrective action items verified and closed out. Investigation signed off.\",\n  \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/close",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"close"
+					]
+				},
+				"description": "Marks the Incident as fully CLOSED with audit trail."
+			},
+			"response": []
+		},
+		{
+			"name": "Get Single Incident Report Details",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}"
+					]
+				},
+				"description": "Retrieves complete data for a specific incident across Stage 1, Stage 2, Stage 3, and Action Items."
+			},
+			"response": []
+		},
+		{
+			"name": "ACTION ITEM: Add Action Item to Incident",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"actionType\": \"CORRECTIVE\",\n  \"action\": \"Replace coolant line relief valve with stainless steel rated assembly and update PTW isolation checklist.\",\n  \"responsible\": \"David Miller (Maintenance Supervisor)\",\n  \"targetDate\": \"2026-08-25\",\n  \"status\": \"IN_PROGRESS\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/action-items",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"action-items"
+					]
+				},
+				"description": "Adds a new Immediate or Corrective Action Item to an individual incident."
+			},
+			"response": []
+		},
+		{
+			"name": "ACTION ITEM: Get All Action Items for Incident",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/action-items",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"action-items"
+					]
+				},
+				"description": "Retrieves list of all action items (Immediate and Corrective) belonging to a specific incident."
+			},
+			"response": []
+		},
+		{
+			"name": "ACTION ITEM: Update Action Item Status & Details",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"status\": \"COMPLETED\",\n  \"timeImplemented\": \"2026-08-22 14:00\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/action-items/1",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"action-items",
+						"1"
+					]
+				},
+				"description": "Updates an existing action item status (PENDING, IN_PROGRESS, COMPLETED), responsible person, target date, or implementation time."
+			},
+			"response": []
+		},
+		{
+			"name": "ACTION ITEM: Delete Action Item",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/action-items/1",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"action-items",
+						"1"
+					]
+				},
+				"description": "Removes an action item from an incident."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 1: Classification Dropdown (category)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?category=Environmental Incident",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "category",
+							"value": "Environmental Incident"
+						}
+					]
+				},
+				"description": "Filters incidents by Classification category (e.g., Environmental Incident, First Aid Injury, Near Miss, etc.)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 2: Building Dropdown (building)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?building=MA",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "building",
+							"value": "MA"
+						}
+					]
+				},
+				"description": "Filters incidents by Building code/name (e.g. INF-1, JG, MA, NA, NB, NC)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 3: Actual Severity Dropdown (actualSeverity)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?actualSeverity=2",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "actualSeverity",
+							"value": "2"
+						}
+					]
+				},
+				"description": "Filters incidents by Actual Severity level (1 Insignificant, 2 Minor, 3 Moderate, 4 Critical, 5 Catastrophic)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 4: Potential Severity Dropdown (potentialSeverity)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?potentialSeverity=4",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "potentialSeverity",
+							"value": "4"
+						}
+					]
+				},
+				"description": "Filters incidents by Potential Severity level (1 to 5)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 5: HiPo Dropdown (isHipo)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?isHipo=true",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "isHipo",
+							"value": "true"
+						}
+					]
+				},
+				"description": "Filters High-Potential (HiPo) events."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 6: Investigation Level Dropdown (investigationLevel)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?investigationLevel=L2",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "investigationLevel",
+							"value": "L2"
+						}
+					]
+				},
+				"description": "Filters incidents by Investigation Depth Level (L1, L2, L3)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 7: Contractor Dropdown (contractor)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?contractor=Give Steel",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "contractor",
+							"value": "Give Steel"
+						}
+					]
+				},
+				"description": "Filters incidents by involved Contractor name (e.g., CG Jensen, Give Steel, HRS, Pihl, etc.)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 8: Status / Stage Dropdown (stage)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?stage=INITIAL_REPORT",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "stage",
+							"value": "INITIAL_REPORT"
+						}
+					]
+				},
+				"description": "Filters incidents by current pipeline status (HEADS_UP, INITIAL_REPORT, INVESTIGATION, CLOSED)."
+			},
+			"response": []
+		},
+		{
+			"name": "FILTER 9: Origin Dropdown (origin)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?origin=Direct",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "origin",
+							"value": "Direct"
+						}
+					]
+				},
+				"description": "Filters incidents by Origin ('Direct' or escalated Safety Observation e.g. 'SO-2026-6410')."
+			},
+			"response": []
+		},
+		{
+			"name": "MULTI-COLUMN COMBINED FILTER (Category + HiPo + Building + Actual)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/incidents?category=Environmental Incident&isHipo=true&building=MA&actualSeverity=2",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents"
+					],
+					"query": [
+						{
+							"key": "category",
+							"value": "Environmental Incident"
+						},
+						{
+							"key": "isHipo",
+							"value": "true"
+						},
+						{
+							"key": "building",
+							"value": "MA"
+						},
+						{
+							"key": "actualSeverity",
+							"value": "2"
+						}
+					]
+				},
+				"description": "Demonstrates combining multiple table column dropdown filters simultaneously."
+			},
+			"response": []
+		},
+		{
+			"name": "Add Action Item (Starts PENDING)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"actionType\": \"CORRECTIVE\",\n  \"action\": \"Install permanent safety railing around floor opening near AHU-04\",\n  \"responsible\": \"Dave Miller (Site Construction Manager)\",\n  \"targetDate\": \"2026-08-30\",\n  \"status\": \"PENDING\",\n  \"createdBy\": \"Sarah Jenkins (Site HSE Officer)\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/action-items",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"action-items"
+					]
+				},
+				"description": "Adds a new Action Item to an incident. Defaults to PENDING status and records initial status history."
+			},
+			"response": []
+		},
+		{
+			"name": "Update Action Item Status (PENDING -> IN_PROGRESS / COMPLETED)",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"status\": \"IN_PROGRESS\",\n  \"updatedBy\": \"Dave Miller (Site Construction Manager)\",\n  \"remarks\": \"Safety railing materials dispatched and installation initiated.\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/incidents/{{incidentId}}/action-items/1",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"incidents",
+						"{{incidentId}}",
+						"action-items",
+						"1"
+					]
+				},
+				"description": "Updates status of action item (PENDING -> IN_PROGRESS or COMPLETED) and logs statusChangedBy/updatedBy and timestamp into statusHistory audit log."
+			},
+			"response": []
+		}
+	]
+}

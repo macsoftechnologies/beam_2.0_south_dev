@@ -1,0 +1,376 @@
+{
+	"info": {
+		"_postman_id": "b8f9e012-3a4b-5c6d-7e8f-9a0b1c2d3e4f",
+		"name": "NNE SafetyHUB - Safety Observations APIs",
+		"description": "Complete Postman collection for NNE SafetyHUB Safety Observations (SO) module. Features dual Department/Contractor workflow, Contractor Accept/Reject loop with remarks, Reassignment, Resolution, Department Closure, Escalation to Incidents, Audit Trail Timeline, and Multer photo uploads.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5200",
+			"type": "string"
+		},
+		{
+			"key": "observationId",
+			"value": "1",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Create Safety Observation (Department or Contractor)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "photos",
+							"type": "file",
+							"src": []
+						},
+						{
+							"key": "observationType",
+							"value": "NEEDS_ATTENTION",
+							"type": "text"
+						},
+						{
+							"key": "natureOfFinding",
+							"value": "UNSAFE_CONDITION",
+							"type": "text"
+						},
+						{
+							"key": "subject",
+							"value": "Unguarded floor opening near AHU-04",
+							"type": "text"
+						},
+						{
+							"key": "safetyCategory",
+							"value": "Working at Heights",
+							"type": "text"
+						},
+						{
+							"key": "riskLevel",
+							"value": "HIGH",
+							"type": "text"
+						},
+						{
+							"key": "description",
+							"value": "Temporary floor grating removed for ducting access without hard barricades or toe boards.",
+							"type": "text"
+						},
+						{
+							"key": "projectName",
+							"value": "BioPharm Site Expansion Phase 2",
+							"type": "text"
+						},
+						{
+							"key": "buildingName",
+							"value": "MA",
+							"type": "text"
+						},
+						{
+							"key": "floorLevel",
+							"value": "Level 2",
+							"type": "text"
+						},
+						{
+							"key": "assignedContractorId",
+							"value": "10",
+							"type": "text"
+						},
+						{
+							"key": "assignedContractorName",
+							"value": "Give Steel",
+							"type": "text"
+						},
+						{
+							"key": "createdByUserName",
+							"value": "Sarah Jenkins (Site HSE Officer)",
+							"type": "text"
+						},
+						{
+							"key": "createdByRole",
+							"value": "DEPARTMENT",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations"
+					]
+				},
+				"description": "Creates a new Safety Observation (`SO-2026-0001`). Supports direct photo uploads via Multer or JSON payload."
+			},
+			"response": []
+		},
+		{
+			"name": "2. Contractor Action: REJECT Observation (with remarks)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"action\": \"REJECT\",\n  \"remarks\": \"Grating removal was executed by HVAC Piping subcontractor (CKJ Steel), not Give Steel structural scope.\",\n  \"actionByUserName\": \"David Miller (Give Steel Supervisor)\",\n  \"contractorId\": 10\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}/contractor-review",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}",
+						"contractor-review"
+					]
+				},
+				"description": "Contractor rejects the observation assignment with mandatory justification remarks."
+			},
+			"response": []
+		},
+		{
+			"name": "3. Department Action: REASSIGN Observation to Correct Contractor",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"newContractorId\": 12,\n  \"newContractorName\": \"CKJ Steel\",\n  \"remarks\": \"Verified PTW #8824 - floor opening work belongs to CKJ Steel HVAC scope. Reassigned for urgent barricading.\",\n  \"reassignedByUserName\": \"Sarah Jenkins (Site HSE Officer)\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}/reassign",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}",
+						"reassign"
+					]
+				},
+				"description": "Department user reassigns the rejected observation to the correct contractor with audit remarks."
+			},
+			"response": []
+		},
+		{
+			"name": "4. Contractor Action: ACCEPT Observation (with remarks)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"action\": \"ACCEPT\",\n  \"remarks\": \"CKJ Steel accepts responsibility. Work team dispatched to install rigid yellow handrails.\",\n  \"actionByUserName\": \"Robert Taylor (CKJ Steel Site Supervisor)\",\n  \"contractorId\": 12\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}/contractor-review",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}",
+						"contractor-review"
+					]
+				},
+				"description": "Contractor accepts observation assignment."
+			},
+			"response": []
+		},
+		{
+			"name": "5. Contractor Action: RESOLVE Observation (Submit Notes & Proof Photos)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "resolutionPhotos",
+							"type": "file",
+							"src": []
+						},
+						{
+							"key": "resolutionNotes",
+							"value": "Installed heavy-duty timber covers with safety warning signs and double handrails around AHU-04 opening.",
+							"type": "text"
+						},
+						{
+							"key": "resolvedByUserName",
+							"value": "Robert Taylor (CKJ Steel Site Supervisor)",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}/resolve",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}",
+						"resolve"
+					]
+				},
+				"description": "Contractor submits resolution proof photos (via Multer) and notes."
+			},
+			"response": []
+		},
+		{
+			"name": "6. Department Action: CLOSE Observation (Sign-off)",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"closedBy\": \"Sarah Jenkins (Site HSE Lead)\",\n  \"closureComments\": \"Inspected Level 2 MA cleanroom suite on site. Barricading compliant with NNE safety standard. Observation closed.\",\n  \"signature\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}/close",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}",
+						"close"
+					]
+				},
+				"description": "Department/HSE user signs off and closes the observation."
+			},
+			"response": []
+		},
+		{
+			"name": "7. ESCALATE Observation to Incident",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"escalatedBy\": \"Sarah Jenkins (Site HSE Lead)\",\n  \"actualSeverity\": 1,\n  \"potentialSeverity\": 4,\n  \"remarks\": \"Observation involves near miss with high potential risk; escalating to Stage 1 Incident investigation pipeline.\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}/escalate",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}",
+						"escalate"
+					]
+				},
+				"description": "Converts a Safety Observation directly into a Stage 1 Incident (`INC-2026-XXXX`) with `origin = SO-2026-XXXX`."
+			},
+			"response": []
+		},
+		{
+			"name": "8. Get Single Observation Details (Includes Full Audit Trail Timeline)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/observations/{{observationId}}",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"{{observationId}}"
+					]
+				},
+				"description": "Retrieves observation details plus complete `history` timeline log of all accepts, rejects, reassignments, resolutions, and remarks."
+			},
+			"response": []
+		},
+		{
+			"name": "9. List All Observations (Role-Based Scoping & Filters)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/observations?userRole=CONTRACTOR&contractorId=10",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations"
+					],
+					"query": [
+						{
+							"key": "userRole",
+							"value": "CONTRACTOR"
+						},
+						{
+							"key": "contractorId",
+							"value": "10"
+						}
+					]
+				},
+				"description": "Lists observations scoped by contractor company ID or filtered by status, type, severity, building, category, or search string."
+			},
+			"response": []
+		},
+		{
+			"name": "10. Upload Observation Photo (Multer -> uploads/observations)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "files",
+							"type": "file",
+							"src": []
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/observations/upload-images",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"observations",
+						"upload-images"
+					]
+				},
+				"description": "Uploads photos via Multer into `./uploads/observations/` directory."
+			},
+			"response": []
+		}
+	]
+}
