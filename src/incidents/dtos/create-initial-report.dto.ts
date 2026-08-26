@@ -140,6 +140,50 @@ export class CreateInitialReportDto {
 
   @IsString()
   @IsOptional()
+  injuredPersonName?: string;
+
+  @IsString()
+  @IsOptional()
+  injuredPersonCompany?: string;
+
+  @IsString()
+  @IsOptional()
+  injuredPersonSupervisor?: string;
+
+  @IsString()
+  @IsOptional()
+  injuredPersonJobTitle?: string;
+
+  @IsString()
+  @IsOptional()
+  lengthOfService?: string;
+
+  @IsString()
+  @IsOptional()
+  experienceInRole?: string;
+
+  @IsString()
+  @IsOptional()
+  workerActivity?: string;
+
+  @IsString()
+  @IsOptional()
+  medicalTreatmentClass?: string;
+
+  @IsString()
+  @IsOptional()
+  initialRootCause?: string;
+
+  @IsString()
+  @IsOptional()
+  environmentalConditions?: string;
+
+  @IsString()
+  @IsOptional()
+  equipmentInvolved?: string;
+
+  @IsString()
+  @IsOptional()
   submittedBy?: string;
 
   @IsString()

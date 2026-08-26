@@ -156,6 +156,17 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approver_role\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approver_signature\` TEXT NULL`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`approved_time\` DATETIME NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`injured_person_name\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`injured_person_company\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`injured_person_supervisor\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`injured_person_job_title\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`length_of_service\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`experience_in_role\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`worker_activity\` TEXT NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`medical_treatment_class\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`initial_root_cause\` TEXT NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`environmental_conditions\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`equipment_involved\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewed_by\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewer_role\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewer_signature\` TEXT NULL`,
@@ -392,6 +403,19 @@ export class IncidentsService implements OnModuleInit {
     initialReport.accidentCategories = dto.accidentCategories || [];
     initialReport.injuryTypes = dto.injuryTypes || [];
     initialReport.bodyPartsInjured = dto.bodyPartsInjured;
+
+    initialReport.injuredPersonName = dto.injuredPersonName;
+    initialReport.injuredPersonCompany = dto.injuredPersonCompany;
+    initialReport.injuredPersonSupervisor = dto.injuredPersonSupervisor;
+    initialReport.injuredPersonJobTitle = dto.injuredPersonJobTitle;
+    initialReport.lengthOfService = dto.lengthOfService;
+    initialReport.experienceInRole = dto.experienceInRole;
+    initialReport.workerActivity = dto.workerActivity;
+    initialReport.medicalTreatmentClass = dto.medicalTreatmentClass;
+    initialReport.initialRootCause = dto.initialRootCause;
+    initialReport.environmentalConditions = dto.environmentalConditions;
+    initialReport.equipmentInvolved = dto.equipmentInvolved;
+
     initialReport.submittedBy = dto.submittedBy;
     initialReport.signature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_${incidentId}`) : undefined;
 
