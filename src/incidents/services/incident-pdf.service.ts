@@ -81,22 +81,24 @@ export class IncidentPdfService {
       try {
         let cleanPath = pathOrBase64.trim();
 
-        // Extract filename if it is a full signature URL or route (e.g. /signatures/sig_xxx.png or https://.../signatures/sig_xxx.png)
+        // Extract filename if it is a full signature URL or route
         let sigFilename = cleanPath;
         if (cleanPath.includes('/signatures/')) {
           sigFilename = cleanPath.split('/signatures/').pop() || cleanPath;
+        } else if (cleanPath.includes('/uploads/incidents/')) {
+          sigFilename = cleanPath.split('/uploads/incidents/').pop() || cleanPath;
         } else if (cleanPath.includes('/uploads/')) {
           sigFilename = cleanPath.split('/uploads/').pop() || cleanPath;
         }
 
         const candidatePaths = [
           sigFilename,
-          join(process.cwd(), 'uploads', 'signatures', sigFilename),
-          join(process.cwd(), 'uploads', 'signatures', cleanPath),
           join(process.cwd(), 'uploads', 'incidents', sigFilename),
+          join(process.cwd(), 'uploads', 'signatures', sigFilename),
           join(process.cwd(), 'uploads', cleanPath),
           join(process.cwd(), cleanPath),
-          join(process.cwd(), 'src', 'images', cleanPath),
+          join(process.cwd(), cleanPath.replace(/^\/+/, '')),
+          join(process.cwd(), 'src', 'images', sigFilename),
         ];
 
         for (const targetPath of candidatePaths) {
@@ -113,6 +115,9 @@ export class IncidentPdfService {
 
         // Live server public fallback URL if file on disk was not directly matched
         if (sigFilename && (sigFilename.endsWith('.png') || sigFilename.endsWith('.jpg') || sigFilename.endsWith('.jpeg') || sigFilename.startsWith('sig_'))) {
+          if (cleanPath.includes('incidents')) {
+            return `https://api.beam.safesiteworks.com/development/m3south/uploads/incidents/${sigFilename}`;
+          }
           return `https://api.beam.safesiteworks.com/development/m3south/signatures/${sigFilename}`;
         }
       } catch (err) {
@@ -133,7 +138,6 @@ export class IncidentPdfService {
         `;
       }
 
-      // Check if sigData is a filename or path (e.g. sig_*.png, *.jpg, *.jpeg) rather than a person's handwritten text
       const isFilename = sigData && (
         sigData.includes('.png') ||
         sigData.includes('.jpg') ||
@@ -144,7 +148,6 @@ export class IncidentPdfService {
         sigData.includes('\\')
       );
 
-      // If it is a real handwritten text signature (like "Michael Johnson") and NOT a filename
       if (sigData && !isFilename && sigData.length > 2) {
         return `
           <div style="display: flex; flex-direction: column; align-items: flex-start;">
@@ -154,7 +157,6 @@ export class IncidentPdfService {
         `;
       }
 
-      // Fallback for missing image file or default signature box for the given person's name
       return `
         <div style="display: flex; flex-direction: column; align-items: flex-start;">
           <div style="font-family: 'Brush Script MT', cursive, sans-serif; font-size: 17px; color: #0f172a; border-bottom: 1px dashed #94a3b8; padding: 2px 14px;">${name}</div>
@@ -200,11 +202,97 @@ export class IncidentPdfService {
       `;
     };
 
+    // Helper for immediate actions
+    const getImmediateActions = (): any[] => {
+      let list: any[] = [];
+      if (headsUp.immediateActions && Array.isArray(headsUp.immediateActions) && headsUp.immediateActions.length > 0) {
+        list = headsUp.immediateActions;
+      } else if (initial.immediateActions && Array.isArray(initial.immediateActions) && initial.immediateActions.length > 0) {
+        list = initial.immediateActions;
+      } else if (actions && Array.isArray(actions) && actions.length > 0) {
+        list = actions.filter((a: any) => a.actionType === 'IMMEDIATE' || !a.actionType);
+      }
+      return list;
+    };
+    const immActionsList = getImmediateActions();
+
     // Form 1 Signatures
     const headsUpSig = headsUp.signature || headsUp.submittedBySignature || headsUp.submitted_by_signature || inc.signature || null;
     const headsUpSubmitter = headsUp.submittedBy || headsUp.submitted_by || reportedBy;
     const headsUpApprSig = headsUp.approverSignature || headsUp.approver_signature || null;
     const headsUpApprName = headsUp.approvedBy || headsUp.approved_by || 'Site HSE Manager';
+
+    const renderImmediateActionsRows = () => {
+      if (immActionsList.length > 0) {
+        return immActionsList.map(a => `
+          <tr>
+            <td>${a.action || a.actionItem || 'Cordon off area and perform immediate risk control.'}</td>
+            <td>${a.responsible || a.owner || headsUpSubmitter}</td>
+            <td>${a.timeImplemented || a.targetDate || 'Immediate'}</td>
+          </tr>
+        `).join('');
+      }
+      return `
+        <tr>
+          <td>${inc.correctiveAction || 'Cordon off area and perform immediate risk control.'}</td>
+          <td>${headsUpSubmitter}</td>
+          <td>Immediate</td>
+        </tr>
+      `;
+    };
+
+    // Injured Person details
+    const injuredName = initial.injuredPersonName || inc.injuredPersonName || 'N/A (No Injury / Near Miss)';
+    const injuredCompany = initial.injuredPersonCompany || contractor || 'N/A';
+    const injuredSupervisor = initial.injuredPersonSupervisor || 'N/A';
+    const injuredJobTitle = initial.injuredPersonJobTitle || 'N/A';
+    const lengthOfService = initial.lengthOfService || 'N/A';
+    const experienceInRole = initial.experienceInRole || 'N/A';
+    const workerActivity = initial.workerActivity || 'N/A';
+
+    // Injury / Illness Info
+    const natureOfInjury = initial.natureOfInjury || 'N/A';
+    const treatmentPrescribed = initial.treatmentPrescribed || (Array.isArray(initial.treatmentProvided) ? initial.treatmentProvided.join(', ') : initial.treatmentProvided) || 'First Aid';
+    const anticipatedAbsence = initial.anticipatedAbsence ? (String(initial.anticipatedAbsence).includes('day') ? initial.anticipatedAbsence : `${initial.anticipatedAbsence} days`) : '0 days';
+    const medicalTreatmentClass = initial.medicalTreatmentClass || initial.treatmentPrescribed || (initial.hasInjuryIllness ? 'Medical Treatment' : 'No Treatment');
+
+    // Accident Categories helper
+    const isAccidentCategory = (catName: string) => {
+      const accCats = initial.accidentCategories || [];
+      if (Array.isArray(accCats) && accCats.some((c: string) => c.toLowerCase().includes(catName.toLowerCase()))) return true;
+      return isCat(catName);
+    };
+
+    // Injury Types helper
+    const isInjuryType = (type: string) => {
+      const types = initial.injuryTypes || [];
+      if (Array.isArray(types) && types.some((t: string) => t.toLowerCase().includes(type.toLowerCase()))) return true;
+      return false;
+    };
+
+    // Body Parts helper
+    const getBodyPartSelectionList = (): string[] => {
+      if (!initial.bodyPartsInjured) return [];
+      let bp = initial.bodyPartsInjured;
+      if (typeof bp === 'string') {
+        try { bp = JSON.parse(bp); } catch (e) {}
+      }
+      if (Array.isArray(bp)) return bp.map((x: any) => typeof x === 'string' ? x : `${x.part || x.name}${x.side ? ` (${x.side})` : ''}`);
+      if (bp && bp.selections && Array.isArray(bp.selections)) {
+        return bp.selections.map((x: any) => typeof x === 'string' ? x : `${x.part || x.name}${x.side ? ` (${x.side})` : ''}`);
+      }
+      return [];
+    };
+    const selectedBodyPartsList = getBodyPartSelectionList();
+    const isBodyPartChecked = (partKey: string) => {
+      if (selectedBodyPartsList.length === 0) return partKey.toLowerCase().includes('no injury');
+      return selectedBodyPartsList.some(p => p.toLowerCase().includes(partKey.toLowerCase()));
+    };
+
+    // Initial Root Cause & Environmental Conditions & Equipment
+    const initialRootCause = initial.initialRootCause || 'Initial investigation under assessment.';
+    const environmentalConditions = initial.environmentalConditions || 'Normal';
+    const equipmentInvolved = initial.equipmentInvolved || 'None';
 
     // Form 2 Signatures (Submitter + Approver)
     const initialSig = initial.signature || initial.submittedBySignature || initial.submitted_by_signature || null;
@@ -398,7 +486,7 @@ export class IncidentPdfService {
                 <td class="lbl-cell">Location/Building:</td>
                 <td>${building}</td>
                 <td class="lbl-cell">Floor/Level:</td>
-                <td>Ground Floor</td>
+                <td>${inc.floorLevel || 'Ground Floor'}</td>
               </tr>
               <tr>
                 <td class="lbl-cell">Specific location:</td>
@@ -464,17 +552,13 @@ export class IncidentPdfService {
           <table class="nne-tbl">
             <thead>
               <tr class="dark-hdr">
-                <th>Action</th>
+                <th>Immediate Action Taken</th>
                 <th>Responsible</th>
                 <th>Time Implemented</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>${inc.correctiveAction || 'Cordon off area and perform immediate risk control.'}</td>
-                <td>${headsUpSubmitter}</td>
-                <td>Immediate</td>
-              </tr>
+              ${renderImmediateActionsRows()}
             </tbody>
           </table>
 
@@ -532,12 +616,40 @@ export class IncidentPdfService {
                 <td class="lbl-cell">Location/Building:</td>
                 <td>${building}</td>
                 <td class="lbl-cell">Floor/Level:</td>
-                <td>Ground Floor</td>
+                <td>${inc.floorLevel || 'Ground Floor'}</td>
               </tr>
             </tbody>
           </table>
 
-          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">2 Incident Records</div>
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">2 Injured / Ill Person Details</div>
+          <table class="nne-tbl">
+            <tbody>
+              <tr>
+                <td class="lbl-cell" style="width: 25%;">Injured Person Name:</td>
+                <td style="width: 25%;"><strong>${injuredName}</strong></td>
+                <td class="lbl-cell" style="width: 25%;">Company / Employer:</td>
+                <td style="width: 25%;">${injuredCompany}</td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">Manager / Supervisor:</td>
+                <td>${injuredSupervisor}</td>
+                <td class="lbl-cell">Job Title / Trade:</td>
+                <td>${injuredJobTitle}</td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">Length of Service:</td>
+                <td>${lengthOfService}</td>
+                <td class="lbl-cell">Experience in Role:</td>
+                <td>${experienceInRole}</td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">Worker Activity at Time:</td>
+                <td colspan="3">${workerActivity}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">3 Severity Assessment</div>
           <table class="nne-tbl">
             <tbody>
               <tr>
@@ -565,19 +677,72 @@ export class IncidentPdfService {
             </thead>
             <tbody>
               <tr>
-                <td>${renderCheckbox(isCat('Vehicle'), 'Contact with object/equipment')}</td>
-                <td>${renderCheckbox(isCat('Electrical'), 'Electrocution – electrical injury')}</td>
-                <td>${renderCheckbox(isCat('Equipment'), 'Defective tools/equipment')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Contact') || isAccidentCategory('Object'), 'Contact with object/equipment')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Electrical') || isAccidentCategory('Electrocution'), 'Electrocution – electrical injury')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Defective') || isAccidentCategory('Equipment'), 'Defective tools/equipment')}</td>
               </tr>
               <tr>
-                <td>${renderCheckbox(isCat('Tool'), 'Tool accidents')}</td>
-                <td>${renderCheckbox(isCat('Fall'), 'Scaffolding accidents')}</td>
-                <td>${renderCheckbox(isCat('Confined'), 'Asphyxiation – Confined space')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Manual') || isAccidentCategory('Handling'), 'Manual Handling')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Hazardous') || isAccidentCategory('Substance') || isAccidentCategory('Chemical'), 'Hazardous Substance')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Slip') || isAccidentCategory('Trip') || isAccidentCategory('Fall'), 'Slip / Trip / Fall')}</td>
               </tr>
               <tr>
-                <td>${renderCheckbox(isCat('Personal'), 'Cuts / Lacerations')}</td>
-                <td>${renderCheckbox(isCat('Vehicle'), 'Accidents involving machinery')}</td>
-                <td>${renderCheckbox(isCat('Near Miss'), 'Near Miss Event')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Tool'), 'Tool accidents')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Scaffold'), 'Scaffolding / Height accidents')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Confined') || isAccidentCategory('Asphyxiation'), 'Asphyxiation – Confined space')}</td>
+              </tr>
+              <tr>
+                <td>${renderCheckbox(isAccidentCategory('Cut') || isAccidentCategory('Laceration') || isAccidentCategory('Personal'), 'Cuts / Lacerations')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Vehicle') || isAccidentCategory('Machinery'), 'Accidents involving machinery/vehicle')}</td>
+                <td>${renderCheckbox(isAccidentCategory('Near Miss'), 'Near Miss Event')}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table class="nne-tbl">
+            <thead>
+              <tr class="dark-hdr">
+                <th colspan="4">Indicate Type(s) of Injury</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>${renderCheckbox(isInjuryType('Cut') || isInjuryType('Laceration'), 'Cut / Laceration')}</td>
+                <td>${renderCheckbox(isInjuryType('Burn'), 'Burn / Scald')}</td>
+                <td>${renderCheckbox(isInjuryType('Fracture') || isInjuryType('Break'), 'Fracture / Bone injury')}</td>
+                <td>${renderCheckbox(isInjuryType('Sprain') || isInjuryType('Strain'), 'Sprain / Strain')}</td>
+              </tr>
+              <tr>
+                <td>${renderCheckbox(isInjuryType('Bruise') || isInjuryType('Contusion'), 'Bruise / Contusion')}</td>
+                <td>${renderCheckbox(isInjuryType('Eye'), 'Eye Injury')}</td>
+                <td>${renderCheckbox(isInjuryType('Puncture'), 'Puncture Wound')}</td>
+                <td>${renderCheckbox(isInjuryType('Amputation'), 'Amputation')}</td>
+              </tr>
+              <tr>
+                <td>${renderCheckbox(isInjuryType('Internal'), 'Internal Injury')}</td>
+                <td>${renderCheckbox(isInjuryType('Foreign'), 'Foreign Body')}</td>
+                <td>${renderCheckbox(isInjuryType('Illness') || isInjuryType('Occupational'), 'Occupational Illness')}</td>
+                <td>${renderCheckbox(!initial.hasInjuryIllness || (Array.isArray(initial.injuryTypes) && initial.injuryTypes.length === 0), 'No Injury / N/A')}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">Injury / Illness Information</div>
+          <table class="nne-tbl">
+            <tbody>
+              <tr>
+                <td class="lbl-cell" style="width: 25%;">Nature of Injury:</td>
+                <td colspan="3"><strong>${natureOfInjury}</strong></td>
+              </tr>
+              <tr>
+                <td class="lbl-cell" style="width: 25%;">Treatment Provided:</td>
+                <td style="width: 25%;">${treatmentPrescribed}</td>
+                <td class="lbl-cell" style="width: 25%;">Anticipated Absence:</td>
+                <td style="width: 25%;">${anticipatedAbsence}</td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">Medical Classification:</td>
+                <td colspan="3"><strong>${medicalTreatmentClass}</strong></td>
               </tr>
             </tbody>
           </table>
@@ -587,13 +752,18 @@ export class IncidentPdfService {
             <div style="font-size: 9.5px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Indicate Parts of the Body Injured (Left or Right side if applicable)</div>
             <div style="display: flex; gap: 14px; align-items: center;">
               <div style="flex: 1;">
-                ${renderCheckbox(false, 'Head / Cranium')}
-                ${renderCheckbox(false, 'Shoulder (L/R)')}
-                ${renderCheckbox(false, 'Arm / Elbow')}
-                ${renderCheckbox(false, 'Hand / Finger')}
-                ${renderCheckbox(false, 'Leg / Knee')}
-                ${renderCheckbox(false, 'Foot / Ankle')}
-                ${renderCheckbox(true, 'No Injury / Near Miss')}
+                ${renderCheckbox(isBodyPartChecked('Head') || isBodyPartChecked('Cranium'), 'Head / Cranium')}
+                ${renderCheckbox(isBodyPartChecked('Shoulder'), 'Shoulder (L/R)')}
+                ${renderCheckbox(isBodyPartChecked('Arm') || isBodyPartChecked('Elbow'), 'Arm / Elbow')}
+                ${renderCheckbox(isBodyPartChecked('Hand') || isBodyPartChecked('Finger') || isBodyPartChecked('Wrist'), 'Hand / Finger / Wrist')}
+                ${renderCheckbox(isBodyPartChecked('Leg') || isBodyPartChecked('Knee'), 'Leg / Knee')}
+                ${renderCheckbox(isBodyPartChecked('Foot') || isBodyPartChecked('Ankle'), 'Foot / Ankle')}
+                ${renderCheckbox(selectedBodyPartsList.length === 0 || isBodyPartChecked('No Injury'), 'No Injury / Near Miss')}
+                ${selectedBodyPartsList.length > 0 ? `
+                  <div style="margin-top: 4px; font-size: 9px; font-weight: 700; color: #0f172a;">
+                    Selected Parts: <span style="font-weight: 600; color: #2563eb;">${selectedBodyPartsList.join(', ')}</span>
+                  </div>
+                ` : ''}
               </div>
               <div style="width: 120px; height: 95px; border: 1px dashed #94a3b8; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8fafc;">
                 <svg width="45" height="70" viewBox="0 0 100 150" fill="none" stroke="#475569" stroke-width="2">
@@ -608,6 +778,22 @@ export class IncidentPdfService {
               </div>
             </div>
           </div>
+
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">Initial Root Cause Assessment</div>
+          <table class="nne-tbl">
+            <tbody>
+              <tr>
+                <td class="lbl-cell" style="width: 25%;">Initial Root Cause:</td>
+                <td colspan="3"><strong>${initialRootCause}</strong></td>
+              </tr>
+              <tr>
+                <td class="lbl-cell" style="width: 25%;">Environmental Conditions:</td>
+                <td style="width: 25%;">${environmentalConditions}</td>
+                <td class="lbl-cell" style="width: 25%;">Equipment Involved:</td>
+                <td style="width: 25%;">${equipmentInvolved}</td>
+              </tr>
+            </tbody>
+          </table>
 
           <!-- Step 2 Signature -->
           <table class="nne-tbl">
@@ -716,7 +902,7 @@ export class IncidentPdfService {
               </tr>
               <tr>
                 <td class="lbl-cell" style="color: #dc2626;">Root Cause</td>
-                <td><strong>${inc.rootCause || 'Speed bump not installed at crossing point; incomplete site traffic calming infrastructure.'}</strong></td>
+                <td><strong>${inc.rootCause || initial.initialRootCause || 'Speed bump not installed at crossing point; incomplete site traffic calming infrastructure.'}</strong></td>
               </tr>
             </tbody>
           </table>
