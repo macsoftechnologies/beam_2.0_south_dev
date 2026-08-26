@@ -113,6 +113,11 @@ export class PlanSearchDto {
     @IsOptional()
     @IsNumber()
     @Type(() => Number)
+    pressure_testing_of_equipment?: number;
+
+    @IsOptional()
+    @IsNumber()
+    @Type(() => Number)
     pressure_tesing_of_equipment?: number;
 
     @IsOptional()

@@ -148,6 +148,11 @@ export class SearchRequestDto {
   @ToOptionalNumber()
   @IsNumber()
   @IsOptional()
+  pressure_testing_of_equipment?: number;
+
+  @ToOptionalNumber()
+  @IsNumber()
+  @IsOptional()
   pressure_tesing_of_equipment?: number;
 
   @ToOptionalNumber()

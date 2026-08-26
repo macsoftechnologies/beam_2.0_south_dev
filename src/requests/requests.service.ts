@@ -3142,7 +3142,8 @@ export class RequestsService implements OnModuleInit {
         if (dto.using_cranes_or_lifting !== undefined && dto.using_cranes_or_lifting !== null && Number(dto.using_cranes_or_lifting) === 1) {
           activeHraConds.push('lifting.using_cranes_or_lifting = 1');
         }
-        if (dto.pressure_tesing_of_equipment !== undefined && dto.pressure_tesing_of_equipment !== null && Number(dto.pressure_tesing_of_equipment) === 1) {
+        const pressVal = dto.pressure_testing_of_equipment ?? dto.pressure_tesing_of_equipment;
+        if (pressVal !== undefined && pressVal !== null && Number(pressVal) === 1) {
           activeHraConds.push('pressureTesting.pressure_testing_of_equipment = 1');
         }
         if (dto.working_at_height !== undefined && dto.working_at_height !== null && Number(dto.working_at_height) === 1) {
@@ -3203,9 +3204,10 @@ export class RequestsService implements OnModuleInit {
               { zeroStr: '0' }
             );
           } else if (hrasVal === 1) {
+            const pressVal = dto.pressure_testing_of_equipment ?? dto.pressure_tesing_of_equipment;
             const hasSpecificHraFilter = [
               dto.Hot_work, dto.working_on_electrical_system, dto.working_hazardious_substen,
-              dto.using_cranes_or_lifting, dto.pressure_tesing_of_equipment, dto.working_at_height,
+              dto.using_cranes_or_lifting, pressVal, dto.working_at_height,
               dto.working_confined_spaces, dto.power_on, dto.pressurization, dto.excavation_works
             ].some(v => v !== undefined && v !== null && Number(v) === 1);
 
@@ -3398,7 +3400,7 @@ export class RequestsService implements OnModuleInit {
       'permit_type', 'permit_under', 'night_shift', 'new_date', 'new_end_time',
       'hras', 'Request_status', 'Hot_work', 'working_on_electrical_system',
       'working_hazardious_substen', 'using_cranes_or_lifting',
-      'pressure_tesing_of_equipment', 'working_at_height', 'working_confined_spaces',
+      'pressure_testing_of_equipment', 'pressure_tesing_of_equipment', 'working_at_height', 'working_confined_spaces',
       'work_in_atex_area', 'securing_facilities', 'excavation_works',
       'specific_gloves', 'eye_protection', 'fall_protection', 'hearing_protection',
       'respiratory_protection', 'taskSpecificPPE', 'power_on', 'pressurization',
@@ -3634,9 +3636,10 @@ export class RequestsService implements OnModuleInit {
               { zeroStr: '0' }
             );
           } else if (hrasVal === 1) {
+            const pressVal = searchDto.pressure_testing_of_equipment ?? searchDto.pressure_tesing_of_equipment;
             const hasSpecificHraFilter = [
               searchDto.Hot_work, searchDto.working_on_electrical_system, searchDto.working_hazardious_substen,
-              searchDto.using_cranes_or_lifting, searchDto.pressure_tesing_of_equipment, searchDto.working_at_height,
+              searchDto.using_cranes_or_lifting, pressVal, searchDto.working_at_height,
               searchDto.working_confined_spaces, searchDto.power_on, searchDto.pressurization, searchDto.excavation_works
             ].some(v => v !== undefined && v !== null && Number(v) === 1);
 
@@ -3742,8 +3745,9 @@ export class RequestsService implements OnModuleInit {
         if (searchDto.using_cranes_or_lifting && Number(searchDto.using_cranes_or_lifting) === 1) {
           qb.andWhere('lifting.using_cranes_or_lifting = :useCrane', { useCrane: searchDto.using_cranes_or_lifting });
         }
-        if (searchDto.pressure_tesing_of_equipment && Number(searchDto.pressure_tesing_of_equipment) === 1) {
-          qb.andWhere('pressureTesting.pressure_testing_of_equipment = :pressTest', { pressTest: searchDto.pressure_tesing_of_equipment });
+        const planPressVal = searchDto.pressure_testing_of_equipment ?? searchDto.pressure_tesing_of_equipment;
+        if (planPressVal && Number(planPressVal) === 1) {
+          qb.andWhere('pressureTesting.pressure_testing_of_equipment = :pressTest', { pressTest: planPressVal });
         }
         if (searchDto.working_at_height && Number(searchDto.working_at_height) === 1) {
           qb.andWhere('height.working_at_height = :workHeight', { workHeight: searchDto.working_at_height });
