@@ -1,4 +1,5 @@
 import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsDateString, IsNumber } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
 
 export class ImmediateActionDto {
   @IsString()
@@ -66,6 +67,25 @@ export class CreateHeadsUpDto {
   @IsArray()
   @IsOptional()
   categories?: string[];
+
+  @IsNumber()
+  @IsOptional()
+  @Type(() => Number)
+  actualSeverity?: number;
+
+  @IsNumber()
+  @IsOptional()
+  @Type(() => Number)
+  potentialSeverity?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === '1' || value === true || value === 1) return true;
+    if (value === 'false' || value === '0' || value === false || value === 0) return false;
+    return value;
+  })
+  isHipo?: boolean;
 
   @IsString()
   @IsOptional()

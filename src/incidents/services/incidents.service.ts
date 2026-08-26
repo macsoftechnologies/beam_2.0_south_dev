@@ -278,6 +278,8 @@ export class IncidentsService implements OnModuleInit {
     const slaInitialDue = new Date(validTimestamp.getTime() + 24 * 60 * 60 * 1000);
     const slaInvestigationDue = new Date(validTimestamp.getTime() + 7 * 24 * 60 * 60 * 1000);
 
+    const { isHipo, investigationLevel } = this.deriveSeverityAndLevel(dto.actualSeverity, dto.potentialSeverity);
+
     const incident = this.incidentRepo.create({
       caseNumber,
       projectName: dto.projectName,
@@ -292,6 +294,10 @@ export class IncidentsService implements OnModuleInit {
       specificLocation: dto.specificLocation,
       contractorsInvolved: dto.contractorsInvolved,
       categories: dto.categories || [],
+      actualSeverity: dto.actualSeverity,
+      potentialSeverity: dto.potentialSeverity,
+      isHipo: dto.isHipo !== undefined ? dto.isHipo : isHipo,
+      investigationLevel,
       gatekeeperInformed: dto.gatekeeperInformed || false,
       gatekeeperName: dto.gatekeeperName,
       stage: IncidentStage.HEADS_UP,
