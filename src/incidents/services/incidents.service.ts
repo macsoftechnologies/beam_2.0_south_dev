@@ -172,6 +172,33 @@ export class IncidentsService implements OnModuleInit {
         }
       }
 
+      // Clean up existing database signatures by stripping 'uploads/signatures/', '/uploads/signatures/', 'uploads/', '/uploads/'
+      const cleanupSignatureQueries = [
+        `UPDATE \`incident_headsup\` SET \`signature\` = REPLACE(REPLACE(\`signature\`, '/uploads/signatures/', ''), '/uploads/', '') WHERE \`signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_headsup\` SET \`signature\` = REPLACE(REPLACE(\`signature\`, 'uploads/signatures/', ''), 'uploads/', '') WHERE \`signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_headsup\` SET \`approver_signature\` = REPLACE(REPLACE(\`approver_signature\`, '/uploads/signatures/', ''), '/uploads/', '') WHERE \`approver_signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_headsup\` SET \`approver_signature\` = REPLACE(REPLACE(\`approver_signature\`, 'uploads/signatures/', ''), 'uploads/', '') WHERE \`approver_signature\` LIKE '%uploads%'`,
+
+        `UPDATE \`incident_initial_reports\` SET \`signature\` = REPLACE(REPLACE(\`signature\`, '/uploads/signatures/', ''), '/uploads/', '') WHERE \`signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_initial_reports\` SET \`signature\` = REPLACE(REPLACE(\`signature\`, 'uploads/signatures/', ''), 'uploads/', '') WHERE \`signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_initial_reports\` SET \`approver_signature\` = REPLACE(REPLACE(\`approver_signature\`, '/uploads/signatures/', ''), '/uploads/', '') WHERE \`approver_signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_initial_reports\` SET \`approver_signature\` = REPLACE(REPLACE(\`approver_signature\`, 'uploads/signatures/', ''), 'uploads/', '') WHERE \`approver_signature\` LIKE '%uploads%'`,
+
+        `UPDATE \`incident_investigations\` SET \`reviewer_signature\` = REPLACE(REPLACE(\`reviewer_signature\`, '/uploads/signatures/', ''), '/uploads/', '') WHERE \`reviewer_signature\` LIKE '%uploads%'`,
+        `UPDATE \`incident_investigations\` SET \`reviewer_signature\` = REPLACE(REPLACE(\`reviewer_signature\`, 'uploads/signatures/', ''), 'uploads/', '') WHERE \`reviewer_signature\` LIKE '%uploads%'`,
+
+        `UPDATE \`incidents\` SET \`closure_signature\` = REPLACE(REPLACE(\`closure_signature\`, '/uploads/signatures/', ''), '/uploads/', '') WHERE \`closure_signature\` LIKE '%uploads%'`,
+        `UPDATE \`incidents\` SET \`closure_signature\` = REPLACE(REPLACE(\`closure_signature\`, 'uploads/signatures/', ''), 'uploads/', '') WHERE \`closure_signature\` LIKE '%uploads%'`,
+      ];
+
+      for (const q of cleanupSignatureQueries) {
+        try {
+          await this.incidentRepo.query(q);
+        } catch (e) {
+          // Ignore if table/column does not exist yet
+        }
+      }
+
       this.logger.log('✅ Incident tables auto-initialization check completed successfully.');
     } catch (err) {
       this.logger.error('❌ Failed to auto-create incident tables in MySQL', err);
@@ -501,6 +528,10 @@ export class IncidentsService implements OnModuleInit {
       investigation,
       actionItems,
     };
+  }
+
+  async findByCaseNumber(caseNumber: string): Promise<Incident | null> {
+    return await this.incidentRepo.findOne({ where: { caseNumber } });
   }
 
   /**

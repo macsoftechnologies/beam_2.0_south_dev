@@ -9,6 +9,8 @@ import { IncidentsService } from './services/incidents.service';
 import { IncidentSlaService } from './services/incident-sla.service';
 import { IncidentsController } from './controllers/incidents.controller';
 
+import { IncidentPdfService } from './services/incident-pdf.service';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -20,7 +22,7 @@ import { IncidentsController } from './controllers/incidents.controller';
     ]),
   ],
   controllers: [IncidentsController],
-  providers: [IncidentsService, IncidentSlaService],
-  exports: [IncidentsService],
+  providers: [IncidentsService, IncidentSlaService, IncidentPdfService],
+  exports: [IncidentsService, IncidentPdfService],
 })
 export class IncidentsModule {}

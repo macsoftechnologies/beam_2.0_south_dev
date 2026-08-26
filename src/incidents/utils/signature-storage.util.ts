@@ -2,12 +2,25 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
+ * Strips any leading '/uploads/signatures/', 'uploads/signatures/', '/uploads/', or 'uploads/'
+ * prefixes from a stored signature filename.
+ */
+export function cleanSignaturePath(sig: string): string {
+  if (!sig) return sig;
+  if (sig.startsWith('data:image')) return sig;
+  return sig
+    .replace(/^\/?uploads\/signatures\//, '')
+    .replace(/^\/?uploads\//, '');
+}
+
+/**
  * Saves a Base64 canvas signature string to disk as a PNG image file
- * and returns the relative static upload path.
+ * and returns ONLY the filename (without 'uploads/' prefix).
  */
 export function saveBase64Signature(base64Data: string, filenamePrefix: string): string {
-  if (!base64Data || !base64Data.startsWith('data:image')) {
-    return base64Data; // Return as-is if already a file URL or path
+  if (!base64Data) return base64Data;
+  if (!base64Data.startsWith('data:image')) {
+    return cleanSignaturePath(base64Data);
   }
 
   try {
@@ -27,9 +40,10 @@ export function saveBase64Signature(base64Data: string, filenamePrefix: string):
     const filePath = path.join(uploadsDir, filename);
 
     fs.writeFileSync(filePath, imageBuffer);
-    return `/uploads/signatures/${filename}`;
+    // Return ONLY the filename itself
+    return filename;
   } catch (error) {
     console.error('Error saving signature image file:', error);
-    return base64Data; // Fallback to raw base64 string
+    return base64Data;
   }
 }

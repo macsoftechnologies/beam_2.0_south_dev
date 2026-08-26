@@ -16,6 +16,7 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true, }),);
   app.enableCors();
   app.use('/subcontractors', express.static(join(process.cwd(), './uploads/subcontractors'), { redirect: false }));
+  app.use('/signatures', express.static(join(process.cwd(), './uploads/signatures'), { redirect: false }));
   app.use('/uploads', express.static(join(process.cwd(), './uploads'), { redirect: false }));
   app.use(bodyParser.json({ limit: '100mb' }));
   app.use(bodyParser.urlencoded({ limit: '500mb', extended: true }));

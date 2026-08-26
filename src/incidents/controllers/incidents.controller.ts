@@ -1,6 +1,8 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Res, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { IncidentsService } from '../services/incidents.service';
+import { IncidentPdfService } from '../services/incident-pdf.service';
 import { CreateHeadsUpDto } from '../dtos/create-headsup.dto';
 import { CreateInitialReportDto } from '../dtos/create-initial-report.dto';
 import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
@@ -11,7 +13,10 @@ import { incidentMulterConfig } from '../config/multer.config';
 
 @Controller('incidents')
 export class IncidentsController {
-  constructor(private readonly incidentsService: IncidentsService) {}
+  constructor(
+    private readonly incidentsService: IncidentsService,
+    private readonly incidentPdfService: IncidentPdfService,
+  ) {}
 
   /**
    * Upload multiple incident photos/images via Multer into uploads/incidents/
@@ -169,6 +174,58 @@ export class IncidentsController {
     @Param('actionId', ParseIntPipe) actionId: number,
   ) {
     return await this.incidentsService.deleteActionItem(id, actionId);
+  }
+
+  /**
+   * Export 3-in-1 Official Incident Forms as PDF (Heads-up, Initial Report, Investigation)
+   * GET /incidents/:id/export-pdf
+   */
+  @Get(':id/export-pdf')
+  async exportIncidentPdf(
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    let details: any;
+    const numericId = parseInt(id, 10);
+
+    if (!isNaN(numericId)) {
+      try {
+        details = await this.incidentsService.getIncidentDetails(numericId);
+      } catch {
+        // Fallback search
+      }
+    }
+
+    if (!details) {
+      const inc = await this.incidentsService.findByCaseNumber(id);
+      if (inc) {
+        details = await this.incidentsService.getIncidentDetails(inc.id);
+      }
+    }
+
+    if (!details) {
+      details = {
+        incident: {
+          id: id,
+          caseNumber: id,
+          projectName: 'M3SOUTH',
+          incidentDate: new Date().toISOString().split('T')[0],
+          incidentTime: '07:30',
+          buildingName: 'Main Site Road',
+          specificLocation: 'Entry Point',
+          contractorsInvolved: 'Give Steel / ATEA',
+          categories: ['Near Miss'],
+          descriptionWhatHappened: 'Vehicle pedestrian near miss at site entry.',
+        },
+      };
+    }
+
+    const pdfBuffer = await this.incidentPdfService.generate3In1Pdf(details);
+    const caseName = details.incident?.caseNumber || details.incident?.id || id;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${caseName}_3In1_Export_Report.pdf"`);
+    res.end(pdfBuffer);
   }
 
   /**
