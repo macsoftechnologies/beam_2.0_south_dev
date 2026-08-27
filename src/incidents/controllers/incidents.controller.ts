@@ -238,11 +238,14 @@ export class IncidentsController {
   }
 
   /**
-   * List incidents with filters matching all UI table dropdown columns
+   * List incidents with filters matching all UI table dropdown columns + pagination
    * GET /incidents
    */
   @Get()
   async findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('statusChip') statusChip?: string,
     @Query('stage') stage?: IncidentStage,
     @Query('isHipo') isHipo?: string,
     @Query('category') category?: string,
@@ -259,8 +262,13 @@ export class IncidentsController {
     const bId = buildingId ? parseInt(buildingId, 10) : undefined;
     const actSev = actualSeverity ? parseInt(actualSeverity, 10) : undefined;
     const potSev = potentialSeverity ? parseInt(potentialSeverity, 10) : undefined;
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? (limit.toLowerCase() === 'all' ? 0 : parseInt(limit, 10)) : 10;
 
     return await this.incidentsService.findAll({
+      page: pageNum,
+      limit: limitNum,
+      statusChip,
       stage,
       isHipo: hipoBool,
       category,

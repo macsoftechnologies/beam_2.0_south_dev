@@ -599,6 +599,9 @@ export class IncidentsService implements OnModuleInit {
    * List incidents with filters for all UI table dropdown columns
    */
   async findAll(query: {
+    page?: number;
+    limit?: number;
+    statusChip?: string;
     stage?: IncidentStage;
     isHipo?: boolean;
     category?: string;
@@ -612,6 +615,16 @@ export class IncidentsService implements OnModuleInit {
     search?: string;
   }) {
     const qb = this.incidentRepo.createQueryBuilder('incident');
+
+    if (query.statusChip) {
+      if (query.statusChip === 'open') {
+        qb.andWhere('incident.stage != :closedStage', { closedStage: 'CLOSED' });
+      } else if (query.statusChip === 'closed') {
+        qb.andWhere('incident.stage = :closedStage', { closedStage: 'CLOSED' });
+      } else if (query.statusChip === 'hipo') {
+        qb.andWhere('incident.isHipo = true');
+      }
+    }
 
     if (query.stage) {
       qb.andWhere('incident.stage = :stage', { stage: query.stage });
@@ -654,7 +667,25 @@ export class IncidentsService implements OnModuleInit {
     }
 
     qb.orderBy('incident.id', 'DESC');
-    return await qb.getMany();
+
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit !== undefined ? query.limit : 10;
+
+    if (limit > 0) {
+      const skip = (page - 1) * limit;
+      qb.skip(skip).take(limit);
+    }
+
+    const [data, total] = await qb.getManyAndCount();
+    const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
+
+    return {
+      data,
+      total,
+      page,
+      limit: limit > 0 ? limit : total,
+      totalPages,
+    };
   }
 
   /**
