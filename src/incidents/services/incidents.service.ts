@@ -475,8 +475,21 @@ export class IncidentsService implements OnModuleInit {
     if (dto.fiveWhysData !== undefined) investigation.fiveWhysData = dto.fiveWhysData;
     if (dto.rootCauses !== undefined) investigation.rootCauses = dto.rootCauses;
     if (dto.contributingFactors !== undefined) investigation.contributingFactors = dto.contributingFactors;
-    if (dto.mandatoryAttachments !== undefined) investigation.mandatoryAttachments = dto.mandatoryAttachments;
-    if (dto.signatures !== undefined) investigation.signatures = dto.signatures;
+    if (dto.signatures !== undefined) {
+      if (Array.isArray(dto.signatures)) {
+        investigation.signatures = dto.signatures.map((sigObj: any, idx: number) => {
+          if (sigObj && sigObj.signature) {
+            return {
+              ...sigObj,
+              signature: saveBase64Signature(sigObj.signature, `sig_invest_${incidentId}_${idx + 1}`),
+            };
+          }
+          return sigObj;
+        });
+      } else {
+        investigation.signatures = dto.signatures;
+      }
+    }
 
     const savedInvestigation = await this.investigationRepo.save(investigation);
     return { incident: savedIncident, investigation: savedInvestigation };
