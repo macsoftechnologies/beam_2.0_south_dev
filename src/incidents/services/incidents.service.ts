@@ -492,6 +492,24 @@ export class IncidentsService implements OnModuleInit {
     }
 
     const savedInvestigation = await this.investigationRepo.save(investigation);
+
+    // Save corrective action items if provided in DTO
+    const incomingActions = dto.correctiveActions || dto.actionItems;
+    if (incomingActions && Array.isArray(incomingActions) && incomingActions.length > 0) {
+      const correctiveEntities = incomingActions.map((act: any) =>
+        this.actionItemRepo.create({
+          incidentId: savedIncident.id,
+          actionType: ActionItemType.CORRECTIVE,
+          action: act.action || act.correctiveAction || act.description || 'Corrective action implemented',
+          responsible: act.responsible || act.assignedTo || act.owner || 'Investigator',
+          targetDate: (act.targetDate || act.date) ? ((act.targetDate || act.date) as any) : undefined,
+          status: act.status || ActionItemStatus.COMPLETED,
+          updatedBy: (dto.signatures && dto.signatures.length > 0) ? dto.signatures[0].name : 'Investigator',
+        }),
+      );
+      await this.actionItemRepo.save(correctiveEntities);
+    }
+
     return { incident: savedIncident, investigation: savedInvestigation };
   }
 

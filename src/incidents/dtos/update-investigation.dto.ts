@@ -33,4 +33,12 @@ export class UpdateInvestigationDto {
   @IsArray()
   @IsOptional()
   signatures?: InvestigationSignature[];
+
+  @IsArray()
+  @IsOptional()
+  actionItems?: any[];
+
+  @IsArray()
+  @IsOptional()
+  correctiveActions?: any[];
 }
