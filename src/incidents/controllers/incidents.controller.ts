@@ -229,6 +229,19 @@ export class IncidentsController {
   }
 
   /**
+   * Get aggregated dashboard statistics (KPIs, pipeline, severity, body parts)
+   * GET /incidents/stats
+   */
+  @Get('stats')
+  async getDashboardStats(
+    @Query('building') building?: string,
+    @Query('contractor') contractor?: string,
+    @Query('dateRange') dateRange?: string,
+  ) {
+    return await this.incidentsService.getDashboardStats({ building, contractor, dateRange });
+  }
+
+  /**
    * Get complete details of a single incident across all stages
    * GET /incidents/:id
    */

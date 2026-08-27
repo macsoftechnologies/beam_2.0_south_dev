@@ -172,6 +172,19 @@ export class ObservationsController {
   }
 
   /**
+   * Get aggregated Safety Observations statistics (KPIs, weekly trends, contractor compliance, categories, risk distribution, body parts)
+   * GET /observations/stats
+   */
+  @Get('stats')
+  async getDashboardStats(
+    @Query('building') building?: string,
+    @Query('contractor') contractor?: string,
+    @Query('range') range?: string,
+  ) {
+    return await this.obsService.getDashboardStats({ building, contractor, range });
+  }
+
+  /**
    * Get single observation details along with complete audit trail timeline history
    * GET /observations/:id
    */
