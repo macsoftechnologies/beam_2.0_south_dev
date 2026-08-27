@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { Repository, Like, In } from 'typeorm';
 import { Incident, IncidentStage, InvestigationLevel } from '../entities/incident.entity';
 import { IncidentHeadsUp } from '../entities/incident-headsup.entity';
 import { IncidentInitialReport } from '../entities/incident-initial-report.entity';
@@ -678,6 +678,22 @@ export class IncidentsService implements OnModuleInit {
 
     const [data, total] = await qb.getManyAndCount();
     const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
+
+    if (data.length > 0) {
+      const incidentIds = data.map((i) => i.id);
+      const initialReports = await this.initialReportRepo.find({
+        where: { incidentId: In(incidentIds) },
+      });
+      const initialMap = new Map(initialReports.map((ir) => [ir.incidentId, ir]));
+
+      data.forEach((inc: any) => {
+        const ir = initialMap.get(inc.id);
+        if (ir) {
+          inc.bodyPartsInjured = ir.bodyPartsInjured;
+          inc.initialReport = ir;
+        }
+      });
+    }
 
     return {
       data,
