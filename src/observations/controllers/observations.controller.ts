@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Put, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import 'multer';
 import { ObservationsService } from '../services/observations.service';
 import { CreateObservationDto } from '../dtos/create-observation.dto';
 import { ContractorReviewDto, ReassignObservationDto, ResolveObservationDto, CloseObservationDto, EscalateObservationDto } from '../dtos/workflow.dto';
@@ -16,7 +17,7 @@ export class ObservationsController {
    */
   @Post('upload-images')
   @UseInterceptors(FilesInterceptor('files', 10, observationMulterConfig))
-  uploadMultipleImages(@UploadedFiles() files: Express.Multer.File[]) {
+  uploadMultipleImages(@UploadedFiles() files: any[]) {
     if (!files || files.length === 0) {
       throw new BadRequestException('No photo files were provided for upload.');
     }
@@ -37,7 +38,7 @@ export class ObservationsController {
   @UseInterceptors(FilesInterceptor('photos', 10, observationMulterConfig))
   async createObservation(
     @Body() dto: CreateObservationDto,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFiles() files?: any[],
   ) {
     let photosList: string[] = [];
 
@@ -73,7 +74,7 @@ export class ObservationsController {
   async contractorReview(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ContractorReviewDto,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFiles() files?: any[],
   ) {
     let photosList: string[] = [];
 
@@ -121,7 +122,7 @@ export class ObservationsController {
   async resolveObservation(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ResolveObservationDto,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFiles() files?: any[],
   ) {
     let photosList: string[] = [];
 

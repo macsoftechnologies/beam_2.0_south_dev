@@ -1,3 +1,4 @@
+import 'multer';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
@@ -25,7 +26,7 @@ export const incidentMulterConfig = {
       cb(null, `inc_${Date.now()}_${randomName}${fileExt}`);
     },
   }),
-  fileFilter: (req: any, file: Express.Multer.File, cb: any) => {
+  fileFilter: (req: any, file: any, cb: any) => {
     // Accept images and document attachments
     if (file.mimetype.match(/\/(jpg|jpeg|png|gif|webp|heic|heif|pdf|msword|vnd.openxmlformats-officedocument.wordprocessingml.document)$/)) {
       cb(null, true);

@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, Res, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import 'multer';
 import type { Response } from 'express';
 import { IncidentsService } from '../services/incidents.service';
 import { IncidentPdfService } from '../services/incident-pdf.service';
@@ -24,7 +25,7 @@ export class IncidentsController {
    */
   @Post('upload-images')
   @UseInterceptors(FilesInterceptor('files', 10, incidentMulterConfig))
-  uploadMultipleImages(@UploadedFiles() files: Express.Multer.File[]) {
+  uploadMultipleImages(@UploadedFiles() files: any[]) {
     if (!files || files.length === 0) {
       throw new BadRequestException('No image files were provided for upload.');
     }
@@ -42,7 +43,7 @@ export class IncidentsController {
    */
   @Post('upload-image')
   @UseInterceptors(FileInterceptor('file', incidentMulterConfig))
-  uploadSingleImage(@UploadedFile() file: Express.Multer.File) {
+  uploadSingleImage(@UploadedFile() file: any) {
     if (!file) {
       throw new BadRequestException('No image file was provided for upload.');
     }
@@ -82,7 +83,7 @@ export class IncidentsController {
   async submitInitialReport(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateInitialReportDto,
-    @UploadedFiles() files?: Express.Multer.File[],
+    @UploadedFiles() files?: any[],
   ) {
     let photosList: string[] = dto.photos || [];
 

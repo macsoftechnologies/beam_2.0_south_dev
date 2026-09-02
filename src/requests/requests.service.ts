@@ -3244,6 +3244,43 @@ export class RequestsService implements OnModuleInit {
           zoneEntities.forEach((z) => zoneLookupMap.set(z.id, z.zone));
         }
 
+        // Fetch Opened & Closed logs for all requests in batch
+        const formatLogTime = (date: Date | string | undefined | null): string => {
+          if (!date) return '';
+          const d = date instanceof Date ? date : new Date(date);
+          if (isNaN(d.getTime())) return String(date);
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        };
+
+        const searchRequestIds = rawRequests.map((r) => r.id);
+        const searchOpenCloseLogsMap = new Map<number, { openTime?: string | Date; openedBy?: string; closeTime?: string | Date; closedBy?: string }>();
+        if (searchRequestIds.length > 0) {
+          const logs = await this.logRepo
+            .createQueryBuilder('log')
+            .leftJoinAndMapOne('log.user', User, 'user', 'log.userId = user.id')
+            .where('log.requestId IN (:...searchRequestIds) AND LOWER(TRIM(log.requestType)) IN (:...types)', {
+              searchRequestIds,
+              types: ['opened', 'open', 'closed', 'close'],
+            })
+            .orderBy('log.id', 'ASC')
+            .getMany();
+
+          for (const l of logs) {
+            const entry = searchOpenCloseLogsMap.get(l.requestId) || {};
+            const typeLower = (l.requestType || '').toLowerCase().trim();
+            const userName = (l as any).user?.username || (l as any).user?.first_name || '';
+            if (typeLower === 'opened' || typeLower === 'open') {
+              entry.openTime = l.createdTime;
+              entry.openedBy = userName;
+            } else if (typeLower === 'closed' || typeLower === 'close') {
+              entry.closeTime = l.createdTime;
+              entry.closedBy = userName;
+            }
+            searchOpenCloseLogsMap.set(l.requestId, entry);
+          }
+        }
+
         // Map responses to match legacy format and resolve Room, Building, Level and Zone names
         const dataList: any[] = [];
         for (const req of rawRequests) {
@@ -3345,6 +3382,26 @@ export class RequestsService implements OnModuleInit {
 
           if (flatObj.course_of_actions !== undefined) {
             flatObj.course_of_action = flatObj.course_of_actions;
+          }
+
+          const logInfo = searchOpenCloseLogsMap.get(req.id);
+          if (logInfo) {
+            if (logInfo.openTime) {
+              flatObj.open_time = formatLogTime(logInfo.openTime);
+              flatObj.check_in_time = logInfo.openTime;
+            }
+            if (logInfo.openedBy) {
+              flatObj.opened_by = logInfo.openedBy;
+              flatObj.check_in_user = logInfo.openedBy;
+            }
+            if (logInfo.closeTime) {
+              flatObj.close_time = formatLogTime(logInfo.closeTime);
+              flatObj.check_out_time = logInfo.closeTime;
+            }
+            if (logInfo.closedBy) {
+              flatObj.closed_by = logInfo.closedBy;
+              flatObj.check_out_user = logInfo.closedBy;
+            }
           }
 
           // Fetch files & notes
@@ -3797,6 +3854,43 @@ export class RequestsService implements OnModuleInit {
           zoneEntities.forEach((z) => zoneLookupMap.set(z.id, z.zone));
         }
 
+        // Fetch Opened & Closed logs for all requests in batch
+        const formatLogTime = (date: Date | string | undefined | null): string => {
+          if (!date) return '';
+          const d = date instanceof Date ? date : new Date(date);
+          if (isNaN(d.getTime())) return String(date);
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        };
+
+        const planRequestIds = rawRequests.map((r) => r.id);
+        const planOpenCloseLogsMap = new Map<number, { openTime?: string | Date; openedBy?: string; closeTime?: string | Date; closedBy?: string }>();
+        if (planRequestIds.length > 0) {
+          const logs = await this.logRepo
+            .createQueryBuilder('log')
+            .leftJoinAndMapOne('log.user', User, 'user', 'log.userId = user.id')
+            .where('log.requestId IN (:...planRequestIds) AND LOWER(TRIM(log.requestType)) IN (:...types)', {
+              planRequestIds,
+              types: ['opened', 'open', 'closed', 'close'],
+            })
+            .orderBy('log.id', 'ASC')
+            .getMany();
+
+          for (const l of logs) {
+            const entry = planOpenCloseLogsMap.get(l.requestId) || {};
+            const typeLower = (l.requestType || '').toLowerCase().trim();
+            const userName = (l as any).user?.username || (l as any).user?.first_name || '';
+            if (typeLower === 'opened' || typeLower === 'open') {
+              entry.openTime = l.createdTime;
+              entry.openedBy = userName;
+            } else if (typeLower === 'closed' || typeLower === 'close') {
+              entry.closeTime = l.createdTime;
+              entry.closedBy = userName;
+            }
+            planOpenCloseLogsMap.set(l.requestId, entry);
+          }
+        }
+
         // --- Build flat response ---
         const dataList: any[] = [];
         for (const req of rawRequests) {
@@ -3893,6 +3987,26 @@ export class RequestsService implements OnModuleInit {
 
           if (flatObj.course_of_actions !== undefined) {
             flatObj.course_of_action = flatObj.course_of_actions;
+          }
+
+          const logInfo = planOpenCloseLogsMap.get(req.id);
+          if (logInfo) {
+            if (logInfo.openTime) {
+              flatObj.open_time = formatLogTime(logInfo.openTime);
+              flatObj.check_in_time = logInfo.openTime;
+            }
+            if (logInfo.openedBy) {
+              flatObj.opened_by = logInfo.openedBy;
+              flatObj.check_in_user = logInfo.openedBy;
+            }
+            if (logInfo.closeTime) {
+              flatObj.close_time = formatLogTime(logInfo.closeTime);
+              flatObj.check_out_time = logInfo.closeTime;
+            }
+            if (logInfo.closedBy) {
+              flatObj.closed_by = logInfo.closedBy;
+              flatObj.check_out_user = logInfo.closedBy;
+            }
           }
 
           const files = await this.ramsFileRepo.find({
@@ -5634,7 +5748,7 @@ export class RequestsService implements OnModuleInit {
         newEndTime: dto.New_End_Time ?? originalRequest.newEndTime,
         nightShift: isNightShift ? '1' : '0',
         numberOfWorkers: dto.Number_Of_Workers ?? originalRequest.numberOfWorkers,
-        safetyPrecautions: originalRequest.safetyPrecautions,
+        safetyPrecautions: '',
       });
 
       const saved = await this.requestRepo.save(newRequest);

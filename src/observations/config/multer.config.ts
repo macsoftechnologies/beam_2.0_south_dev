@@ -1,3 +1,4 @@
+import 'multer';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
@@ -25,7 +26,7 @@ export const observationMulterConfig = {
       cb(null, `obs_${Date.now()}_${randomName}${fileExt}`);
     },
   }),
-  fileFilter: (req: any, file: Express.Multer.File, cb: any) => {
+  fileFilter: (req: any, file: any, cb: any) => {
     if (file.mimetype.match(/\/(jpg|jpeg|png|gif|webp|heic|heif|pdf)$/)) {
       cb(null, true);
     } else {
