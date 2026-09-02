@@ -39,6 +39,7 @@ export class IncidentsService implements OnModuleInit {
         CREATE TABLE IF NOT EXISTS \`incidents\` (
           \`id\` INT AUTO_INCREMENT PRIMARY KEY,
           \`case_number\` VARCHAR(100) NOT NULL UNIQUE,
+          \`title\` VARCHAR(255) NULL,
           \`project_name\` VARCHAR(255) NULL,
           \`project_id\` INT NULL,
           \`incident_date\` DATE NULL,
@@ -142,6 +143,7 @@ export class IncidentsService implements OnModuleInit {
 
       // Ensure approval and review columns exist on existing tables
       const alterQueries = [
+        `ALTER TABLE \`incidents\` ADD COLUMN \`title\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`closed_by\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`closed_time\` DATETIME NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`closure_comments\` TEXT NULL`,
@@ -282,6 +284,7 @@ export class IncidentsService implements OnModuleInit {
 
     const incident = this.incidentRepo.create({
       caseNumber,
+      title: dto.title,
       projectName: dto.projectName,
       projectId: dto.projectId,
       incidentDate: dto.incidentDate,
@@ -673,7 +676,7 @@ export class IncidentsService implements OnModuleInit {
     if (query.search) {
       const searchLike = `%${query.search}%`;
       qb.andWhere(
-        `(incident.caseNumber LIKE :searchLike OR incident.projectName LIKE :searchLike OR incident.contractorsInvolved LIKE :searchLike OR incident.buildingName LIKE :searchLike OR JSON_SEARCH(incident.categories, 'one', :searchLike) IS NOT NULL)`,
+        `(incident.caseNumber LIKE :searchLike OR incident.title LIKE :searchLike OR incident.projectName LIKE :searchLike OR incident.contractorsInvolved LIKE :searchLike OR incident.buildingName LIKE :searchLike OR JSON_SEARCH(incident.categories, 'one', :searchLike) IS NOT NULL)`,
         { searchLike },
       );
     }

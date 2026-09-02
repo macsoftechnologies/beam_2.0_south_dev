@@ -21,6 +21,9 @@ export class Incident {
   @Column({ name: 'case_number', type: 'varchar', length: 100, unique: true })
   caseNumber: string;
 
+  @Column({ name: 'title', type: 'varchar', length: 255, nullable: true })
+  title?: string;
+
   @Column({ name: 'project_name', type: 'varchar', length: 255, nullable: true })
   projectName?: string;
 

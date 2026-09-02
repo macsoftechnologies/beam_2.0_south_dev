@@ -25,6 +25,10 @@ export class ImmediateActionDto {
 
 export class CreateHeadsUpDto {
   @IsString()
+  @IsOptional()
+  title?: string;
+
+  @IsString()
   @IsNotEmpty()
   projectName: string;
 

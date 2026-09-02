@@ -1040,11 +1040,13 @@ export class IncidentPdfService {
             <tbody>
               <tr>
                 <td class="lbl-cell" style="width: 22%;">Project Name:</td>
-                <td colspan="3"><strong>${project}</strong></td>
+                <td><strong>${project}</strong></td>
+                <td class="lbl-cell" style="width: 22%;">Case Number:</td>
+                <td><strong>${caseNo}</strong></td>
               </tr>
               <tr>
-                <td class="lbl-cell">Title / Case number:</td>
-                <td colspan="3"><strong>${caseNo} — ${title}</strong></td>
+                <td class="lbl-cell">Title:</td>
+                <td colspan="3"><strong>${title}</strong></td>
               </tr>
               <tr>
                 <td class="lbl-cell">Date (YYYY-MM-DD)</td>
@@ -1171,11 +1173,13 @@ export class IncidentPdfService {
               <tbody>
                 <tr>
                   <td class="lbl-cell" style="width: 22%;">Project Name:</td>
-                  <td colspan="3"><strong>${project}</strong></td>
+                  <td><strong>${project}</strong></td>
+                  <td class="lbl-cell" style="width: 22%;">Case Number:</td>
+                  <td><strong>${caseNo}</strong></td>
                 </tr>
                 <tr>
-                  <td class="lbl-cell">Title / Case number:</td>
-                  <td colspan="3"><strong>${caseNo} — ${title}</strong></td>
+                  <td class="lbl-cell">Title:</td>
+                  <td colspan="3"><strong>${title}</strong></td>
                 </tr>
                 <tr>
                   <td class="lbl-cell">Date (YYYY-MM-DD)</td>
