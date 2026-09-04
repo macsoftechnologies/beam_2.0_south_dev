@@ -30,9 +30,51 @@ export class UpdateInvestigationDto {
   @IsOptional()
   mandatoryAttachments?: MandatoryAttachmentChecklist;
 
+  @IsOptional()
+  environmentalDetails?: any;
+
+  @IsOptional()
+  propertyDamageDetails?: any;
+
   @IsArray()
   @IsOptional()
   signatures?: InvestigationSignature[];
+
+  @IsArray()
+  @IsOptional()
+  team?: any[];
+
+  @IsArray()
+  @IsOptional()
+  witnesses?: any[];
+
+  @IsString()
+  @IsOptional()
+  effectDescription?: string;
+
+  @IsString()
+  @IsOptional()
+  effect?: string;
+
+  @IsString()
+  @IsOptional()
+  lessonsLearned?: string;
+
+  @IsString()
+  @IsOptional()
+  preventativeMeasures?: string;
+
+  @IsOptional()
+  preSeverity?: number;
+
+  @IsOptional()
+  postSeverity?: number;
+
+  @IsOptional()
+  severityBefore?: number;
+
+  @IsOptional()
+  severityAfter?: number;
 
   @IsArray()
   @IsOptional()
@@ -41,4 +83,24 @@ export class UpdateInvestigationDto {
   @IsArray()
   @IsOptional()
   correctiveActions?: any[];
+
+  @IsString()
+  @IsOptional()
+  editedBy?: string;
+
+  @IsString()
+  @IsOptional()
+  editorRole?: string;
+
+  @IsString()
+  @IsOptional()
+  editReason?: string;
+
+  @IsString()
+  @IsOptional()
+  editorSignature?: string;
+
+  @IsString()
+  @IsOptional()
+  changes?: string;
 }

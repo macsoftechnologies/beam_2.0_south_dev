@@ -142,4 +142,13 @@ export class CreateHeadsUpDto {
   @IsString()
   @IsOptional()
   signature?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === '1' || value === true || value === 1) return true;
+    if (value === 'false' || value === '0' || value === false || value === 0) return false;
+    return value;
+  })
+  noFurtherInvestigation?: boolean;
 }

@@ -27,18 +27,22 @@ export class NotificationsController {
     @Request() req: any,
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '10',
+    @Query('module') module?: string,
   ) {
     const p = Math.max(1, parseInt(page, 10) || 1);
     const l = Math.max(1, Math.min(100, parseInt(limit, 10) || 10));
-    return this.notificationsService.getNotificationsForUser(req.user.userId, p, l);
+    return this.notificationsService.getNotificationsForUser(req.user.userId, p, l, module);
   }
 
   /**
    * Get unread notifications count.
    */
   @Get('unread-count')
-  async getUnreadCount(@Request() req: any) {
-    const count = await this.notificationsService.getUnreadCount(req.user.userId);
+  async getUnreadCount(
+    @Request() req: any,
+    @Query('module') module?: string,
+  ) {
+    const count = await this.notificationsService.getUnreadCount(req.user.userId, module);
     return { count };
   }
 

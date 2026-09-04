@@ -104,6 +104,11 @@ export class CloseObservationDto {
   @IsNotEmpty()
   closedBy: string;
 
+  @IsNumber()
+  @IsOptional()
+  @Type(() => Number)
+  closedByUserId?: number;
+
   @IsString()
   @IsOptional()
   closureComments?: string;

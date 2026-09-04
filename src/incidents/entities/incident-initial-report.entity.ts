@@ -81,6 +81,15 @@ export class IncidentInitialReport {
   @Column({ name: 'equipment_involved', type: 'varchar', length: 255, nullable: true })
   equipmentInvolved?: string;
 
+  @Column({ name: 'environmental_details', type: 'json', nullable: true })
+  environmentalDetails?: any;
+
+  @Column({ name: 'property_damage_details', type: 'json', nullable: true })
+  propertyDamageDetails?: any;
+
+  @Column({ name: 'immediate_actions', type: 'json', nullable: true })
+  immediateActions?: any[];
+
   @Column({ name: 'submitted_by', type: 'varchar', length: 255, nullable: true })
   submittedBy?: string;
 
@@ -101,4 +110,10 @@ export class IncidentInitialReport {
 
   @Column({ name: 'approved_time', type: 'datetime', nullable: true })
   approvedTime?: Date;
+
+  @Column({ name: 'edit_history', type: 'json', nullable: true })
+  editHistory?: any[];
+
+  @Column({ name: 'no_further_investigation', type: 'boolean', default: false })
+  noFurtherInvestigation: boolean;
 }

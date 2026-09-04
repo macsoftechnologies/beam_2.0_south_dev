@@ -57,3 +57,25 @@ export class CloseIncidentDto {
   @IsOptional()
   signature?: string;
 }
+
+export class ReturnForRevisionDto {
+  @IsString()
+  @IsNotEmpty()
+  stage: 'HEADS_UP' | 'INITIAL_REPORT' | 'INVESTIGATION';
+
+  @IsString()
+  @IsNotEmpty()
+  returnedBy: string;
+
+  @IsString()
+  @IsOptional()
+  role?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  reason: string;
+
+  @IsString()
+  @IsOptional()
+  signature?: string;
+}

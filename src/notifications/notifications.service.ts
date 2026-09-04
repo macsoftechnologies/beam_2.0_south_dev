@@ -222,19 +222,216 @@ export class NotificationsService {
   }
 
   /**
-   * Get paginated notifications list for a user.
+   * Centralized method to trigger in-app notifications for Safety Observations across all lifecycle events.
+   */
+  async triggerObservationNotification(
+    observation: {
+      id: number;
+      observationNumber: string;
+      subject: string;
+      safetyCategory?: string;
+      riskLevel?: string;
+      assignedContractorId?: number | null;
+      assignedContractorName?: string | null;
+      buildingName?: string | null;
+      createdByUserId?: number | null;
+      createdByUserName?: string | null;
+    },
+    actionType: 'CREATED' | 'REASSIGNED' | 'CONTRACTOR_ACCEPTED' | 'CONTRACTOR_REJECTED' | 'RESOLVED' | 'CLOSED',
+    actorUserId?: number,
+    actorName?: string,
+    actorRole?: string,
+    extraRemarks?: string,
+  ): Promise<void> {
+    try {
+      const contractorId = observation.assignedContractorId;
+      const contractorName = (observation.assignedContractorName || '').trim();
+
+      const actorDisplayName = actorName || (actorUserId ? await this.getUserDisplayName(actorUserId) : 'User');
+      const recipients: User[] = [];
+
+      let title = 'Safety Observation Update';
+      let message = '';
+      let notifType = `OBSERVATION_${actionType}`;
+
+      // SCENARIO 1: Observation Created, Reassigned, or Closed -> Notify Contractor Users
+      if (actionType === 'CREATED' || actionType === 'REASSIGNED' || actionType === 'CLOSED') {
+        let resolvedSubId: number | null = contractorId ?? null;
+        let matchedContractorName = contractorName;
+
+        if (contractorId) {
+          const sub = await this.subcontractorRepo.findOne({ where: { id: contractorId } });
+          if (sub) {
+            matchedContractorName = sub.subContractorName || contractorName;
+          } else {
+            const userRec = await this.userRepo.findOne({ where: { id: contractorId } });
+            if (userRec) {
+              if (userRec.typeId) resolvedSubId = userRec.typeId;
+              matchedContractorName = userRec.username || contractorName;
+            }
+          }
+        } else if (contractorName) {
+          const sub = await this.subcontractorRepo.createQueryBuilder('sub')
+            .where('sub.subContractorName LIKE :name', { name: `%${contractorName}%` })
+            .getOne();
+          if (sub) {
+            resolvedSubId = sub.id;
+            matchedContractorName = sub.subContractorName || contractorName;
+          }
+        }
+
+        const contractorUsersQuery = this.userRepo.createQueryBuilder('user')
+          .leftJoin('employees', 'emp', 'user.empId = emp.id')
+          .where('(user.userType = :subcon OR user.userType LIKE :subconLike)', {
+            subcon: 'Subcontractor',
+            subconLike: '%Subcontractor%',
+          });
+
+        const conditions: string[] = [];
+        const params: Record<string, any> = {};
+
+        if (resolvedSubId) {
+          conditions.push('user.typeId = :subId', 'emp.subContId = :subId', 'user.id = :subId');
+          params.subId = resolvedSubId;
+        }
+        if (contractorId && contractorId !== resolvedSubId) {
+          conditions.push('user.typeId = :contractorId', 'user.id = :contractorId');
+          params.contractorId = contractorId;
+        }
+        if (matchedContractorName) {
+          conditions.push('user.username LIKE :cName');
+          params.cName = `%${matchedContractorName}%`;
+        }
+
+        if (conditions.length > 0) {
+          contractorUsersQuery.andWhere(`(${conditions.join(' OR ')})`, params);
+        }
+
+        const foundContractors = await contractorUsersQuery.getMany();
+        recipients.push(...foundContractors);
+
+        if (recipients.length === 0 && contractorId) {
+          const directUser = await this.userRepo.findOne({ where: { id: contractorId } });
+          if (directUser) recipients.push(directUser);
+        }
+
+        if (actionType === 'CREATED') {
+          title = 'New Safety Observation Assigned';
+          message = `Safety Observation ${observation.observationNumber} (${observation.subject || observation.safetyCategory || 'New Finding'}) has been assigned to ${matchedContractorName || 'your company'} by ${actorDisplayName}.`;
+        } else if (actionType === 'REASSIGNED') {
+          title = 'Safety Observation Reassigned';
+          message = `Safety Observation ${observation.observationNumber} (${observation.subject || observation.safetyCategory || 'Finding'}) has been reassigned to ${matchedContractorName || 'your company'} by ${actorDisplayName}.`;
+        } else if (actionType === 'CLOSED') {
+          title = 'Safety Observation Closed';
+          const notes = extraRemarks ? ` Remarks: "${extraRemarks}"` : '';
+          message = `Safety Observation ${observation.observationNumber} (${observation.subject || observation.safetyCategory || 'Finding'}) has been verified and closed by ${actorDisplayName}.${notes}`;
+
+          // Also notify creator if not the actor
+          if (observation.createdByUserId) {
+            const creator = await this.userRepo.findOne({ where: { id: observation.createdByUserId } });
+            if (creator) recipients.push(creator);
+          }
+        }
+      } 
+      // SCENARIO 2: Contractor Accepts, Rejects, or Submits Resolution -> Notify Department & Admin Users
+      else {
+        // 1. Fetch Department Users
+        const deptUsers = await this.userRepo.createQueryBuilder('user')
+          .where('(user.userType = :dept OR user.userType = :dept1 OR user.userType LIKE :deptLike)', {
+            dept: 'Department',
+            dept1: 'Department1',
+            deptLike: '%Department%',
+          })
+          .getMany();
+        recipients.push(...deptUsers);
+
+        // 2. Fetch Admins
+        const admins = await this.userRepo.createQueryBuilder('user')
+          .where('user.userType LIKE :admin OR user.userType LIKE :super', {
+            admin: '%Admin%',
+            super: '%SuperAdmin%',
+          })
+          .getMany();
+        recipients.push(...admins);
+
+        // 3. Creator user if not already in list
+        if (observation.createdByUserId) {
+          const creator = await this.userRepo.findOne({ where: { id: observation.createdByUserId } });
+          if (creator) recipients.push(creator);
+        }
+
+        if (actionType === 'CONTRACTOR_ACCEPTED') {
+          title = 'Observation Accepted by Contractor';
+          message = `Safety Observation ${observation.observationNumber} (${observation.subject}) has been accepted by contractor ${actorDisplayName || contractorName}.`;
+        } else if (actionType === 'CONTRACTOR_REJECTED') {
+          title = 'Observation Rejected by Contractor';
+          const reason = extraRemarks ? ` Reason: "${extraRemarks}"` : '';
+          message = `Safety Observation ${observation.observationNumber} (${observation.subject}) was rejected by contractor ${actorDisplayName || contractorName}.${reason} Please review and reassign.`;
+        } else if (actionType === 'RESOLVED') {
+          title = 'Observation Resolution Submitted';
+          message = `Contractor ${actorDisplayName || contractorName} submitted resolution for Safety Observation ${observation.observationNumber} (${observation.subject}). Awaiting review and closeout.`;
+        }
+      }
+
+      // Deduplicate recipients
+      const uniqueRecipients = Array.from(new Map(recipients.map(u => [u.id, u])).values());
+
+      for (const rx of uniqueRecipients) {
+        if (actorUserId && rx.id === actorUserId) {
+          continue;
+        }
+
+        await this.notificationRepo.save(
+          this.notificationRepo.create({
+            receiverUserId: rx.id,
+            senderUserId: actorUserId || undefined,
+            companyId: contractorId || undefined,
+            notificationType: notifType,
+            permitStatus: actionType,
+            title,
+            message,
+            isRead: 0,
+            metadata: JSON.stringify({
+              module: 'OBSERVATIONS',
+              observationId: observation.id,
+              observationNumber: observation.observationNumber,
+              subject: observation.subject,
+              safetyCategory: observation.safetyCategory,
+              riskLevel: observation.riskLevel,
+              contractorName: contractorName,
+              actionType,
+              remarks: extraRemarks,
+            }),
+          }),
+        );
+      }
+    } catch (error) {
+      console.error('[Notification] Error in triggerObservationNotification:', error);
+    }
+  }
+
+  /**
+   * Get paginated notifications list for a user with optional module filter.
    */
   async getNotificationsForUser(
     userId: number,
     page: number = 1,
     limit: number = 10,
+    module?: string,
   ): Promise<{ data: Notification[]; total: number; page: number; limit: number; totalPages: number }> {
-    const [data, total] = await this.notificationRepo.findAndCount({
-      where: { receiverUserId: userId },
-      order: { createdAt: 'DESC' },
-      take: limit,
-      skip: (page - 1) * limit,
-    });
+    const qb = this.notificationRepo.createQueryBuilder('n')
+      .where('n.receiverUserId = :userId', { userId })
+      .orderBy('n.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (module === 'observations') {
+      qb.andWhere("(n.notificationType LIKE 'OBSERVATION%' OR n.metadata LIKE '%\"module\":\"OBSERVATIONS\"%')");
+    } else if (module === 'permits') {
+      qb.andWhere("(n.notificationType NOT LIKE 'OBSERVATION%' AND (n.metadata IS NULL OR n.metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%'))");
+    }
+
+    const [data, total] = await qb.getManyAndCount();
 
     return {
       data,
@@ -246,12 +443,20 @@ export class NotificationsService {
   }
 
   /**
-   * Get total count of unread notifications for a user.
+   * Get total count of unread notifications for a user with optional module filter.
    */
-  async getUnreadCount(userId: number): Promise<number> {
-    return this.notificationRepo.count({
-      where: { receiverUserId: userId, isRead: 0 },
-    });
+  async getUnreadCount(userId: number, module?: string): Promise<number> {
+    const qb = this.notificationRepo.createQueryBuilder('n')
+      .where('n.receiverUserId = :userId', { userId })
+      .andWhere('n.isRead = 0');
+
+    if (module === 'observations') {
+      qb.andWhere("(n.notificationType LIKE 'OBSERVATION%' OR n.metadata LIKE '%\"module\":\"OBSERVATIONS\"%')");
+    } else if (module === 'permits') {
+      qb.andWhere("(n.notificationType NOT LIKE 'OBSERVATION%' AND (n.metadata IS NULL OR n.metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%'))");
+    }
+
+    return qb.getCount();
   }
 
   /**

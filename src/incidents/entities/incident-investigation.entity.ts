@@ -20,17 +20,29 @@ export interface FiveWhysChain {
   rootCauseSummary?: string;
 }
 
+export interface MandatoryAttachmentItem {
+  key: string;
+  label?: string;
+  checked?: boolean;
+  fileName?: string;
+  fileUrl?: string;
+  fileType?: string;
+  fileSize?: number;
+  uploadedAt?: string;
+}
+
 export interface MandatoryAttachmentChecklist {
-  contractorsIncidentReport?: boolean;
-  witnessStatement?: boolean;
-  rams?: boolean;
-  trainingRecords?: boolean;
-  permitsToWork?: boolean;
-  safePlanOfAction?: boolean;
-  photos?: boolean;
-  evidenceForActionsTaken?: boolean;
-  wasteDisposalInvoice?: boolean;
-  other?: string;
+  contractorsIncidentReport?: boolean | MandatoryAttachmentItem;
+  witnessStatement?: boolean | MandatoryAttachmentItem;
+  rams?: boolean | MandatoryAttachmentItem;
+  trainingRecords?: boolean | MandatoryAttachmentItem;
+  permitsToWork?: boolean | MandatoryAttachmentItem;
+  safePlanOfAction?: boolean | MandatoryAttachmentItem;
+  photos?: boolean | MandatoryAttachmentItem;
+  evidenceForActionsTaken?: boolean | MandatoryAttachmentItem;
+  wasteDisposalInvoice?: boolean | MandatoryAttachmentItem;
+  other?: string | MandatoryAttachmentItem;
+  items?: MandatoryAttachmentItem[];
   missingExplanation?: string;
 }
 
@@ -74,8 +86,35 @@ export class IncidentInvestigation {
   @Column({ name: 'mandatory_attachments', type: 'json', nullable: true })
   mandatoryAttachments?: MandatoryAttachmentChecklist;
 
+  @Column({ name: 'environmental_details', type: 'json', nullable: true })
+  environmentalDetails?: any;
+
+  @Column({ name: 'property_damage_details', type: 'json', nullable: true })
+  propertyDamageDetails?: any;
+
   @Column({ name: 'signatures', type: 'json', nullable: true })
   signatures?: InvestigationSignature[];
+
+  @Column({ name: 'team', type: 'json', nullable: true })
+  team?: any[];
+
+  @Column({ name: 'witnesses', type: 'json', nullable: true })
+  witnesses?: any[];
+
+  @Column({ name: 'effect_description', type: 'text', nullable: true })
+  effectDescription?: string;
+
+  @Column({ name: 'lessons_learned', type: 'text', nullable: true })
+  lessonsLearned?: string;
+
+  @Column({ name: 'preventative_measures', type: 'text', nullable: true })
+  preventativeMeasures?: string;
+
+  @Column({ name: 'pre_severity', type: 'int', nullable: true })
+  preSeverity?: number;
+
+  @Column({ name: 'post_severity', type: 'int', nullable: true })
+  postSeverity?: number;
 
   @CreateDateColumn({ name: 'completed_time', type: 'datetime' })
   completedTime: Date;
@@ -91,4 +130,7 @@ export class IncidentInvestigation {
 
   @Column({ name: 'reviewed_time', type: 'datetime', nullable: true })
   reviewedTime?: Date;
+
+  @Column({ name: 'edit_history', type: 'json', nullable: true })
+  editHistory?: any[];
 }

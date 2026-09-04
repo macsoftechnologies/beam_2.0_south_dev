@@ -108,6 +108,21 @@ export class CreateInitialReportDto {
     }
     return value;
   })
+  categories?: string[];
+
+  @IsArray()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
+  })
   accidentCategories?: string[];
 
   @IsArray()
@@ -182,6 +197,47 @@ export class CreateInitialReportDto {
   @IsOptional()
   equipmentInvolved?: string;
 
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
+  environmentalDetails?: any;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  })
+  propertyDamageDetails?: any;
+
+  @IsArray()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
+  })
+  immediateActions?: any[];
+
   @IsString()
   @IsOptional()
   submittedBy?: string;
@@ -189,4 +245,33 @@ export class CreateInitialReportDto {
   @IsString()
   @IsOptional()
   signature?: string;
+
+  @IsString()
+  @IsOptional()
+  editedBy?: string;
+
+  @IsString()
+  @IsOptional()
+  editorRole?: string;
+
+  @IsString()
+  @IsOptional()
+  editReason?: string;
+
+  @IsString()
+  @IsOptional()
+  editorSignature?: string;
+
+  @IsString()
+  @IsOptional()
+  changes?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === '1' || value === true || value === 1) return true;
+    if (value === 'false' || value === '0' || value === false || value === 0) return false;
+    return value;
+  })
+  noFurtherInvestigation?: boolean;
 }

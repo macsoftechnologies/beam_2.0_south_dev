@@ -60,4 +60,10 @@ export class IncidentHeadsUp {
 
   @Column({ name: 'approved_time', type: 'datetime', nullable: true })
   approvedTime?: Date;
+
+  @Column({ name: 'edit_history', type: 'json', nullable: true })
+  editHistory?: any[];
+
+  @Column({ name: 'no_further_investigation', type: 'boolean', default: false })
+  noFurtherInvestigation: boolean;
 }

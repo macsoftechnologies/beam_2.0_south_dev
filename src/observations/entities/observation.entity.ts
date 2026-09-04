@@ -55,6 +55,15 @@ export class Observation {
   @Column({ name: 'subject', type: 'varchar', length: 255 })
   subject: string;
 
+  @Column({ name: 'observation_date', type: 'date', nullable: true })
+  observationDate?: string | null;
+
+  @Column({ name: 'observation_time', type: 'varchar', length: 50, nullable: true })
+  observationTime?: string | null;
+
+  @Column({ name: 'immediate_action_taken', type: 'text', nullable: true })
+  immediateActionTaken?: string | null;
+
   @Column({ name: 'safety_category', type: 'varchar', length: 150 })
   safetyCategory: string;
 

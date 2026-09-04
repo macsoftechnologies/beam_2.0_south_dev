@@ -169,12 +169,31 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`initial_root_cause\` TEXT NULL`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`environmental_conditions\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`equipment_involved\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`environmental_details\` JSON NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`property_damage_details\` JSON NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`immediate_actions\` JSON NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewed_by\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewer_role\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewer_signature\` TEXT NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`reviewed_time\` DATETIME NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`environmental_details\` JSON NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`mandatory_attachments\` JSON NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`property_damage_details\` JSON NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`team\` JSON NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`witnesses\` JSON NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`effect_description\` TEXT NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`lessons_learned\` TEXT NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`preventative_measures\` TEXT NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`pre_severity\` INT NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`post_severity\` INT NULL`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`edit_history\` JSON NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`edit_history\` JSON NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`edit_history\` JSON NULL`,
         `ALTER TABLE \`incident_action_items\` ADD COLUMN \`updated_by\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_action_items\` ADD COLUMN \`status_history\` JSON NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
       ];
 
       for (const q of alterQueries) {
@@ -303,6 +322,7 @@ export class IncidentsService implements OnModuleInit {
       investigationLevel,
       gatekeeperInformed: dto.gatekeeperInformed || false,
       gatekeeperName: dto.gatekeeperName,
+      noFurtherInvestigation: dto.noFurtherInvestigation || false,
       stage: IncidentStage.HEADS_UP,
       slaHeadsUpDue,
       slaInitialDue,
@@ -324,6 +344,7 @@ export class IncidentsService implements OnModuleInit {
       immediateActions: dto.immediateActions,
       submittedBy: dto.submittedBy,
       signature: dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_${savedIncident.id}`) : undefined,
+      noFurtherInvestigation: dto.noFurtherInvestigation || false,
     });
 
     const savedHeadsUp = await this.headsUpRepo.save(headsUp);
@@ -346,6 +367,120 @@ export class IncidentsService implements OnModuleInit {
               updatedBy: dto.submittedBy || 'System',
               timestamp: new Date().toISOString(),
               remarks: 'Initial immediate action item created during Stage 1 Heads-Up',
+            },
+          ],
+        }),
+      );
+      await this.actionItemRepo.save(actionEntities);
+    }
+
+    return { incident: savedIncident, headsUp: savedHeadsUp };
+  }
+
+  /**
+   * Stage 1 Update: Edit Heads-Up Notification (when submitted and not yet approved)
+   */
+  async updateHeadsUp(incidentId: number, dto: any): Promise<{ incident: Incident; headsUp: IncidentHeadsUp }> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    let headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+    if (!headsUp) {
+      headsUp = this.headsUpRepo.create({ incidentId });
+    }
+
+    // Update Incident level fields
+    if (dto.title !== undefined) incident.title = dto.title;
+    if (dto.projectName !== undefined) incident.projectName = dto.projectName;
+    if (dto.incidentDate !== undefined) incident.incidentDate = dto.incidentDate;
+    if (dto.incidentTime !== undefined) incident.incidentTime = dto.incidentTime;
+    if (dto.buildingId !== undefined) incident.buildingId = dto.buildingId;
+    if (dto.buildingName !== undefined) incident.buildingName = dto.buildingName;
+    if (dto.floorLevel !== undefined) incident.floorLevel = dto.floorLevel;
+    if (dto.specificLocation !== undefined) incident.specificLocation = dto.specificLocation;
+    if (dto.contractorsInvolved !== undefined) incident.contractorsInvolved = dto.contractorsInvolved;
+    if (dto.categories !== undefined) incident.categories = Array.isArray(dto.categories) ? dto.categories : [dto.categories];
+    if (dto.actualSeverity !== undefined) incident.actualSeverity = dto.actualSeverity ? Number(dto.actualSeverity) : undefined;
+    if (dto.potentialSeverity !== undefined) incident.potentialSeverity = dto.potentialSeverity ? Number(dto.potentialSeverity) : undefined;
+    if (dto.isHipo !== undefined) incident.isHipo = dto.isHipo;
+    else if ((incident.actualSeverity ?? 0) >= 4 || (incident.potentialSeverity ?? 0) >= 4) incident.isHipo = true;
+    if (dto.gatekeeperInformed !== undefined) incident.gatekeeperInformed = dto.gatekeeperInformed;
+    if (dto.gatekeeperName !== undefined) incident.gatekeeperName = dto.gatekeeperName;
+
+    // Recalculate timestamp and SLA if date/time changed
+    if (dto.incidentDate || dto.incidentTime) {
+      const d = dto.incidentDate || incident.incidentDate;
+      const t = dto.incidentTime || incident.incidentTime || '00:00';
+      const parsed = new Date(`${d}T${t}:00`);
+      if (!isNaN(parsed.getTime())) {
+        incident.incidentTimestamp = parsed;
+        incident.slaHeadsUpDue = new Date(parsed.getTime() + 2 * 60 * 60 * 1000);
+        incident.slaInitialDue = new Date(parsed.getTime() + 24 * 60 * 60 * 1000);
+        incident.slaInvestigationDue = new Date(parsed.getTime() + 7 * 24 * 60 * 60 * 1000);
+      }
+    }
+
+    const savedIncident = await this.incidentRepo.save(incident);
+
+    // Update Heads-Up level fields
+    if (dto.descriptionWhatHappened !== undefined || dto.description !== undefined) {
+      headsUp.descriptionWhatHappened = dto.descriptionWhatHappened || dto.description;
+    }
+    if (dto.descriptionConsequence !== undefined || dto.consequence !== undefined) {
+      headsUp.descriptionConsequence = dto.descriptionConsequence || dto.consequence;
+    }
+    if (dto.isEnvironmental !== undefined) headsUp.isEnvironmental = dto.isEnvironmental;
+    if (dto.spillType !== undefined) headsUp.spillType = dto.spillType;
+    if (dto.spillSubstance !== undefined) headsUp.spillSubstance = dto.spillSubstance;
+    if (dto.spillCause !== undefined) headsUp.spillCause = dto.spillCause;
+    if (dto.spillQuantity !== undefined) headsUp.spillQuantity = dto.spillQuantity;
+    if (dto.spillSystemEntered !== undefined) headsUp.spillSystemEntered = dto.spillSystemEntered;
+    if (dto.immediateActions !== undefined) headsUp.immediateActions = dto.immediateActions;
+    if (dto.submittedBy !== undefined) headsUp.submittedBy = dto.submittedBy;
+    if (dto.noFurtherInvestigation !== undefined) {
+      headsUp.noFurtherInvestigation = dto.noFurtherInvestigation;
+      incident.noFurtherInvestigation = dto.noFurtherInvestigation;
+    }
+    if (dto.signature !== undefined) {
+      headsUp.signature = dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_${incidentId}`) : headsUp.signature;
+    }
+
+    // Append to Edit History if editor info provided
+    if (dto.editedBy || dto.editReason || dto.editorSignature) {
+      const historyItem = {
+        editedBy: dto.editedBy || dto.editorName || 'Editor',
+        role: dto.editorRole || 'HSE Editor',
+        reason: dto.editReason || 'Updated Heads-Up Notification',
+        signature: dto.editorSignature ? saveBase64Signature(dto.editorSignature, `sig_headsup_edit_${incidentId}_${Date.now()}`) : undefined,
+        editedTime: new Date().toISOString(),
+        action: 'Updated Heads-Up Notification'
+      };
+      headsUp.editHistory = Array.isArray(headsUp.editHistory) ? [...headsUp.editHistory, historyItem] : [historyItem];
+    }
+
+    const savedHeadsUp = await this.headsUpRepo.save(headsUp);
+
+    // Sync immediate actions to action items
+    if (dto.immediateActions && Array.isArray(dto.immediateActions) && dto.immediateActions.length > 0) {
+      await this.actionItemRepo.delete({ incidentId: savedIncident.id, actionType: ActionItemType.IMMEDIATE });
+      const actionEntities = dto.immediateActions.map((act: any) =>
+        this.actionItemRepo.create({
+          incidentId: savedIncident.id,
+          actionType: ActionItemType.IMMEDIATE,
+          action: act.action || 'Immediate action implemented',
+          responsible: act.responsible || 'Site Team',
+          targetDate: (act.targetDate || act.date || savedIncident.incidentDate) as any,
+          timeImplemented: act.timeImplemented || act.time,
+          status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+          updatedBy: dto.submittedBy || 'System',
+          statusHistory: [
+            {
+              status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+              updatedBy: dto.submittedBy || 'System',
+              timestamp: new Date().toISOString(),
+              remarks: 'Immediate action updated in Stage 1 Heads-Up',
             },
           ],
         }),
@@ -395,12 +530,44 @@ export class IncidentsService implements OnModuleInit {
     incident.isHipo = dto.isHipo !== undefined ? dto.isHipo : isHipo;
     incident.investigationLevel = investigationLevel;
     incident.stage = IncidentStage.INITIAL_REPORT;
+    if (dto.categories && Array.isArray(dto.categories) && dto.categories.length > 0) {
+      incident.categories = dto.categories;
+    }
 
     const savedIncident = await this.incidentRepo.save(incident);
 
     let initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+    if (initialReport && initialReport.approvedBy) {
+      throw new BadRequestException(
+        `Stage 2 Initial Incident Report for Incident ${incident.caseNumber} (ID: ${incidentId}) has already been reviewed and approved, and cannot be modified.`
+      );
+    }
     if (!initialReport) {
       initialReport = this.initialReportRepo.create({ incidentId });
+    }
+
+    const isEditMode = Boolean(initialReport.submittedBy || initialReport.submittedTime);
+
+    // If updating before approval, log to edit history without overwriting original submitter
+    if (isEditMode) {
+      const editorName = (dto as any).editedBy || (dto as any).editorName || dto.submittedBy || 'Editor';
+      const editorRole = (dto as any).editorRole || 'Contractor / HSE Editor';
+      const editorSig = (dto as any).editorSignature || dto.signature;
+      const editReason = (dto as any).editReason || (dto as any).changes || 'Updated initial incident report details';
+
+      const currentHistory = (initialReport as any).editHistory || [];
+      const editRecord = {
+        editedBy: editorName,
+        role: editorRole,
+        reason: editReason,
+        signature: editorSig ? saveBase64Signature(editorSig, `sig_initial_edit_${incidentId}_${Date.now()}`) : undefined,
+        editedTime: new Date().toISOString(),
+        action: 'Updated Initial Incident Report'
+      };
+      (initialReport as any).editHistory = [...currentHistory, editRecord];
+    } else {
+      initialReport.submittedBy = dto.submittedBy;
+      initialReport.signature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_${incidentId}`) : undefined;
     }
 
     initialReport.photos = dto.photos || [];
@@ -424,11 +591,42 @@ export class IncidentsService implements OnModuleInit {
     initialReport.initialRootCause = dto.initialRootCause;
     initialReport.environmentalConditions = dto.environmentalConditions;
     initialReport.equipmentInvolved = dto.equipmentInvolved;
-
-    initialReport.submittedBy = dto.submittedBy;
-    initialReport.signature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_${incidentId}`) : undefined;
+    if (dto.environmentalDetails !== undefined) initialReport.environmentalDetails = dto.environmentalDetails;
+    if (dto.propertyDamageDetails !== undefined) initialReport.propertyDamageDetails = dto.propertyDamageDetails;
+    if (dto.immediateActions !== undefined) initialReport.immediateActions = dto.immediateActions;
+    if (dto.noFurtherInvestigation !== undefined) {
+      initialReport.noFurtherInvestigation = dto.noFurtherInvestigation;
+      incident.noFurtherInvestigation = dto.noFurtherInvestigation;
+    }
 
     const savedReport = await this.initialReportRepo.save(initialReport);
+
+    // Sync immediate actions to action items if provided in initial report
+    if (dto.immediateActions && Array.isArray(dto.immediateActions) && dto.immediateActions.length > 0) {
+      await this.actionItemRepo.delete({ incidentId: savedIncident.id, actionType: ActionItemType.IMMEDIATE });
+      const actionEntities = dto.immediateActions.map((act: any) =>
+        this.actionItemRepo.create({
+          incidentId: savedIncident.id,
+          actionType: ActionItemType.IMMEDIATE,
+          action: act.action || 'Immediate action implemented',
+          responsible: act.responsible || 'Site Team',
+          targetDate: (act.targetDate || act.date || savedIncident.incidentDate) as any,
+          timeImplemented: act.timeImplemented || act.time,
+          status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+          updatedBy: dto.submittedBy || 'System',
+          statusHistory: [
+            {
+              status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+              updatedBy: dto.submittedBy || 'System',
+              timestamp: new Date().toISOString(),
+              remarks: 'Immediate action updated in Stage 2 Initial Report',
+            },
+          ],
+        }),
+      );
+      await this.actionItemRepo.save(actionEntities);
+    }
+
     return { incident: savedIncident, initialReport: savedReport };
   }
 
@@ -456,6 +654,12 @@ export class IncidentsService implements OnModuleInit {
       throw new NotFoundException(`Incident with ID ${incidentId} not found`);
     }
 
+    if (incident.closedBy || (incident.stage as string) === 'CLOSED') {
+      throw new BadRequestException(
+        `Incident ${incident.caseNumber} (ID: ${incidentId}) is closed and cannot be modified.`
+      );
+    }
+
     // Stage Gate Validation: Initial Incident Report MUST be approved first
     const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
     if (!initialReport || !initialReport.approvedBy) {
@@ -464,12 +668,55 @@ export class IncidentsService implements OnModuleInit {
       );
     }
 
+    let investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+    if (investigation && investigation.reviewedBy) {
+      throw new BadRequestException(
+        `Stage 3 Investigation Report for Incident ${incident.caseNumber} (ID: ${incidentId}) has already been reviewed & signed off and cannot be modified.`
+      );
+    }
+
     incident.stage = IncidentStage.INVESTIGATION;
     const savedIncident = await this.incidentRepo.save(incident);
 
-    let investigation = await this.investigationRepo.findOne({ where: { incidentId } });
     if (!investigation) {
       investigation = this.investigationRepo.create({ incidentId });
+    }
+
+    const isEditMode = Boolean(investigation.signatures && investigation.signatures.length > 0);
+
+    // If updating before review, log to edit history without overwriting original investigator signatures
+    if (isEditMode) {
+      const editorName = (dto as any).editedBy || (dto as any).editorName || (dto.signatures && dto.signatures.length > 0 ? dto.signatures[0].name : 'Editor');
+      const editorRole = (dto as any).editorRole || 'HSE Investigator / Editor';
+      const editorSig = (dto as any).editorSignature || (dto.signatures && dto.signatures.length > 0 ? dto.signatures[0].signature : undefined);
+      const editReason = (dto as any).editReason || (dto as any).changes || 'Updated investigation report details';
+
+      const currentHistory = (investigation as any).editHistory || [];
+      const editRecord = {
+        editedBy: editorName,
+        role: editorRole,
+        reason: editReason,
+        signature: editorSig ? saveBase64Signature(editorSig, `sig_invest_edit_${incidentId}_${Date.now()}`) : undefined,
+        editedTime: new Date().toISOString(),
+        action: 'Updated Incident Investigation Report'
+      };
+      (investigation as any).editHistory = [...currentHistory, editRecord];
+    } else {
+      if (dto.signatures !== undefined) {
+        if (Array.isArray(dto.signatures)) {
+          investigation.signatures = dto.signatures.map((sigObj: any, idx: number) => {
+            if (sigObj && sigObj.signature) {
+              return {
+                ...sigObj,
+                signature: saveBase64Signature(sigObj.signature, `sig_invest_${incidentId}_${idx + 1}`),
+              };
+            }
+            return sigObj;
+          });
+        } else {
+          investigation.signatures = dto.signatures;
+        }
+      }
     }
 
     if (dto.investigationDetails !== undefined) investigation.investigationDetails = dto.investigationDetails;
@@ -478,20 +725,21 @@ export class IncidentsService implements OnModuleInit {
     if (dto.fiveWhysData !== undefined) investigation.fiveWhysData = dto.fiveWhysData;
     if (dto.rootCauses !== undefined) investigation.rootCauses = dto.rootCauses;
     if (dto.contributingFactors !== undefined) investigation.contributingFactors = dto.contributingFactors;
-    if (dto.signatures !== undefined) {
-      if (Array.isArray(dto.signatures)) {
-        investigation.signatures = dto.signatures.map((sigObj: any, idx: number) => {
-          if (sigObj && sigObj.signature) {
-            return {
-              ...sigObj,
-              signature: saveBase64Signature(sigObj.signature, `sig_invest_${incidentId}_${idx + 1}`),
-            };
-          }
-          return sigObj;
-        });
-      } else {
-        investigation.signatures = dto.signatures;
-      }
+    if (dto.mandatoryAttachments !== undefined) investigation.mandatoryAttachments = dto.mandatoryAttachments;
+    if (dto.environmentalDetails !== undefined) investigation.environmentalDetails = dto.environmentalDetails;
+    if (dto.propertyDamageDetails !== undefined) investigation.propertyDamageDetails = dto.propertyDamageDetails;
+    if (dto.team !== undefined) (investigation as any).team = dto.team;
+    if (dto.witnesses !== undefined) (investigation as any).witnesses = dto.witnesses;
+    if (dto.effectDescription !== undefined || dto.effect !== undefined) {
+      (investigation as any).effectDescription = dto.effectDescription || dto.effect;
+    }
+    if (dto.lessonsLearned !== undefined) (investigation as any).lessonsLearned = dto.lessonsLearned;
+    if (dto.preventativeMeasures !== undefined) (investigation as any).preventativeMeasures = dto.preventativeMeasures;
+    if (dto.preSeverity !== undefined || dto.severityBefore !== undefined) {
+      investigation.preSeverity = dto.preSeverity !== undefined ? Number(dto.preSeverity) : Number(dto.severityBefore);
+    }
+    if (dto.postSeverity !== undefined || dto.severityAfter !== undefined) {
+      investigation.postSeverity = dto.postSeverity !== undefined ? Number(dto.postSeverity) : Number(dto.severityAfter);
     }
 
     const savedInvestigation = await this.investigationRepo.save(investigation);
@@ -499,15 +747,16 @@ export class IncidentsService implements OnModuleInit {
     // Save corrective action items if provided in DTO
     const incomingActions = dto.correctiveActions || dto.actionItems;
     if (incomingActions && Array.isArray(incomingActions) && incomingActions.length > 0) {
+      await this.actionItemRepo.delete({ incidentId: savedIncident.id, actionType: ActionItemType.CORRECTIVE });
       const correctiveEntities = incomingActions.map((act: any) =>
         this.actionItemRepo.create({
           incidentId: savedIncident.id,
           actionType: ActionItemType.CORRECTIVE,
-          action: act.action || act.correctiveAction || act.description || 'Corrective action implemented',
-          responsible: act.responsible || act.assignedTo || act.owner || 'Investigator',
-          targetDate: (act.targetDate || act.date) ? ((act.targetDate || act.date) as any) : undefined,
-          status: act.status || ActionItemStatus.COMPLETED,
-          updatedBy: (dto.signatures && dto.signatures.length > 0) ? dto.signatures[0].name : 'Investigator',
+          action: act.action || act.correctiveAction || act.description || act.desc || 'Corrective action implemented',
+          responsible: act.responsible || act.assignedTo || act.owner || act.resp || 'Investigator',
+          targetDate: (act.targetDate || act.date || act.deadline) ? ((act.targetDate || act.date || act.deadline) as any) : undefined,
+          status: act.status || ActionItemStatus.PENDING,
+          updatedBy: (dto.signatures && dto.signatures.length > 0) ? dto.signatures[0].name : (dto.editedBy || 'Investigator'),
         }),
       );
       await this.actionItemRepo.save(correctiveEntities);
@@ -536,6 +785,94 @@ export class IncidentsService implements OnModuleInit {
   }
 
   /**
+   * Return Incident Stage for Revision
+   */
+  async returnForRevision(
+    incidentId: number,
+    dto: {
+      stage: 'HEADS_UP' | 'INITIAL_REPORT' | 'INVESTIGATION';
+      returnedBy: string;
+      role?: string;
+      reason: string;
+      signature?: string;
+    },
+  ): Promise<{ success: boolean; message: string; stage: string; log: any }> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    if (incident.closedBy || (incident.stage as string) === 'CLOSED') {
+      throw new BadRequestException(
+        `Incident ${incident.caseNumber} (ID: ${incidentId}) is closed and cannot be returned for revision.`,
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const sigUrl = dto.signature ? saveBase64Signature(dto.signature, `sig_return_${dto.stage.toLowerCase()}_${incidentId}_${Date.now()}`) : undefined;
+
+    const logEntry = {
+      action: 'Returned for Revision',
+      status: 'RETURNED_FOR_REVISION',
+      stage: dto.stage,
+      returnedBy: dto.returnedBy || 'Reviewer',
+      role: dto.role || 'Reviewer / Approver',
+      reason: dto.reason || 'Returned for revision',
+      signature: sigUrl,
+      returnedTime: nowIso,
+      editedTime: nowIso,
+      timestamp: nowIso,
+    };
+
+    if (dto.stage === 'HEADS_UP') {
+      const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+      if (!headsUp) {
+        throw new NotFoundException(`Heads-up notification for incident ID ${incidentId} not found`);
+      }
+      headsUp.approvedBy = null as any;
+      headsUp.approvedTime = null as any;
+      headsUp.approverSignature = null as any;
+      headsUp.editHistory = Array.isArray(headsUp.editHistory) ? [...headsUp.editHistory, logEntry] : [logEntry];
+      await this.headsUpRepo.save(headsUp);
+      incident.stage = IncidentStage.HEADS_UP;
+    } else if (dto.stage === 'INITIAL_REPORT') {
+      const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+      if (!initialReport) {
+        throw new NotFoundException(`Initial report for incident ID ${incidentId} not found`);
+      }
+      initialReport.approvedBy = null as any;
+      initialReport.approvedTime = null as any;
+      initialReport.approverSignature = null as any;
+      initialReport.editHistory = Array.isArray(initialReport.editHistory) ? [...initialReport.editHistory, logEntry] : [logEntry];
+      await this.initialReportRepo.save(initialReport);
+      incident.stage = IncidentStage.INITIAL_REPORT;
+    } else if (dto.stage === 'INVESTIGATION') {
+      const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+      if (!investigation) {
+        throw new NotFoundException(`Investigation report for incident ID ${incidentId} not found`);
+      }
+      investigation.reviewedBy = null as any;
+      investigation.reviewedTime = null as any;
+      investigation.reviewerSignature = null as any;
+      investigation.editHistory = Array.isArray(investigation.editHistory) ? [...investigation.editHistory, logEntry] : [logEntry];
+      await this.investigationRepo.save(investigation);
+      incident.stage = IncidentStage.INVESTIGATION;
+    } else {
+      throw new BadRequestException(`Invalid stage: ${dto.stage}`);
+    }
+
+    incident.updatedTime = new Date();
+    await this.incidentRepo.save(incident);
+
+    return {
+      success: true,
+      message: `Stage ${dto.stage} returned for revision by ${dto.returnedBy}`,
+      stage: dto.stage,
+      log: logEntry,
+    };
+  }
+
+  /**
    * Close Incident investigation
    */
   async closeIncident(incidentId: number, dto?: { closedBy?: string; closureComments?: string; signature?: string }): Promise<Incident> {
@@ -544,22 +881,42 @@ export class IncidentsService implements OnModuleInit {
       throw new NotFoundException(`Incident with ID ${incidentId} not found`);
     }
 
-    // Stage Gate Validation 1: Investigation Report MUST be reviewed first
+    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
     const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
-    if (!investigation || !investigation.reviewedBy) {
-      throw new BadRequestException(
-        `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). Stage 3 Investigation Report must be reviewed and signed off first.`,
-      );
-    }
 
-    // Stage Gate Validation 2: All Action Items MUST be COMPLETED first
-    const actionItems = await this.actionItemRepo.find({ where: { incidentId } });
-    const incompleteActions = actionItems.filter((item) => item.status !== ActionItemStatus.COMPLETED);
-    if (incompleteActions.length > 0) {
-      const summaryList = incompleteActions.map((act) => `#${act.id} ("${act.action}" - Status: ${act.status})`).join(', ');
-      throw new BadRequestException(
-        `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). All action items must be COMPLETED first. Incomplete action item(s) (${incompleteActions.length}): ${summaryList}.`,
-      );
+    const isNoFurtherInvestigation = Boolean(
+      incident.noFurtherInvestigation ||
+      headsUp?.noFurtherInvestigation ||
+      initialReport?.noFurtherInvestigation
+    );
+
+    // If no further investigation is required, allow closing as long as Heads-Up or Initial Report is approved
+    if (isNoFurtherInvestigation) {
+      const isApproved = Boolean(headsUp?.approvedBy || initialReport?.approvedBy);
+      if (!isApproved) {
+        throw new BadRequestException(
+          `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). The Heads-Up Notification or Initial Incident Report must be approved before closing.`
+        );
+      }
+      // Allowed to close directly without Stage 3 investigation or action completion blocks
+    } else {
+      // Standard workflow: Stage 3 Investigation Report MUST be reviewed and signed off first
+      if (!investigation || !investigation.reviewedBy) {
+        throw new BadRequestException(
+          `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). Stage 3 Investigation Report must be reviewed and signed off first.`,
+        );
+      }
+
+      // Standard workflow: All action items MUST be completed first
+      const actionItems = await this.actionItemRepo.find({ where: { incidentId } });
+      const incompleteActions = actionItems.filter((item) => item.status !== ActionItemStatus.COMPLETED);
+      if (incompleteActions.length > 0) {
+        const summaryList = incompleteActions.map((act) => `#${act.id} ("${act.action}" - Status: ${act.status})`).join(', ');
+        throw new BadRequestException(
+          `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). All action items must be COMPLETED first. Incomplete action item(s) (${incompleteActions.length}): ${summaryList}.`,
+        );
+      }
     }
 
     incident.stage = IncidentStage.CLOSED;
@@ -614,6 +971,8 @@ export class IncidentsService implements OnModuleInit {
     potentialSeverity?: number;
     investigationLevel?: InvestigationLevel;
     contractor?: string;
+    contractorId?: number;
+    userRole?: string;
     origin?: string;
     search?: string;
   }) {
@@ -655,8 +1014,46 @@ export class IncidentsService implements OnModuleInit {
     if (query.investigationLevel) {
       qb.andWhere('incident.investigationLevel = :investigationLevel', { investigationLevel: query.investigationLevel });
     }
-    if (query.contractor) {
-      qb.andWhere('incident.contractorsInvolved LIKE :contractor', { contractor: `%${query.contractor}%` });
+
+    // Contractor RBAC scoping
+    let resolvedContractor = query.contractor ? query.contractor.trim() : '';
+    if (query.userRole === 'CONTRACTOR' || query.contractorId) {
+      if (!resolvedContractor && query.contractorId) {
+        try {
+          const subRows = await this.incidentRepo.query(
+            `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+            [query.contractorId],
+          );
+          if (subRows && subRows.length > 0) {
+            resolvedContractor = subRows[0].subContractorName;
+          } else {
+            const userRows = await this.incidentRepo.query(
+              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+               FROM users u 
+               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+               WHERE u.id = ? LIMIT 1`,
+              [query.contractorId],
+            );
+            if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
+              resolvedContractor = userRows[0].subContractorName;
+            }
+          }
+        } catch (e) {
+          this.logger.warn(`Could not resolve contractor ID in incidents findAll: ${e.message}`);
+        }
+      }
+
+      if (resolvedContractor) {
+        qb.andWhere(
+          '(incident.contractorsInvolved LIKE :contractor OR JSON_SEARCH(incident.contractorsInvolved, \'one\', :contractorSearch) IS NOT NULL)',
+          { contractor: `%${resolvedContractor}%`, contractorSearch: `%${resolvedContractor}%` },
+        );
+      }
+    } else if (query.contractor) {
+      qb.andWhere(
+        '(incident.contractorsInvolved LIKE :contractor OR JSON_SEARCH(incident.contractorsInvolved, \'one\', :contractorSearch) IS NOT NULL)',
+        { contractor: `%${query.contractor}%`, contractorSearch: `%${query.contractor}%` },
+      );
     }
     if (query.origin) {
       if (query.origin.toLowerCase() === 'observation') {
@@ -817,14 +1214,51 @@ export class IncidentsService implements OnModuleInit {
   /**
    * High-performance Backend Aggregation for Dashboard Stats (handles 1,000,000+ records in <10ms)
    */
-  async getDashboardStats(filters: { building?: string; contractor?: string; dateRange?: string }) {
+  async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userRole?: string; dateRange?: string }) {
     const qb = this.incidentRepo.createQueryBuilder('incident');
 
     if (filters.building) {
       qb.andWhere('incident.buildingName LIKE :building', { building: `%${filters.building}%` });
     }
-    if (filters.contractor) {
-      qb.andWhere('incident.contractorsInvolved LIKE :contractor', { contractor: `%${filters.contractor}%` });
+
+    let resolvedContractor = filters.contractor ? filters.contractor.trim() : '';
+    if (filters.userRole === 'CONTRACTOR' || filters.contractorId) {
+      if (!resolvedContractor && filters.contractorId) {
+        try {
+          const subRows = await this.incidentRepo.query(
+            `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+            [filters.contractorId],
+          );
+          if (subRows && subRows.length > 0) {
+            resolvedContractor = subRows[0].subContractorName;
+          } else {
+            const userRows = await this.incidentRepo.query(
+              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+               FROM users u 
+               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+               WHERE u.id = ? LIMIT 1`,
+              [filters.contractorId],
+            );
+            if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
+              resolvedContractor = userRows[0].subContractorName;
+            }
+          }
+        } catch (e) {
+          this.logger.warn(`Could not resolve contractor ID in incident stats: ${e.message}`);
+        }
+      }
+
+      if (resolvedContractor) {
+        qb.andWhere(
+          '(incident.contractorsInvolved LIKE :contractor OR JSON_SEARCH(incident.contractorsInvolved, \'one\', :contractorSearch) IS NOT NULL)',
+          { contractor: `%${resolvedContractor}%`, contractorSearch: `%${resolvedContractor}%` },
+        );
+      }
+    } else if (filters.contractor) {
+      qb.andWhere(
+        '(incident.contractorsInvolved LIKE :contractor OR JSON_SEARCH(incident.contractorsInvolved, \'one\', :contractorSearch) IS NOT NULL)',
+        { contractor: `%${filters.contractor}%`, contractorSearch: `%${filters.contractor}%` },
+      );
     }
 
     if (filters.dateRange && filters.dateRange !== 'all') {

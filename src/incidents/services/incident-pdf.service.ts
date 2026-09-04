@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import puppeteer from 'puppeteer';
+import { PDFDocument } from 'pdf-lib';
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 
@@ -7,33 +8,138 @@ import { join } from 'path';
 export class IncidentPdfService {
   private readonly logger = new Logger(IncidentPdfService.name);
 
-  async generate3In1Pdf(details: any): Promise<Buffer> {
-    const html = this.buildFullHtml(details);
+  async generate3In1Pdf(details: any, formType: string = 'all', options: { includeWitnesses?: boolean } = {}): Promise<Buffer> {
+    const includeWitnesses = options?.includeWitnesses === true || String(options?.includeWitnesses) === 'true';
+    const html = this.buildFullHtml(details, formType, { includeWitnesses });
 
     const browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
+    let basePdfBuffer: Buffer;
     try {
       const page = await browser.newPage();
       // Wait for DOM content and network requests (external images) to complete loading
       await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
-      const pdfBuffer = await page.pdf({
+      const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
         margin: { top: '8mm', bottom: '8mm', left: '8mm', right: '8mm' },
       });
-      return Buffer.from(pdfBuffer);
+      basePdfBuffer = Buffer.from(pdfBytes);
     } catch (err) {
       this.logger.error('Failed to generate backend PDF with Puppeteer:', err);
       throw err;
     } finally {
       await browser.close();
     }
+
+    // Merge uploaded PDF attachments if Form 3 or All Forms is selected
+    if (formType === 'investigation' || formType === '3' || formType === 'all') {
+      try {
+        const inv = details.investigation || details.incident_investigation || {};
+        let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || {};
+        if (typeof att === 'string') {
+          try { att = JSON.parse(att); } catch (e) {}
+        }
+
+        const pdfFilesToMerge: { label: string; fileUrl: string; fileName?: string }[] = [];
+        const seenPdfUrls = new Set<string>();
+
+        const isWitnessItem = (k: string, val: any) => {
+          const l = String(k || '').toLowerCase();
+          const lbl = String(val?.label || val?.fileName || '').toLowerCase();
+          return l.includes('witness') || lbl.includes('witness');
+        };
+
+        const collectPdf = (label: string, val: any, keyName?: string) => {
+          if (!val) return;
+          if (!includeWitnesses && isWitnessItem(keyName || label, val)) {
+            return;
+          }
+          let fUrl = '';
+          let fLabel = label;
+          let fName = '';
+          if (typeof val === 'object' && val.fileUrl) {
+            fUrl = String(val.fileUrl).trim();
+            fLabel = val.label || label;
+            fName = val.fileName || '';
+          } else if (typeof val === 'string' && val.trim()) {
+            fUrl = val.trim();
+          }
+
+          if (!fUrl) return;
+          const normalizedUrl = fUrl.toLowerCase();
+          if (seenPdfUrls.has(normalizedUrl)) return;
+
+          if (normalizedUrl.endsWith('.pdf') || (typeof val === 'object' && val.fileType === 'application/pdf')) {
+            seenPdfUrls.add(normalizedUrl);
+            pdfFilesToMerge.push({ label: fLabel, fileUrl: fUrl, fileName: fName });
+          }
+        };
+
+        if (Array.isArray(att.items)) {
+          att.items.forEach((it: any) => collectPdf(it.label || it.key, it, it.key));
+        }
+        Object.keys(att).forEach((k) => {
+          if (k !== 'items' && k !== 'missingExplanation') {
+            collectPdf(k, att[k], k);
+          }
+        });
+
+        if (pdfFilesToMerge.length > 0) {
+          const mergedDoc = await PDFDocument.load(basePdfBuffer);
+
+          for (const item of pdfFilesToMerge) {
+            let cleanPath = item.fileUrl.trim();
+            let filename = cleanPath;
+            if (cleanPath.includes('/uploads/incidents/')) {
+              filename = cleanPath.split('/uploads/incidents/').pop() || cleanPath;
+            } else if (cleanPath.includes('/uploads/')) {
+              filename = cleanPath.split('/uploads/').pop() || cleanPath;
+            }
+
+            const candidatePaths = [
+              join(process.cwd(), 'uploads', 'incidents', filename),
+              join(process.cwd(), 'uploads', filename),
+              join(process.cwd(), cleanPath),
+              join(process.cwd(), cleanPath.replace(/^\/+/, '')),
+            ];
+
+            let attachedBytes: Buffer | null = null;
+            for (const p of candidatePaths) {
+              if (existsSync(p) && statSync(p).isFile()) {
+                attachedBytes = readFileSync(p);
+                break;
+              }
+            }
+
+            if (attachedBytes) {
+              try {
+                const donorDoc = await PDFDocument.load(attachedBytes);
+                const pageIndices = donorDoc.getPageIndices();
+                const copiedPages = await mergedDoc.copyPages(donorDoc, pageIndices);
+                copiedPages.forEach((cp) => mergedDoc.addPage(cp));
+              } catch (donorErr) {
+                this.logger.warn(`Could not merge PDF attachment ${item.fileUrl}:`, donorErr);
+              }
+            }
+          }
+
+          const finalMergedBytes = await mergedDoc.save();
+          return Buffer.from(finalMergedBytes);
+        }
+      } catch (mergeErr) {
+        this.logger.warn('Error during PDF attachment merging, falling back to base PDF:', mergeErr);
+      }
+    }
+
+    return basePdfBuffer;
   }
 
-  private buildFullHtml(details: any): string {
+  private buildFullHtml(details: any, formType: string = 'all', options: { includeWitnesses?: boolean } = {}): string {
+    const includeWitnesses = options?.includeWitnesses === true || String(options?.includeWitnesses) === 'true';
     const inc = details.incident || details;
     const headsUp = details.headsUp || {};
     const initial = details.initialReport || {};
@@ -47,13 +153,95 @@ export class IncidentPdfService {
     const time = inc.incidentTime || inc.time || '07:30';
     const building = inc.buildingName || inc.location || 'Main Site Road';
     const specificLoc = inc.specificLocation || 'Entry Point';
-    const contractor = inc.contractorsInvolved || inc.contractor || 'Give Steel / ATEA';
-    const category = (inc.categories && inc.categories.length > 0) ? inc.categories.join(', ') : (inc.category || 'Near Miss');
+    const contractor = inc.contractorsInvolved || inc.contractor || headsUp.contractorsInvolved || 'Give Steel / ATEA';
+    // Collect all categories across sub-forms
+    const allCategoriesList: string[] = [];
+    if (Array.isArray(inc.categories)) allCategoriesList.push(...inc.categories);
+    else if (inc.categories) allCategoriesList.push(String(inc.categories));
+    if (inc.category) allCategoriesList.push(String(inc.category));
+    if (Array.isArray(headsUp.categories)) allCategoriesList.push(...headsUp.categories);
+    else if (headsUp.categories) allCategoriesList.push(String(headsUp.categories));
+    if (headsUp.category) allCategoriesList.push(String(headsUp.category));
+    if (Array.isArray(initial.categories)) allCategoriesList.push(...initial.categories);
+    if (Array.isArray(initial.accidentCategories)) allCategoriesList.push(...initial.accidentCategories);
+
+    // Initial Report Treatment inference
+    const flatTreatments: string[] = [];
+    if (Array.isArray(initial.treatmentProvided)) {
+      initial.treatmentProvided.forEach((t: any) => {
+        if (Array.isArray(t)) flatTreatments.push(...t.map(String));
+        else if (t) flatTreatments.push(String(t));
+      });
+    }
+    if (initial.treatmentPrescribed) flatTreatments.push(String(initial.treatmentPrescribed));
+    if (initial.medicalTreatmentClass) flatTreatments.push(String(initial.medicalTreatmentClass));
+
+    flatTreatments.forEach((t: string) => {
+      const lowerT = t.toLowerCase();
+      if (lowerT.includes('medical treatment') || lowerT === 'treatment') allCategoriesList.push('Medical Treatment Injury');
+      if (lowerT.includes('first aid')) allCategoriesList.push('First Aid Injury');
+      if (lowerT.includes('hospitalization') || lowerT.includes('lost time')) allCategoriesList.push('Loss Time Injury');
+      if (lowerT.includes('no treatment')) allCategoriesList.push('No Treatment Injury');
+      if (lowerT.includes('restricted work')) allCategoriesList.push('Restricted Work Injury');
+    });
+
+    const hasEnvData = Boolean(
+      headsUp.isEnvironmental ||
+      (Array.isArray(headsUp.spillType) && headsUp.spillType.length > 0) ||
+      (typeof headsUp.spillType === 'string' && headsUp.spillType.trim().length > 0) ||
+      (headsUp.spillSubstance && String(headsUp.spillSubstance).trim().length > 0) ||
+      (headsUp.spillCause && String(headsUp.spillCause).trim().length > 0) ||
+      (initial.environmentalDetails && typeof initial.environmentalDetails === 'object' && Object.keys(initial.environmentalDetails).length > 0)
+    );
+    if (hasEnvData) {
+      allCategoriesList.push('Environmental Incident');
+    }
+
+    const hasPropData = Boolean(
+      headsUp.propertyDamaged ||
+      (initial.propertyDamageDetails && typeof initial.propertyDamageDetails === 'object' && Object.keys(initial.propertyDamageDetails).length > 0)
+    );
+    if (hasPropData) {
+      allCategoriesList.push('Property Damage');
+    }
+
+    const uniqueCategories = Array.from(new Set(allCategoriesList.filter(Boolean)));
+    const category = uniqueCategories.length > 0 ? uniqueCategories.join(', ') : (inc.category || 'Safety Observation / Incident');
+
+    const allCategoriesStr = uniqueCategories.join(' , ').toLowerCase();
+
+    const isCat = (catName: string) => {
+      const lower = catName.toLowerCase();
+      if (lower === 'loss time' || lower === 'lost time') {
+        return allCategoriesStr.includes('loss time') || allCategoriesStr.includes('lost time') || allCategoriesStr.includes('lti');
+      }
+      return allCategoriesStr.includes(lower);
+    };
+
+    const standardCats = [
+      'near miss',
+      'no treatment',
+      'first aid',
+      'medical treatment',
+      'restricted work',
+      'loss time',
+      'lost time',
+      'permanent disability',
+      'fatality',
+      'occupational illness',
+      'environmental',
+      'property damage'
+    ];
+
+    const otherCustomCats = uniqueCategories.filter(c => {
+      const lower = String(c).toLowerCase().trim();
+      if (!lower) return false;
+      return !standardCats.some(std => lower.includes(std));
+    });
+
     const reportedBy = headsUp.submittedBy || inc.reportedBy || 'Ahmed Al-Rashidi';
     const description = headsUp.descriptionWhatHappened || inc.description || 'Incident description recorded.';
     const consequence = headsUp.descriptionConsequence || 'Potential safety risk identified.';
-
-    const isCat = (catName: string) => category.toLowerCase().includes(catName.toLowerCase());
 
     // Load Logos from src/images/logos/
     const nneLogoPath = join(process.cwd(), 'src', 'images', 'logos', 'nne_logo.png');
@@ -236,14 +424,86 @@ export class IncidentPdfService {
       `;
     };
 
+    // Helper to render Edit and Revision / Return for Revision History table in PDF
+    const renderEditAndRevisionHistory = (historyData: any, stageTitle: string = 'Stage') => {
+      let historyList: any[] = [];
+      if (typeof historyData === 'string') {
+        try { historyList = JSON.parse(historyData); } catch (e) {}
+      } else if (Array.isArray(historyData)) {
+        historyList = historyData;
+      }
+      if (!historyList || historyList.length === 0) return '';
+
+      const formatDt = (dStr: string) => {
+        if (!dStr) return '—';
+        try {
+          const d = new Date(dStr);
+          if (isNaN(d.getTime())) return dStr.replace('T', ' ');
+          return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+        } catch (e) { return dStr; }
+      };
+
+      return `
+        <div style="margin-top: 10px; border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; page-break-inside: avoid; break-inside: avoid;">
+          <div style="background: #f1f5f9; padding: 4px 8px; font-size: 8.5px; font-weight: 700; color: #1e293b; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #cbd5e1;">
+            <span>${stageTitle} — Revision & Return for Revision Audit Log</span>
+            <span style="font-size: 8px; font-weight: 600; color: #64748b;">${historyList.length} Event${historyList.length === 1 ? '' : 's'}</span>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 8px;">
+            <thead>
+              <tr style="background: #f8fafc; border-bottom: 1px solid #cbd5e1; color: #475569;">
+                <th style="padding: 4px 6px; text-align: left; width: 22%; font-weight: 700;">Action / Status</th>
+                <th style="padding: 4px 6px; text-align: left; width: 24%; font-weight: 700;">By (Role)</th>
+                <th style="padding: 4px 6px; text-align: left; width: 38%; font-weight: 700;">Reason / Change Details</th>
+                <th style="padding: 4px 6px; text-align: left; width: 16%; font-weight: 700;">Date & Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${historyList.map((item: any, idx: number) => {
+                const isReturned = item.status === 'RETURNED_FOR_REVISION' || (item.action && String(item.action).toLowerCase().includes('return'));
+                const badgeColor = isReturned ? '#b91c1c' : '#1d4ed8';
+                const badgeBg = isReturned ? '#fee2e2' : '#dbeafe';
+                const actionText = isReturned ? 'Returned for Revision' : (item.action || 'Updated / Revised');
+                const byText = item.returnedBy || item.editedBy || item.name || 'User';
+                const roleText = item.role ? ` (${item.role})` : '';
+                const reasonText = item.reason || item.changes || '—';
+                const timeText = formatDt(item.returnedTime || item.editedTime || item.timestamp || item.date);
+
+                return `
+                  <tr style="border-bottom: ${idx < historyList.length - 1 ? '1px solid #e2e8f0' : 'none'}; background: ${idx % 2 === 0 ? '#ffffff' : '#fafafa'};">
+                    <td style="padding: 4px 6px;">
+                      <span style="display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 7.5px; font-weight: 700; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeColor}33;">
+                        ${actionText}
+                      </span>
+                    </td>
+                    <td style="padding: 4px 6px; color: #0f172a; font-weight: 600;">${byText}${roleText}</td>
+                    <td style="padding: 4px 6px; color: #334155;">${reasonText}</td>
+                    <td style="padding: 4px 6px; color: #64748b;">${timeText}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
     // Helper for immediate actions (Stage 1 & Stage 2)
     const getImmediateActions = (): any[] => {
       const list: any[] = [];
-      if (headsUp.immediateActions && Array.isArray(headsUp.immediateActions)) {
-        list.push(...headsUp.immediateActions);
+      let huActs = headsUp.immediateActions;
+      if (typeof huActs === 'string') {
+        try { huActs = JSON.parse(huActs); } catch (e) {}
       }
-      if (initial.immediateActions && Array.isArray(initial.immediateActions)) {
-        initial.immediateActions.forEach((act: any) => {
+      if (huActs && Array.isArray(huActs)) {
+        list.push(...huActs);
+      }
+      let irActs = initial.immediateActions;
+      if (typeof irActs === 'string') {
+        try { irActs = JSON.parse(irActs); } catch (e) {}
+      }
+      if (irActs && Array.isArray(irActs)) {
+        irActs.forEach((act: any) => {
           if (!list.some((existing) => (existing.action || existing.description) === (act.action || act.description))) {
             list.push(act);
           }
@@ -295,7 +555,7 @@ export class IncidentPdfService {
       `;
     };
 
-    // Helper for corrective actions (Stage 3)
+    // Helper for corrective actions (Stage 3 - Investigation only)
     const getCorrectiveActions = (): any[] => {
       const list: any[] = [];
       if (inv.correctiveActions && Array.isArray(inv.correctiveActions)) {
@@ -309,20 +569,12 @@ export class IncidentPdfService {
         });
       }
       if (actions && Array.isArray(actions)) {
-        // First priority: items explicitly marked as CORRECTIVE
+        // ONLY items explicitly marked as CORRECTIVE from investigation
         actions.filter((a: any) => a.actionType === 'CORRECTIVE').forEach((act: any) => {
           if (!list.some((existing) => (existing.action || existing.correctiveAction) === act.action)) {
             list.push(act);
           }
         });
-        // If no explicit CORRECTIVE items found, include all recorded action items from DB
-        if (list.length === 0) {
-          actions.forEach((act: any) => {
-            if (!list.some((existing) => (existing.action || existing.correctiveAction) === act.action)) {
-              list.push(act);
-            }
-          });
-        }
       }
       return list;
     };
@@ -378,9 +630,16 @@ export class IncidentPdfService {
 
     // Accident Categories helper
     const isAccidentCategory = (catName: string) => {
-      const accCats = initial.accidentCategories || [];
-      if (Array.isArray(accCats) && accCats.some((c: string) => c.toLowerCase().includes(catName.toLowerCase()))) return true;
-      return isCat(catName);
+      let accCats = initial.accidentCategories || [];
+      if (typeof accCats === 'string') {
+        try { accCats = JSON.parse(accCats); } catch (e) {}
+      }
+      if (Array.isArray(accCats) && accCats.some((c: string) => {
+        const cLower = String(c).toLowerCase().trim();
+        const targetLower = catName.toLowerCase().trim();
+        return cLower.includes(targetLower) || targetLower.includes(cLower);
+      })) return true;
+      return false;
     };
 
     // Injury Types helper
@@ -781,8 +1040,8 @@ export class IncidentPdfService {
     };
 
     const renderLessonsPrevention = (): string => {
-      const lessons = inv.lessonsLearned || inv.lessons_learned || inv.lessons || 'Ensure pre-task risk assessments explicitly include pedestrian crossing controls and vehicle speed checks.';
-      const prevention = inv.preventionMeasures || inv.prevention || 'Install permanent physical speed calming humps and implement high-visibility crossing warning signage.';
+      const lessons = inv.lessonsLearned || inv.lessons_learned || inv.lessons || 'Ensure pre-task risk assessments explicitly include site safety controls and risk mitigation measures.';
+      const prevention = inv.preventativeMeasures || inv.preventative_measures || inv.preventionMeasures || inv.prevention || 'Implement permanent corrective engineering controls, updated procedures and supervisory oversight.';
 
       return `
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -804,35 +1063,73 @@ export class IncidentPdfService {
         try { att = JSON.parse(att); } catch (e) {}
       }
 
+      const getAttachmentInfo = (keys: string[], labelMatch?: string, legacyIdx?: number) => {
+        let val: any = null;
+        for (const k of keys) {
+          if (att[k] !== undefined && att[k] !== null) {
+            val = att[k];
+            break;
+          }
+        }
+        if (!val && legacyIdx !== undefined && att[legacyIdx] !== undefined) {
+          val = att[legacyIdx];
+        }
+        if (!val && Array.isArray(att.items)) {
+          val = att.items.find((it: any) => 
+            (it.key && keys.includes(it.key)) || 
+            (labelMatch && it.label && it.label.toLowerCase().includes(labelMatch.toLowerCase())) ||
+            (it.key && labelMatch && labelMatch.toLowerCase().includes(it.key.toLowerCase()))
+          );
+        }
+        if (!val) return { checked: false, fileName: '', fileUrl: '' };
+        if (typeof val === 'boolean') return { checked: val, fileName: '', fileUrl: '' };
+        if (typeof val === 'object') {
+          return {
+            checked: val.checked !== undefined ? !!val.checked : !!val.fileUrl,
+            fileName: val.fileName || (val.fileUrl ? val.fileUrl.split('/').pop() : ''),
+            fileUrl: val.fileUrl || '',
+            fileType: val.fileType || ''
+          };
+        }
+        return { checked: !!val, fileName: '', fileUrl: '' };
+      };
+
       const items = [
-        { label: "Contractor's Incident Report", checked: !!(att.contractorsIncidentReport || att[0]) },
-        { label: "Witness Statement Form", checked: !!(att.witnessStatement || att[1]) },
-        { label: "Risk Assessment & Method Statement (RAMS)", checked: !!(att.rams || att[2]) },
-        { label: "Training Records", checked: !!(att.trainingRecords || att[5]) },
-        { label: "Permit to Work (PTW)", checked: !!(att.permitsToWork || att[4]) },
-        { label: "Safe Plan of Action (SPA)", checked: !!(att.safePlanOfAction || att[3]) },
-        { label: "Photos from Incident Location", checked: !!(att.photos || resolvedPhotos.length > 0) },
-        { label: "Evidence for Actions Taken", checked: !!(att.evidenceForActionsTaken || att[7]) },
-        { label: "Waste Disposal Invoice (if applicable)", checked: !!(att.wasteDisposalInvoice || att[8]) },
+        { keys: ["contractorsIncidentReport", "contractorReport", "contractorIncidentReport"], label: "Contractor's Incident Report", match: "contractor", idx: 0 },
+        { keys: ["witnessStatement", "witnessStatements", "witnessStatementForm"], label: "Witness Statement Form", match: "witness", idx: 1 },
+        { keys: ["rams", "riskAssessment", "methodStatementRAMS"], label: "Risk Assessment & Method Statement (RAMS)", match: "rams", idx: 2 },
+        { keys: ["trainingRecords", "training", "competencyRecords"], label: "Training Records", match: "training", idx: 5 },
+        { keys: ["permitsToWork", "permitToWork", "ptw", "permit"], label: "Permit to Work (PTW)", match: "permit", idx: 4 },
+        { keys: ["safePlanOfAction", "spa", "tsti", "preTaskBriefing"], label: "Safe Plan of Action (SPA)", match: "spa", idx: 3 },
+        { keys: ["photos", "incidentPhotos", "locationPhotos"], label: "Photos from Incident Location", match: "photo", idx: 6, isPhotos: true },
+        { keys: ["evidenceForActionsTaken", "evidenceActions", "actionsEvidence"], label: "Evidence for Actions Taken", match: "evidence", idx: 7 },
+        { keys: ["wasteDisposalInvoice", "wasteDisposal", "wasteInvoice"], label: "Waste Disposal Invoice (if applicable)", match: "waste", idx: 8 },
       ];
 
       const missingExplain = att.missingExplanation || att.missingAttachmentsExplanation || inv.missingExplain || 'All mandatory attachments collected and uploaded.';
 
-      const rowsHtml = items.map(item => `
+      const rowsHtml = items.map(item => {
+        const info = getAttachmentInfo(item.keys, item.match || item.label, item.idx);
+        const isAttached = item.isPhotos ? (info.checked || resolvedPhotos.length > 0) : (info.checked || !!info.fileUrl);
+        const displayFileName = info.fileName || (item.isPhotos && resolvedPhotos.length > 0 ? `${resolvedPhotos.length} photo(s) attached` : '');
+        return `
         <tr>
-          <td style="width: 75%; font-weight: 600;">${item.label}</td>
-          <td style="text-align: center;">
-            <span style="font-weight: 800; color: ${item.checked ? '#16a34a' : '#dc2626'};">${item.checked ? '✓ Attached' : '✗ Pending / N/A'}</span>
+          <td style="width: 70%; font-weight: 600;">
+            ${item.label}
+            ${displayFileName ? `<div style="font-size: 8px; color: #2563eb; font-weight: normal; margin-top: 2px;">📎 Attached: <strong>${displayFileName}</strong></div>` : ''}
+          </td>
+          <td style="text-align: center; width: 30%;">
+            <span style="font-weight: 800; color: ${isAttached ? '#16a34a' : '#dc2626'};">${isAttached ? '✓ Attached' : '✗ Pending / N/A'}</span>
           </td>
         </tr>
-      `).join('');
+      `}).join('');
 
       return `
         <table class="nne-tbl" style="margin-bottom: 6px;">
           <thead>
             <tr class="dark-hdr">
               <th>Mandatory Item</th>
-              <th style="width: 25%; text-align: center;">Attachment Status</th>
+              <th style="width: 30%; text-align: center;">Attachment Status</th>
             </tr>
           </thead>
           <tbody>
@@ -873,7 +1170,65 @@ export class IncidentPdfService {
       </span>
     `;
 
-    const renderNneHeader = (pageTitle: string, formNo: number) => `
+    const currentStage = inc.stage || (details.investigation ? 'INVESTIGATION' : details.initialReport ? 'INITIAL_REPORT' : 'HEADS_UP');
+
+    const isNoFurtherInvestigation = Boolean(
+      inc.noFurtherInvestigation ||
+      headsUp.noFurtherInvestigation ||
+      initial.noFurtherInvestigation ||
+      details.noFurtherInvestigation
+    );
+
+    const hasInitialReportData = Boolean(
+      (details.initialReport && (details.initialReport.submittedBy || details.initialReport.signature || details.initialReport.submittedTime || details.initialReport.injuredPersonName)) ||
+      (details.initial_report && (details.initial_report.submittedBy || details.initial_report.signature || details.initial_report.submittedTime || details.initial_report.injured_person_name))
+    );
+
+    const hasInvestigationData = Boolean(
+      (details.investigation?.signatures && details.investigation.signatures.length > 0) ||
+      details.investigation?.problemStatement ||
+      details.investigation?.problem ||
+      details.investigation?.investigationDetails ||
+      details.investigation?.submittedBy ||
+      details.investigation?.reviewedBy ||
+      details.incident_investigation?.submittedBy ||
+      details.incident_investigation?.reviewedBy
+    );
+
+    let includeForm1 = true;
+    let includeForm2 = hasInitialReportData;
+    let includeForm3 = hasInvestigationData;
+
+    if (formType === 'headsUp' || formType === '1' || formType === 'HEADS_UP') {
+      includeForm1 = true;
+      includeForm2 = false;
+      includeForm3 = false;
+    } else if (formType === 'initialReport' || formType === '2' || formType === 'INITIAL_REPORT') {
+      includeForm1 = false;
+      includeForm2 = true;
+      includeForm3 = false;
+    } else if (formType === 'investigation' || formType === '3' || formType === 'INVESTIGATION') {
+      includeForm1 = false;
+      includeForm2 = false;
+      includeForm3 = true;
+    }
+
+    let p1 = 0, p2 = 0, p3 = 0, pageCounter = 0;
+    if (includeForm1) { pageCounter++; p1 = pageCounter; }
+    if (includeForm2) { pageCounter++; p2 = pageCounter; }
+    if (includeForm3) { pageCounter++; p3 = pageCounter; }
+    const totalPages = pageCounter;
+
+    const isEnv = uniqueCategories.some(c => String(c).toLowerCase().includes('environment'));
+    const isPropertyDamage = uniqueCategories.some(c => String(c).toLowerCase().includes('property'));
+    const isPersonInjury = !isEnv && !isPropertyDamage;
+
+    const envDetails = (initial as any).environmentalDetails || {};
+    const propDetails = (initial as any).propertyDamageDetails || {};
+    const invEnvDetails = (inv as any).environmentalDetails || {};
+    const invPropDetails = (inv as any).propertyDamageDetails || {};
+
+    const renderNneHeader = (pageTitle: string, formNo?: number) => `
       <div class="nne-hdr">
         <div class="nne-hdr-row" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 10px;">
           <div class="nne-hdr-left">
@@ -890,35 +1245,13 @@ export class IncidentPdfService {
           Project ID: <strong>${project}-001</strong> &nbsp;|&nbsp;
           System No: <strong>${caseNo}</strong>
         </div>
-
-        <table class="nne-tbl">
-          <thead>
-            <tr class="dark-hdr">
-              <th colspan="4">Document Approval</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="lbl-cell" style="width: 25%;">NNE Author</td>
-              <td style="width: 25%;">${reportedBy}</td>
-              <td class="lbl-cell" style="width: 25%;">NNE Peer Reviewer</td>
-              <td style="width: 25%;">HSE Lead Manager</td>
-            </tr>
-            <tr>
-              <td class="lbl-cell">Customer Approver</td>
-              <td>Site Director</td>
-              <td class="lbl-cell">Customer Approver</td>
-              <td>Project Representative</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     `;
 
     const renderNneFooter = (pageNo: number) => `
       <div class="nne-ftr">
         <div>Template: TPL-138/NNE Project Template - Word/ 1.0 &nbsp;|&nbsp; Doc No: DPT-00049</div>
-        <div>© NNE A/S &nbsp;|&nbsp; Page ${pageNo} of 3</div>
+        <div>© NNE A/S &nbsp;|&nbsp; Form ${pageNo} of ${totalPages}</div>
       </div>
     `;
 
@@ -1025,6 +1358,7 @@ export class IncidentPdfService {
       </head>
       <body>
 
+        ${includeForm1 ? `
         <!-- =================================================================
              FORM 1: HEADS-UP NOTIFICATION (2 HOURS TEMPLATE)
         ================================================================== -->
@@ -1062,7 +1396,9 @@ export class IncidentPdfService {
               </tr>
               <tr>
                 <td class="lbl-cell">Specific location:</td>
-                <td colspan="3">${specificLoc}</td>
+                <td>${specificLoc}</td>
+                <td class="lbl-cell">Further Investigation:</td>
+                <td><strong>${isNoFurtherInvestigation ? 'Not Required (Waived)' : 'Required'}</strong></td>
               </tr>
               <tr>
                 <td class="lbl-cell">Contractor(s) involved:</td>
@@ -1096,6 +1432,14 @@ export class IncidentPdfService {
                 <td>${renderCheckbox(isCat('Environmental'), 'Environmental Incident')}</td>
                 <td>${renderCheckbox(isCat('Property Damage'), 'Property Damage')}</td>
               </tr>
+              ${otherCustomCats.length > 0 ? `
+              <tr>
+                <td colspan="4" style="background: #f8fafc; padding: 4px 8px;">
+                  <span class="chk-label" style="color: #475569; font-size: 8.5px; font-weight: 700; margin-right: 6px;">Hazard / Observation Category:</span>
+                  ${otherCustomCats.map(c => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${c}</span></span>`).join('')}
+                </td>
+              </tr>
+              ` : ''}
             </tbody>
           </table>
 
@@ -1145,30 +1489,35 @@ export class IncidentPdfService {
               </tr>
               ${headsUpApprSig ? `
               <tr>
-                <td class="lbl-cell">Approved By:</td>
+                <td class="lbl-cell">Reviewed & Approved By:</td>
                 <td><strong>${headsUpApprName}</strong></td>
-                <td class="lbl-cell">Approver Sig:</td>
+                <td class="lbl-cell">Approver Signature:</td>
                 <td>${renderSignature(headsUpApprSig, headsUpApprName)}</td>
               </tr>
               ` : ''}
             </tbody>
           </table>
 
-          ${renderNneFooter(1)}
-        </div>
+          ${renderEditAndRevisionHistory(headsUp.editHistory, 'Form 1: Heads-Up Notification')}
 
+          ${renderNneFooter(p1)}
+        </div>
+        ` : ''}
+
+        ${includeForm2 ? `
         <!-- =================================================================
              FORM 2: INITIAL INCIDENT REPORT (24 HOURS TEMPLATE)
         ================================================================== -->
-        <div class="form-page">
+        <div class="form-page" style="${includeForm1 ? 'page-break-before: always; break-before: always;' : ''}">
           ${renderNneHeader('Initial Incident Report', 2)}
 
           <div style="font-size: 9.5px; font-style: italic; color: #475569; margin-bottom: 10px;">
-            The following template must be completed as soon as possible and within 24 hours of the incident occurrence.
+            The following template must be completed within 24 hours of the incident occurrence.
           </div>
 
+          <!-- 1. Project Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">1 Project Details</div>
+            <div class="sec-title">1. Project Details</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -1193,10 +1542,78 @@ export class IncidentPdfService {
                   <td class="lbl-cell">Floor/Level:</td>
                   <td>${inc.floorLevel || 'Ground Floor'}</td>
                 </tr>
+                <tr>
+                  <td class="lbl-cell">Contractor(s) involved:</td>
+                  <td>${contractor}</td>
+                  <td class="lbl-cell">Further Investigation:</td>
+                  <td><strong>${isNoFurtherInvestigation ? 'Not Required (Waived)' : 'Required'}</strong></td>
+                </tr>
               </tbody>
             </table>
           </div>
 
+          ${isEnv ? `
+          <!-- 2. Environmental Incident Details -->
+          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
+            <div class="sec-title">2. Environmental Incident Details</div>
+            <table class="nne-tbl">
+              <tbody>
+                <tr>
+                  <td class="lbl-cell" style="width: 25%;">Spill / Discharge Type:</td>
+                  <td style="width: 25%;"><strong>${envDetails.spillType || headsUp.envSpillType || 'Chemical / Oil Spill'}</strong></td>
+                  <td class="lbl-cell" style="width: 25%;">Substance Spilled:</td>
+                  <td style="width: 25%;"><strong>${envDetails.spillSubstance || headsUp.envSpilledWhat || 'Solvent / Hydrocarbon'}</strong></td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Approx. Quantity Spilled:</td>
+                  <td>${envDetails.spillQuantity || headsUp.envQuantity || '—'}</td>
+                  <td class="lbl-cell">Cause of Spillage:</td>
+                  <td>${envDetails.spillCause || headsUp.envCause || 'Line rupture / Valve failure'}</td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">System / Media Entered:</td>
+                  <td>${envDetails.spillSystemEntered || headsUp.envSpecify || 'Soil / Concrete / Drainage'}</td>
+                  <td class="lbl-cell">Severity Level:</td>
+                  <td style="font-weight: 700; color: #dc2626;">Level ${inc.actualSeverity || 1} — Environmental Impact</td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Containment & Cleanup Actions:</td>
+                  <td colspan="3">${envDetails.containmentCleanup || headsUp.immediateActionTaken || 'Spill kit deployed immediately, absorbent booms and pads placed, contaminated material collected and bagged.'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ` : isPropertyDamage ? `
+          <!-- 2. Property Damage Details -->
+          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
+            <div class="sec-title">2. Property Damage & Asset Details</div>
+            <table class="nne-tbl">
+              <tbody>
+                <tr>
+                  <td class="lbl-cell" style="width: 25%;">Damaged Asset / Equipment:</td>
+                  <td style="width: 25%;"><strong>${propDetails.propertyDamaged || headsUp.propertyDamaged || 'Plant Machinery / Structure'}</strong></td>
+                  <td class="lbl-cell" style="width: 25%;">Plant / Vehicle Involved:</td>
+                  <td style="width: 25%;"><strong>${propDetails.equipmentInvolved || headsUp.equipmentInvolved || 'Forklift / Mobile Plant'}</strong></td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Estimated Repair Cost:</td>
+                  <td><strong>${propDetails.estimatedCost || headsUp.estimatedCost || 'To be assessed by contractor'}</strong></td>
+                  <td class="lbl-cell">Severity Rating:</td>
+                  <td style="font-weight: 700; color: #dc2626;">Level ${inc.actualSeverity || 1} — Property Loss</td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Description & Extent of Damage:</td>
+                  <td colspan="3">${propDetails.damageDescription || headsUp.descriptionWhatHappened || 'Damage sustained during site operations.'}</td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Immediate Containment / Isolation:</td>
+                  <td colspan="3">${propDetails.immediateActionTaken || headsUp.immediateActionTaken || 'Area cordoned off, damaged equipment tagged out and quarantined.'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <!-- 2. Injured Person Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div class="sec-title">2 Injured / Ill Person Details</div>
             <table class="nne-tbl">
@@ -1225,28 +1642,6 @@ export class IncidentPdfService {
                 </tr>
               </tbody>
             </table>
-          </div>
-
-          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">3 Severity Assessment</div>
-            <table class="nne-tbl">
-              <tbody>
-                <tr>
-                  <td class="lbl-cell" style="width: 30%;">Actual severity level & rating</td>
-                  <td style="font-weight: 700; color: #2563eb;">Level ${inc.actualSeverity || 1} — Minor / Near Miss</td>
-                </tr>
-                <tr>
-                  <td class="lbl-cell">Potential severity level & rating</td>
-                  <td style="font-weight: 700; color: #dc2626;">Level ${inc.potentialSeverity || 4} — High Potential (HiPo)</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Photos from Incident Location -->
-          <div class="pdf-box" style="border: 1px solid #cbd5e1; padding: 8px; border-radius: 4px; margin-bottom: 12px; background: #fff; page-break-inside: avoid; break-inside: avoid;">
-            <div style="font-size: 9.5px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">Photos from the incident location (minimum of 2 photos)</div>
-            ${renderPhotosGrid()}
           </div>
 
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
@@ -1363,99 +1758,58 @@ export class IncidentPdfService {
                 <div>
                   <div style="font-size: 8px; font-weight: 800; color: #334155; margin-bottom: 3px;">FRONT VIEW</div>
                   <svg width="105" height="195" viewBox="0 0 140 280">
-                    <!-- HEAD & FACE -->
                     <circle cx="70" cy="24" r="16" fill="${getBodyPartFill('Head')}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="70" cy="24" r="9" fill="${isPartSelected('Facial area') || isPartSelected('Teeth') || isPartSelected('Eye') ? '#dc2626' : '#ffffff'}" stroke="#ffffff" stroke-width="1" />
-
-                    <!-- NECK -->
                     <rect x="61" y="42" width="18" height="9" rx="3" fill="${getBodyPartFill('Neck')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- SHOULDERS -->
                     <circle cx="42" cy="59" r="8" fill="${getBodyPartFill('Shoulder', 'R')}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="98" cy="59" r="8" fill="${getBodyPartFill('Shoulder', 'L')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- CHEST -->
                     <rect x="52" y="53" width="36" height="26" rx="4" fill="${getBodyPartFill('Chest')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- ABDOMEN -->
                     <rect x="54" y="81" width="32" height="18" rx="3" fill="${getBodyPartFill('Pelvis or abdomen')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- HIPS / PELVIS BLOCK -->
                     <rect x="52" y="101" width="36" height="24" rx="4" fill="${getBodyPartFill('Pelvis or abdomen')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- ARMS & HANDS -->
                     <rect x="36" y="69" width="12" height="38" rx="5" fill="${getBodyPartFill('Arm, Elbow', 'R')}" stroke="#ffffff" stroke-width="2" />
                     <rect x="92" y="69" width="12" height="38" rx="5" fill="${getBodyPartFill('Arm, Elbow', 'L')}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="36" cy="112" r="5" fill="${isPartSelected('Wrist', 'R') || isPartSelected('Hand', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="104" cy="112" r="5" fill="${isPartSelected('Wrist', 'L') || isPartSelected('Hand', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
                     <rect x="30" y="119" width="12" height="18" rx="6" fill="${isPartSelected('Hand', 'R') || isPartSelected('Finger(s)', 'R') || isPartSelected('Finger', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <rect x="98" y="119" width="12" height="18" rx="6" fill="${isPartSelected('Hand', 'L') || isPartSelected('Finger(s)', 'L') || isPartSelected('Finger', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- LEGS, KNEES & FEET -->
                     <rect x="52" y="127" width="14" height="48" rx="6" fill="${getBodyPartFill('Legs, Knee', 'R')}" stroke="#ffffff" stroke-width="2" />
                     <rect x="74" y="127" width="14" height="48" rx="6" fill="${getBodyPartFill('Legs, Knee', 'L')}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="59" cy="179" r="5" fill="${getBodyPartFill('Legs, Knee', 'R')}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="81" cy="179" r="5" fill="${getBodyPartFill('Legs, Knee', 'L')}" stroke="#ffffff" stroke-width="2" />
-
                     <rect x="53" y="186" width="12" height="44" rx="5" fill="${getBodyPartFill('Legs, Knee', 'R')}" stroke="#ffffff" stroke-width="2" />
                     <rect x="75" y="186" width="12" height="44" rx="5" fill="${getBodyPartFill('Legs, Knee', 'L')}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="59" cy="234" r="4" fill="${isPartSelected('Ankle', 'R') || isPartSelected('Foot', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="81" cy="234" r="4" fill="${isPartSelected('Ankle', 'L') || isPartSelected('Foot', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
                     <ellipse cx="53" cy="244" rx="10" ry="5" fill="${isPartSelected('Foot', 'R') || isPartSelected('Toe(s)', 'R') || isPartSelected('Toe', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <ellipse cx="87" cy="244" rx="10" ry="5" fill="${isPartSelected('Foot', 'L') || isPartSelected('Toe(s)', 'L') || isPartSelected('Toe', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                   </svg>
                 </div>
-
                 <!-- BACK VIEW -->
                 <div>
                   <div style="font-size: 8px; font-weight: 800; color: #334155; margin-bottom: 3px;">BACK VIEW</div>
                   <svg width="105" height="195" viewBox="0 0 140 280">
-                    <!-- HEAD & EARS (BACK) -->
                     <circle cx="70" cy="24" r="16" fill="${getBodyPartFill('Head')}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="52" cy="24" r="4" fill="${getBodyPartFill('Ear', 'L')}" stroke="#ffffff" stroke-width="1.5" />
                     <circle cx="88" cy="24" r="4" fill="${getBodyPartFill('Ear', 'R')}" stroke="#ffffff" stroke-width="1.5" />
-
-                    <!-- NECK -->
                     <rect x="61" y="42" width="18" height="9" rx="3" fill="${getBodyPartFill('Neck')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- SHOULDERS -->
                     <circle cx="42" cy="59" r="8" fill="${getBodyPartFill('Shoulder', 'L')}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="98" cy="59" r="8" fill="${getBodyPartFill('Shoulder', 'R')}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- UPPER BACK & SPINE -->
                     <rect x="52" y="53" width="36" height="46" rx="4" fill="${isPartSelected('Back incl. spine') || isPartSelected('Back') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- LOWER BACK / PELVIS -->
                     <rect x="52" y="101" width="36" height="24" rx="4" fill="${isPartSelected('Back incl. spine') || isPartSelected('Back') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- ARMS & HANDS (BACK) -->
                     <rect x="36" y="69" width="12" height="38" rx="5" fill="${getBodyPartFill('Arm, Elbow', 'L')}" stroke="#ffffff" stroke-width="2" />
                     <rect x="92" y="69" width="12" height="38" rx="5" fill="${getBodyPartFill('Arm, Elbow', 'R')}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="36" cy="112" r="5" fill="${isPartSelected('Wrist', 'L') || isPartSelected('Hand', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="104" cy="112" r="5" fill="${isPartSelected('Wrist', 'R') || isPartSelected('Hand', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="30" cy="125" r="9" fill="${isPartSelected('Hand', 'L') || isPartSelected('Finger(s)', 'L') || isPartSelected('Finger', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="110" cy="125" r="9" fill="${isPartSelected('Hand', 'R') || isPartSelected('Finger(s)', 'R') || isPartSelected('Finger', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
-                    <!-- LEGS, KNEES & FEET (BACK) -->
                     <rect x="52" y="127" width="14" height="48" rx="6" fill="${getBodyPartFill('Legs, Knee', 'L')}" stroke="#ffffff" stroke-width="2" />
                     <rect x="74" y="127" width="14" height="48" rx="6" fill="${getBodyPartFill('Legs, Knee', 'R')}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="59" cy="179" r="5" fill="${getBodyPartFill('Legs, Knee', 'L')}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="81" cy="179" r="5" fill="${getBodyPartFill('Legs, Knee', 'R')}" stroke="#ffffff" stroke-width="2" />
-
                     <rect x="53" y="186" width="12" height="44" rx="5" fill="${getBodyPartFill('Legs, Knee', 'L')}" stroke="#ffffff" stroke-width="2" />
                     <rect x="75" y="186" width="12" height="44" rx="5" fill="${getBodyPartFill('Legs, Knee', 'R')}" stroke="#ffffff" stroke-width="2" />
-
                     <circle cx="59" cy="234" r="4" fill="${isPartSelected('Ankle', 'L') || isPartSelected('Foot', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <circle cx="81" cy="234" r="4" fill="${isPartSelected('Ankle', 'R') || isPartSelected('Foot', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
-
                     <ellipse cx="53" cy="244" rx="10" ry="5" fill="${isPartSelected('Foot', 'L') || isPartSelected('Toe(s)', 'L') || isPartSelected('Toe', 'L') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                     <ellipse cx="87" cy="244" rx="10" ry="5" fill="${isPartSelected('Foot', 'R') || isPartSelected('Toe(s)', 'R') || isPartSelected('Toe', 'R') ? '#dc2626' : '#b4c6e7'}" stroke="#ffffff" stroke-width="2" />
                   </svg>
@@ -1463,6 +1817,7 @@ export class IncidentPdfService {
               </div>
             </div>
           </div>
+        `}
 
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div class="sec-title">Initial Root Cause Assessment</div>
@@ -1504,16 +1859,17 @@ export class IncidentPdfService {
             </table>
           </div>
 
-          ${renderNneFooter(2)}
-        </div>
+          ${renderEditAndRevisionHistory(initial.editHistory, 'Form 2: Initial Incident Report')}
 
+          ${renderNneFooter(p2)}
+        </div>
+        ` : ''}
+
+        ${includeForm3 ? `
         <!-- =================================================================
              FORM 3: INCIDENT INVESTIGATION REPORT (FINAL 7 DAYS TEMPLATE)
         ================================================================== -->
-        <!-- =================================================================
-             FORM 3: INCIDENT INVESTIGATION REPORT (FINAL 7 DAYS TEMPLATE)
-        ================================================================== -->
-        <div class="form-page">
+        <div class="form-page" style="${includeForm1 || includeForm2 ? 'page-break-before: always; break-before: page;' : ''}">
           ${renderNneHeader('Final Incident Investigation Report', 3)}
 
           <div style="font-size: 9.5px; font-style: italic; color: #475569; margin-bottom: 10px;">
@@ -1580,6 +1936,7 @@ export class IncidentPdfService {
           </div>
 
           <!-- Section 3. Witness Statements -->
+          ${includeWitnesses ? `
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div class="sec-title">3. Witness Statements</div>
             <table class="nne-tbl">
@@ -1597,6 +1954,7 @@ export class IncidentPdfService {
               </tbody>
             </table>
           </div>
+          ` : ''}
 
           <!-- Section 4. Fishbone Analysis – Cause and Effect -->
           ${renderFishboneSvg()}
@@ -1635,19 +1993,13 @@ export class IncidentPdfService {
             </div>
           </div>
 
-          <!-- Section 11. Severity Assessment -->
+          <!-- Section 11. Corrective & Preventive Actions -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">11. Severity Assessment</div>
-            ${renderSeverityAssessment()}
-          </div>
-
-          <!-- Section 12. Corrective Actions -->
-          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">12. Corrective Actions</div>
+            <div class="sec-title">11. Corrective & Preventive Actions</div>
             <table class="nne-tbl">
               <thead>
                 <tr class="dark-hdr">
-                  <th>Corrective Action</th>
+                  <th>Corrective / Preventive Action</th>
                   <th>Responsible</th>
                   <th>Target Date</th>
                   <th>Status</th>
@@ -1659,16 +2011,56 @@ export class IncidentPdfService {
             </table>
           </div>
 
+          <!-- Section 12. Severity Assessment -->
+          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
+            <div class="sec-title">12. Severity Assessment</div>
+            ${renderSeverityAssessment()}
+          </div>
+
+        ${isEnv ? `
+          <!-- Section 12b. Environmental Remediation & Waste Management -->
+          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
+            <div class="sec-title">12. Environmental Remediation & Waste Management</div>
+            <table class="nne-tbl">
+              <tbody>
+                <tr>
+                  <td class="lbl-cell" style="width: 25%;">Remediation & Cleanup Plan:</td>
+                  <td colspan="3">${invEnvDetails.remediationPlan || 'Remediation completed; affected surface excavated and tested by Site HSE.'}</td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Waste Disposal & Contractor:</td>
+                  <td>${invEnvDetails.wasteDisposal || 'Disposed offsite via licensed hazardous waste disposal contractor.'}</td>
+                  <td class="lbl-cell">Regulatory Notification:</td>
+                  <td>${invEnvDetails.regulatoryNotification || 'Internal environmental log updated; compliant with local regulations.'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ` : isPropertyDamage ? `
+          <!-- Section 12b. Property Damage & Loss Assessment -->
+          <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
+            <div class="sec-title">12. Property Damage & Loss Assessment</div>
+            <table class="nne-tbl">
+              <tbody>
+                <tr>
+                  <td class="lbl-cell" style="width: 25%;">Root Damage & Loss Assessment:</td>
+                  <td colspan="3">${invPropDetails.lossAssessment || 'Comprehensive structural and mechanical inspection conducted on damaged asset.'}</td>
+                </tr>
+                <tr>
+                  <td class="lbl-cell">Insurance Claim / Recovery Status:</td>
+                  <td>${invPropDetails.insuranceClaim || 'Claim filed with insurer; repair quotation approved.'}</td>
+                  <td class="lbl-cell">Preventive Machinery Controls:</td>
+                  <td>${invPropDetails.preventiveSafeguards || 'Preventive maintenance schedule revised; operator re-certified.'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+
           <!-- Section 13. Lessons Learned & Recurrence Prevention -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div class="sec-title">13. Lessons Learned & Prevention</div>
             ${renderLessonsPrevention()}
-          </div>
-
-          <!-- Section 14. Photos from Incident Location & Evidence -->
-          <div class="pdf-box" style="border: 1px solid #cbd5e1; padding: 8px; border-radius: 4px; margin-bottom: 12px; background: #fff; page-break-inside: avoid; break-inside: avoid;">
-            <div style="font-size: 9.5px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">14. Photos from Incident Location & Evidence</div>
-            ${renderPhotosGrid()}
           </div>
 
           <!-- Section 15. Mandatory Attachments -->
@@ -1702,8 +2094,83 @@ export class IncidentPdfService {
             </table>
           </div>
 
-          ${renderNneFooter(3)}
+          ${renderEditAndRevisionHistory(inv.editHistory, 'Form 3: Incident Investigation Report')}
+
+          ${renderNneFooter(p3)}
         </div>
+
+        ${(() => {
+          let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || {};
+          if (typeof att === 'string') {
+            try { att = JSON.parse(att); } catch (e) {}
+          }
+
+          const imgItems: { label: string; fileName: string; fileUrl: string }[] = [];
+          const seenImgUrls = new Set<string>();
+
+          const checkAndAddImg = (label: string, val: any) => {
+            if (!val) return;
+            let fUrl = '';
+            let fLabel = label;
+            let fName = '';
+            if (typeof val === 'object' && val.fileUrl) {
+              fUrl = String(val.fileUrl).trim();
+              fLabel = val.label || label;
+              fName = val.fileName || 'Attached Image';
+            } else if (typeof val === 'string' && val.trim()) {
+              fUrl = val.trim();
+              fName = 'Attached Image';
+            }
+
+            if (!fUrl) return;
+            const normalizedUrl = fUrl.toLowerCase();
+            if (seenImgUrls.has(normalizedUrl)) return;
+
+            if (normalizedUrl.match(/\.(jpg|jpeg|png|webp|gif|svg)$/) || (typeof val === 'object' && val.fileType && String(val.fileType).startsWith('image/'))) {
+              seenImgUrls.add(normalizedUrl);
+              imgItems.push({
+                label: fLabel,
+                fileName: fName,
+                fileUrl: fUrl
+              });
+            }
+          };
+
+          if (Array.isArray(att.items)) {
+            att.items.forEach((it: any) => checkAndAddImg(it.label || it.key, it));
+          }
+          Object.keys(att).forEach(k => {
+            if (k !== 'items' && k !== 'missingExplanation') {
+              checkAndAddImg(k, att[k]);
+            }
+          });
+
+          if (imgItems.length === 0) return '';
+
+          return imgItems.map((img, idx) => {
+            const resolvedUri = resolveImageDataUri(img.fileUrl);
+            if (!resolvedUri) return '';
+
+            return `
+              <div class="pdf-page-container" style="page-break-before: always; break-before: always; display: flex; flex-direction: column; justify-content: space-between; min-height: 297mm;">
+                <div>
+                  ${renderNneHeader(`Mandatory Attachment Appendix: ${img.label}`)}
+                  <div class="pdf-section" style="margin-top: 10px;">
+                    <div class="sec-title" style="display: flex; justify-content: space-between;">
+                      <span>Appendix ${idx + 1}: ${img.label}</span>
+                      <span style="font-weight: normal; font-size: 9px; color: #64748b;">${img.fileName}</span>
+                    </div>
+                    <div style="text-align: center; margin: 16px auto; padding: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">
+                      <img src="${resolvedUri}" alt="${img.label}" style="max-width: 100%; max-height: 750px; object-fit: contain; border-radius: 4px;" />
+                    </div>
+                  </div>
+                </div>
+                ${renderNneFooter(p3)}
+              </div>
+            `;
+          }).join('');
+        })()}
+        ` : ''}
 
       </body>
       </html>

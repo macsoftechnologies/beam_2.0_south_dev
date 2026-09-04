@@ -7,7 +7,7 @@ import { IncidentPdfService } from '../services/incident-pdf.service';
 import { CreateHeadsUpDto } from '../dtos/create-headsup.dto';
 import { CreateInitialReportDto } from '../dtos/create-initial-report.dto';
 import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
-import { StageApprovalDto, ReviewInvestigationDto, CloseIncidentDto } from '../dtos/stage-approval.dto';
+import { StageApprovalDto, ReviewInvestigationDto, CloseIncidentDto, ReturnForRevisionDto } from '../dtos/stage-approval.dto';
 import { CreateActionItemDto, UpdateActionItemDto } from '../dtos/action-item.dto';
 import { IncidentStage, InvestigationLevel } from '../entities/incident.entity';
 import { incidentMulterConfig } from '../config/multer.config';
@@ -52,6 +52,30 @@ export class IncidentsController {
       statusCode: 200,
       message: 'Image uploaded successfully',
       url,
+      fileName: file.originalname,
+      fileSize: file.size,
+      mimeType: file.mimetype,
+    };
+  }
+
+  /**
+   * Upload mandatory attachment document/file (PDF, Doc, Image) via Multer into uploads/incidents/
+   * POST /incidents/upload-attachment
+   */
+  @Post('upload-attachment')
+  @UseInterceptors(FileInterceptor('file', incidentMulterConfig))
+  uploadAttachment(@UploadedFile() file: any) {
+    if (!file) {
+      throw new BadRequestException('No attachment file was provided for upload.');
+    }
+    const url = `/uploads/incidents/${file.filename}`;
+    return {
+      statusCode: 200,
+      message: 'Attachment uploaded successfully',
+      url,
+      fileName: file.originalname,
+      fileSize: file.size,
+      mimeType: file.mimetype,
     };
   }
 
@@ -62,6 +86,15 @@ export class IncidentsController {
   @Post('headsup')
   async submitHeadsUp(@Body() dto: CreateHeadsUpDto) {
     return await this.incidentsService.submitHeadsUp(dto);
+  }
+
+  /**
+   * Stage 1: Update Heads-Up Notification (when submitted and not yet approved)
+   * PUT /incidents/:id/headsup
+   */
+  @Put(':id/headsup')
+  async updateHeadsUp(@Param('id', ParseIntPipe) id: number, @Body() dto: any) {
+    return await this.incidentsService.updateHeadsUp(id, dto);
   }
 
   /**
@@ -126,6 +159,15 @@ export class IncidentsController {
   }
 
   /**
+   * Return Incident Stage for Revision
+   * POST /incidents/:id/return-revision
+   */
+  @Post(':id/return-revision')
+  async returnForRevision(@Param('id', ParseIntPipe) id: number, @Body() dto: ReturnForRevisionDto) {
+    return await this.incidentsService.returnForRevision(id, dto);
+  }
+
+  /**
    * Close Incident Investigation
    * PUT /incidents/:id/close
    */
@@ -184,6 +226,9 @@ export class IncidentsController {
   @Get(':id/export-pdf')
   async exportIncidentPdf(
     @Param('id') id: string,
+    @Query('form') form: string,
+    @Query('stage') stage: string,
+    @Query('includeWitnesses') includeWitnessesQuery: string,
     @Res() res: Response,
   ) {
     let details: any;
@@ -221,11 +266,17 @@ export class IncidentsController {
       };
     }
 
-    const pdfBuffer = await this.incidentPdfService.generate3In1Pdf(details);
+    const requestedForm = form || stage || 'all';
+    const includeWitnesses = includeWitnessesQuery === 'true' || includeWitnessesQuery === '1';
+    const pdfBuffer = await this.incidentPdfService.generate3In1Pdf(details, requestedForm, { includeWitnesses });
     const caseName = details.incident?.caseNumber || details.incident?.id || id;
+    const formSuffix = requestedForm === 'headsUp' || requestedForm === '1' ? '_Form1_HeadsUp'
+      : requestedForm === 'initialReport' || requestedForm === '2' ? '_Form2_InitialReport'
+      : requestedForm === 'investigation' || requestedForm === '3' ? '_Form3_Investigation'
+      : '_All_Forms_Report';
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${caseName}_3In1_Export_Report.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${caseName}${formSuffix}.pdf"`);
     res.end(pdfBuffer);
   }
 
@@ -237,9 +288,12 @@ export class IncidentsController {
   async getDashboardStats(
     @Query('building') building?: string,
     @Query('contractor') contractor?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('userRole') userRole?: string,
     @Query('dateRange') dateRange?: string,
   ) {
-    return await this.incidentsService.getDashboardStats({ building, contractor, dateRange });
+    const cId = contractorId ? parseInt(contractorId, 10) : undefined;
+    return await this.incidentsService.getDashboardStats({ building, contractor, contractorId: cId, userRole, dateRange });
   }
 
   /**
@@ -269,6 +323,8 @@ export class IncidentsController {
     @Query('potentialSeverity') potentialSeverity?: string,
     @Query('investigationLevel') investigationLevel?: InvestigationLevel,
     @Query('contractor') contractor?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('userRole') userRole?: string,
     @Query('origin') origin?: string,
     @Query('search') search?: string,
   ) {
@@ -276,6 +332,7 @@ export class IncidentsController {
     const bId = buildingId ? parseInt(buildingId, 10) : undefined;
     const actSev = actualSeverity ? parseInt(actualSeverity, 10) : undefined;
     const potSev = potentialSeverity ? parseInt(potentialSeverity, 10) : undefined;
+    const cId = contractorId ? parseInt(contractorId, 10) : undefined;
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? (limit.toLowerCase() === 'all' ? 0 : parseInt(limit, 10)) : 10;
 
@@ -292,6 +349,8 @@ export class IncidentsController {
       potentialSeverity: potSev,
       investigationLevel,
       contractor,
+      contractorId: cId,
+      userRole,
       origin,
       search,
     });

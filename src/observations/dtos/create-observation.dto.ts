@@ -19,6 +19,22 @@ export class CreateObservationDto {
   @IsNotEmpty()
   safetyCategory: string;
 
+  @IsString()
+  @IsOptional()
+  date?: string;
+
+  @IsString()
+  @IsOptional()
+  observationDate?: string;
+
+  @IsString()
+  @IsOptional()
+  time?: string;
+
+  @IsString()
+  @IsOptional()
+  observationTime?: string;
+
   @IsEnum(ObservationRiskLevel)
   @IsOptional()
   riskLevel?: ObservationRiskLevel; // LOW, MEDIUM, HIGH, CRITICAL

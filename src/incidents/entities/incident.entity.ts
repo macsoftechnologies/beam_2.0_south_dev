@@ -88,6 +88,9 @@ export class Incident {
   @Column({ name: 'gatekeeper_informed', type: 'boolean', default: false })
   gatekeeperInformed: boolean;
 
+  @Column({ name: 'no_further_investigation', type: 'boolean', default: false })
+  noFurtherInvestigation: boolean;
+
   @Column({ name: 'gatekeeper_name', type: 'varchar', length: 255, nullable: true })
   gatekeeperName?: string;
 

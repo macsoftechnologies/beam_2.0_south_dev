@@ -180,9 +180,12 @@ export class ObservationsController {
   async getDashboardStats(
     @Query('building') building?: string,
     @Query('contractor') contractor?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('userRole') userRole?: string,
     @Query('range') range?: string,
   ) {
-    return await this.obsService.getDashboardStats({ building, contractor, range });
+    const cId = contractorId ? parseInt(contractorId, 10) : undefined;
+    return await this.obsService.getDashboardStats({ building, contractor, contractorId: cId, userRole, range });
   }
 
   /**
