@@ -3,11 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Notification } from './entities/notification.entity';
 import { NotificationSetting } from './entities/notification-setting.entity';
+import { IncidentNotificationGroupMember } from './entities/incident-notification-group-member.entity';
 import { User } from '../users/entities/user.entity';
 import { Employee } from '../employees/entities/employee.entity';
 import { Subcontractor } from '../subcontractor/entities/subcontractor.entity';
+import { Department } from '../department/entities/department.entity';
 import { RequestEntity } from '../requests/entities/request.entity';
 import { RedisCacheService } from '../redis/redid-cache.service';
+
+import { EmailService } from './services/email.service';
+import { SmsService } from './services/sms.service';
 
 @Injectable()
 export class NotificationsService {
@@ -16,16 +21,52 @@ export class NotificationsService {
     private readonly notificationRepo: Repository<Notification>,
     @InjectRepository(NotificationSetting)
     private readonly settingRepo: Repository<NotificationSetting>,
+    @InjectRepository(IncidentNotificationGroupMember)
+    private readonly incidentGroupRepo: Repository<IncidentNotificationGroupMember>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
     @InjectRepository(Subcontractor)
     private readonly subcontractorRepo: Repository<Subcontractor>,
+    @InjectRepository(Department)
+    private readonly departmentRepo: Repository<Department>,
     @InjectRepository(RequestEntity)
     private readonly requestRepo: Repository<RequestEntity>,
     private readonly redisCacheService: RedisCacheService,
+    private readonly emailService: EmailService,
+    private readonly smsService: SmsService,
   ) {}
+
+  /**
+   * Auto-create incident_notification_group_members table if not exists upon startup.
+   */
+  async onModuleInit() {
+    try {
+      await this.notificationRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`incident_notification_group_members\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`userId\` INT NULL,
+          \`employeeId\` INT NULL,
+          \`name\` VARCHAR(150) NULL,
+          \`email\` VARCHAR(150) NULL,
+          \`phoneNumber\` VARCHAR(50) NULL,
+          \`userType\` VARCHAR(100) NULL,
+          \`departmentName\` VARCHAR(150) NULL,
+          \`isEmailEnabled\` TINYINT(1) NOT NULL DEFAULT 1,
+          \`isSmsEnabled\` TINYINT(1) NOT NULL DEFAULT 1,
+          \`isInAppEnabled\` TINYINT(1) NOT NULL DEFAULT 1,
+          \`addedByUserId\` INT NULL,
+          \`createdAt\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          \`updatedAt\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX \`IDX_incident_group_userId\` (\`userId\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+      console.log('[Notification] Checked/Created table: incident_notification_group_members');
+    } catch (err) {
+      console.error('[Notification] Error creating incident_notification_group_members table:', err);
+    }
+  }
 
   /**
    * Centralized method to trigger notifications for permit request status changes.
@@ -411,6 +452,822 @@ export class NotificationsService {
   }
 
   /**
+   * Helper to resolve original live contact details from users & employees tables for given userIds.
+   */
+  async resolveLiveUserContacts(userIds: number[]): Promise<Map<number, { email?: string; phone?: string; name?: string; username?: string; userType?: string; departmentName?: string }>> {
+    const contactMap = new Map<number, { email?: string; phone?: string; name?: string; username?: string; userType?: string; departmentName?: string }>();
+    const validIds = (userIds || []).filter(id => id !== null && id !== undefined && !isNaN(Number(id))).map(id => Number(id));
+    if (validIds.length === 0) return contactMap;
+
+    try {
+      const rawUsers = await this.userRepo.createQueryBuilder('user')
+        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
+          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
+        })
+        .leftJoin('departments', 'dept', '(emp.departId = dept.id OR (user.userType IN (:...deptTypes) AND user.typeId = dept.id))', {
+          deptTypes: ['Department', 'Department1'],
+        })
+        .leftJoin('subcontractors', 'sub', '(emp.subContId = sub.id OR (user.userType = :subType AND user.typeId = sub.id))', {
+          subType: 'Subcontractor',
+        })
+        .select([
+          'user.id AS id',
+          'user.username AS username',
+          'user.userType AS userType',
+          'emp.email AS empEmail',
+          'emp.phonenumber AS empPhone',
+          'emp.employeeName AS employeeName',
+          'dept.departmentName AS deptName',
+          'sub.subContractorName AS subName',
+        ])
+        .where('user.id IN (:...validIds)', { validIds })
+        .getRawMany();
+
+      for (const u of rawUsers) {
+        if (u && (u.id !== null && u.id !== undefined)) {
+          const uId = Number(u.id);
+          const email = u.empEmail || (u.username && u.username.includes('@') ? u.username : undefined);
+          const phone = u.empPhone || undefined;
+          const name = u.employeeName || u.deptName || u.subName || u.username;
+          contactMap.set(uId, {
+            email,
+            phone,
+            name,
+            username: u.username,
+            userType: u.userType,
+            departmentName: u.deptName || u.subName || '',
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Notification] Error resolving live user contacts from users table:', err);
+    }
+    return contactMap;
+  }
+
+  /**
+   * Get all configured members from incident_notification_group_members table.
+   * Dynamically hydrates live email, phone, and name from the users & employees table for all linked user accounts.
+   */
+  async getIncidentNotificationGroupMembers(): Promise<IncidentNotificationGroupMember[]> {
+    try {
+      const members = await this.incidentGroupRepo.find({
+        order: { createdAt: 'DESC' },
+      });
+
+      // Extract userIds to fetch live contact details from users and employees tables
+      const userIds = members
+        .filter(m => m.userId !== null && m.userId !== undefined)
+        .map(m => Number(m.userId));
+
+      if (userIds.length > 0) {
+        const liveContacts = await this.resolveLiveUserContacts(userIds);
+        for (const m of members) {
+          if (m.userId !== null && m.userId !== undefined) {
+            const live = liveContacts.get(Number(m.userId));
+            if (live) {
+              if (live.email) m.email = live.email;
+              if (live.phone) m.phoneNumber = live.phone;
+              if (live.name) m.name = live.name;
+              if (live.departmentName) m.departmentName = live.departmentName;
+              if (live.userType) m.userType = live.userType;
+            }
+          }
+        }
+      }
+
+      return members;
+    } catch (err) {
+      console.error('[Notification] Error fetching Incident Notification Group members:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Get all active system users (candidates) directly from the users table.
+   * Includes employee, department, and subcontractor details, along with isAdded status.
+   */
+  async getAvailableUsersForIncidentGroup(): Promise<any[]> {
+    try {
+      const users = await this.userRepo.createQueryBuilder('user')
+        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
+          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor'],
+        })
+        .leftJoin('departments', 'dept', '(emp.departId = dept.id OR (user.userType IN (:...deptTypes) AND user.typeId = dept.id))', {
+          deptTypes: ['Department', 'Department1'],
+        })
+        .leftJoin('subcontractors', 'sub', '(emp.subContId = sub.id OR (user.userType = :subType AND user.typeId = sub.id))', {
+          subType: 'Subcontractor',
+        })
+        .select([
+          'user.id AS userId',
+          'user.username AS username',
+          'user.userType AS userType',
+          'user.typeId AS typeId',
+          'user.empId AS empId',
+          'emp.id AS employeeId',
+          'emp.employeeName AS employeeName',
+          'emp.email AS empEmail',
+          'emp.phonenumber AS empPhone',
+          'dept.departmentName AS deptName',
+          'sub.subContractorName AS subName',
+        ])
+        .orderBy('user.id', 'ASC')
+        .getRawMany();
+
+      const existingMembers = await this.incidentGroupRepo.find();
+      const existingUserIds = new Set(existingMembers.filter(m => m.userId !== null && m.userId !== undefined).map(m => Number(m.userId)));
+
+      return users.map(u => {
+        const uEmail = u.empEmail || (u.username && u.username.includes('@') ? u.username : '');
+        const displayName = u.employeeName || u.deptName || u.subName || u.username;
+        const deptOrCompany = u.deptName || u.subName || '';
+        const isAdded = u.userId !== null && u.userId !== undefined ? existingUserIds.has(Number(u.userId)) : false;
+
+        return {
+          userId: Number(u.userId),
+          employeeId: u.employeeId ? Number(u.employeeId) : null,
+          username: u.username,
+          name: displayName,
+          email: uEmail,
+          phoneNumber: u.empPhone || '',
+          userType: u.userType || 'User',
+          departmentName: deptOrCompany,
+          isAdded: Boolean(isAdded),
+        };
+      });
+    } catch (err) {
+      console.error('[Notification] Error fetching available users from users table:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Add members to the incident_notification_group_members table.
+   * Auto-resolves original contact details from users & employees tables when userId is provided.
+   */
+  async addIncidentNotificationGroupMembers(
+    members: Array<{
+      userId?: number;
+      employeeId?: number;
+      name?: string;
+      email?: string;
+      phoneNumber?: string;
+      userType?: string;
+      departmentName?: string;
+      isEmailEnabled?: boolean;
+      isSmsEnabled?: boolean;
+      isInAppEnabled?: boolean;
+    }>,
+    actorUserId?: number,
+  ): Promise<IncidentNotificationGroupMember[]> {
+    const saved: IncidentNotificationGroupMember[] = [];
+    const userIds = members.filter(m => m.userId !== null && m.userId !== undefined).map(m => Number(m.userId));
+    const liveContacts = userIds.length > 0 ? await this.resolveLiveUserContacts(userIds) : new Map();
+
+    for (const m of members) {
+      const uIdNum = m.userId !== null && m.userId !== undefined ? Number(m.userId) : undefined;
+      const live = uIdNum !== undefined ? liveContacts.get(uIdNum) : null;
+
+      const finalEmail = live?.email || m.email || '';
+      const finalPhone = live?.phone || m.phoneNumber || '';
+      const finalName = live?.name || m.name || m.email || 'User';
+      const finalDept = live?.departmentName || m.departmentName || '';
+      const finalUserType = live?.userType || m.userType || 'Department';
+
+      // Check if already exists by userId (or by email only if no userId)
+      let existing: IncidentNotificationGroupMember | null = null;
+      if (uIdNum !== undefined) {
+        existing = await this.incidentGroupRepo.findOne({ where: { userId: uIdNum } });
+      } else if (m.email) {
+        existing = await this.incidentGroupRepo.findOne({ where: { email: m.email.trim() } });
+      }
+
+      if (existing) {
+        // Update flags and live info
+        existing.name = finalName;
+        existing.email = finalEmail;
+        existing.phoneNumber = finalPhone;
+        existing.userType = finalUserType;
+        existing.departmentName = finalDept;
+        if (typeof m.isEmailEnabled === 'boolean') existing.isEmailEnabled = m.isEmailEnabled;
+        if (typeof m.isSmsEnabled === 'boolean') existing.isSmsEnabled = m.isSmsEnabled;
+        if (typeof m.isInAppEnabled === 'boolean') existing.isInAppEnabled = m.isInAppEnabled;
+        saved.push(await this.incidentGroupRepo.save(existing));
+      } else {
+        const entity = this.incidentGroupRepo.create({
+          userId: uIdNum,
+          employeeId: m.employeeId || undefined,
+          name: finalName,
+          email: finalEmail,
+          phoneNumber: finalPhone,
+          userType: finalUserType,
+          departmentName: finalDept,
+          isEmailEnabled: m.isEmailEnabled !== false,
+          isSmsEnabled: m.isSmsEnabled !== false,
+          isInAppEnabled: m.isInAppEnabled !== false,
+          addedByUserId: actorUserId || undefined,
+        });
+        saved.push(await this.incidentGroupRepo.save(entity));
+      }
+    }
+    return saved;
+  }
+
+  /**
+   * Update notification channel preferences for a group member.
+   */
+  async updateIncidentNotificationGroupMember(
+    id: number,
+    data: {
+      name?: string;
+      email?: string;
+      phoneNumber?: string;
+      isEmailEnabled?: boolean;
+      isSmsEnabled?: boolean;
+      isInAppEnabled?: boolean;
+    },
+  ): Promise<IncidentNotificationGroupMember | null> {
+    const member = await this.incidentGroupRepo.findOne({ where: { id } });
+    if (!member) return null;
+
+    if (data.name !== undefined) member.name = data.name;
+    if (data.email !== undefined) member.email = data.email;
+    if (data.phoneNumber !== undefined) member.phoneNumber = data.phoneNumber;
+    if (typeof data.isEmailEnabled === 'boolean') member.isEmailEnabled = data.isEmailEnabled;
+    if (typeof data.isSmsEnabled === 'boolean') member.isSmsEnabled = data.isSmsEnabled;
+    if (typeof data.isInAppEnabled === 'boolean') member.isInAppEnabled = data.isInAppEnabled;
+
+    return this.incidentGroupRepo.save(member);
+  }
+
+  /**
+   * Remove a member from the group.
+   */
+  async removeIncidentNotificationGroupMember(id: number): Promise<boolean> {
+    const res = await this.incidentGroupRepo.delete(id);
+    return (res.affected || 0) > 0;
+  }
+
+  /**
+   * Seed default Department & Department1 users from users table into the Incident Notification Group.
+   */
+  async seedDefaultDepartmentUsers(actorUserId?: number): Promise<IncidentNotificationGroupMember[]> {
+    try {
+      const deptUsers = await this.userRepo.createQueryBuilder('user')
+        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
+          empTypes: ['Employee', 'Site Manager', 'Admin'],
+        })
+        .leftJoin('departments', 'dept', '(emp.departId = dept.id OR (user.userType IN (:...deptTypes) AND user.typeId = dept.id))', {
+          deptTypes: ['Department', 'Department1'],
+        })
+        .select([
+          'user.id AS userId',
+          'user.username AS username',
+          'user.userType AS userType',
+          'emp.id AS employeeId',
+          'emp.employeeName AS employeeName',
+          'emp.email AS empEmail',
+          'emp.phonenumber AS empPhone',
+          'dept.departmentName AS deptName',
+        ])
+        .where('(user.userType = :dept OR user.userType = :dept1 OR user.userType LIKE :deptLike)', {
+          dept: 'Department',
+          dept1: 'Department1',
+          deptLike: '%Department%',
+        })
+        .getRawMany();
+
+      const memberDtos = deptUsers.map(u => ({
+        userId: Number(u.userId),
+        employeeId: u.employeeId ? Number(u.employeeId) : undefined,
+        name: u.employeeName || u.deptName || u.username,
+        email: u.empEmail || (u.username && u.username.includes('@') ? u.username : ''),
+        phoneNumber: u.empPhone || '',
+        userType: u.userType || 'Department',
+        departmentName: u.deptName || '',
+        isEmailEnabled: true,
+        isSmsEnabled: true,
+        isInAppEnabled: true,
+      }));
+
+      return this.addIncidentNotificationGroupMembers(memberDtos, actorUserId);
+    } catch (err) {
+      console.error('[Notification] Error seeding default department users from users table:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Get all active users belonging to the Incident Notification Group.
+   * Always hydrates live email and phone directly from the users & employees table.
+   */
+  async getIncidentNotificationGroupUsers(): Promise<{
+    id: number;
+    userId?: number;
+    username: string;
+    email?: string;
+    phone?: string;
+    userType: string;
+    isEmailEnabled: boolean;
+    isSmsEnabled: boolean;
+    isInAppEnabled: boolean;
+  }[]> {
+    try {
+      let members = await this.incidentGroupRepo.find();
+      if (members.length === 0) {
+        console.log('[Notification] Incident Notification Group is empty. Auto-seeding default Department/Department1 users.');
+        members = await this.seedDefaultDepartmentUsers();
+      }
+
+      const userIds = members
+        .filter(m => m.userId !== null && m.userId !== undefined)
+        .map(m => Number(m.userId));
+
+      const liveContacts = userIds.length > 0 ? await this.resolveLiveUserContacts(userIds) : new Map();
+
+      return members.map(m => {
+        const uId = m.userId !== null && m.userId !== undefined ? Number(m.userId) : undefined;
+        const live = uId !== undefined ? liveContacts.get(uId) : null;
+
+        const email = live?.email || m.email || undefined;
+        const phone = live?.phone || m.phoneNumber || undefined;
+        const username = live?.name || m.name || m.email || 'User';
+
+        return {
+          id: uId !== undefined ? uId : m.id,
+          userId: uId,
+          username,
+          email,
+          phone,
+          userType: live?.userType || m.userType || 'Department',
+          isEmailEnabled: m.isEmailEnabled !== false,
+          isSmsEnabled: m.isSmsEnabled !== false,
+          isInAppEnabled: m.isInAppEnabled !== false,
+        };
+      });
+    } catch (err) {
+      console.error('[Notification] Error fetching Incident Notification Group users:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Helper to match submitter identifier (user ID, employeeName, username, email) to a User account with live contacts.
+   */
+  async findUsersBySubmitterIdentifier(identifier: string): Promise<Array<{ id: number; username?: string; email?: string; phone?: string; name?: string }>> {
+    const trimmed = (identifier || '').trim();
+    if (!trimmed) return [];
+
+    const uIdNum = Number(trimmed);
+    const isNum = !isNaN(uIdNum) && trimmed !== '';
+
+    try {
+      const qb = this.userRepo.createQueryBuilder('user')
+        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
+          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
+        })
+        .select([
+          'user.id AS id',
+          'user.username AS username',
+          'emp.email AS email',
+          'emp.phonenumber AS phone',
+          'emp.employeeName AS employeeName',
+        ]);
+
+      if (isNum) {
+        qb.where('user.id = :id OR emp.id = :id', { id: uIdNum });
+      } else {
+        qb.where('user.username = :sub OR emp.employeeName = :sub OR emp.email = :sub OR emp.username = :sub', { sub: trimmed });
+      }
+
+      const matched = await qb.getRawMany();
+      return matched.filter(m => m && m.id !== null && m.id !== undefined).map(m => ({
+        id: Number(m.id),
+        username: m.username,
+        email: m.email || (m.username && m.username.includes('@') ? m.username : undefined),
+        phone: m.phone,
+        name: m.employeeName || m.username,
+      }));
+    } catch (err) {
+      console.error('[Notification] Error finding user by submitter identifier:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Resolve ONLY the specific contractor user(s) who actually submitted the incident / step.
+   * Checks stage submitters (Heads-Up, Initial Report, Investigation) and direct incident creator.
+   */
+  async getContractorUsersForIncident(incident: any, stepName?: string): Promise<Array<{ id: number; username?: string; email?: string; phone?: string; name?: string }>> {
+    const userMap = new Map<number, { id: number; username?: string; email?: string; phone?: string; name?: string }>();
+    try {
+      const incidentId = incident.id;
+      const submitterIdentifiers: string[] = [];
+
+      // 1. Direct creator ID / username on incident
+      const creatorId = incident.createdByUserId || incident.createdById || incident.userId;
+      if (creatorId) {
+        submitterIdentifiers.push(String(creatorId));
+      }
+
+      // 2. Query stage-specific submitters from incident tables
+      if (incidentId) {
+        try {
+          const headsupRows = await this.userRepo.query(
+            `SELECT submitted_by FROM incident_headsup WHERE incident_id = ? AND submitted_by IS NOT NULL`,
+            [incidentId],
+          );
+          headsupRows.forEach((r: any) => r.submitted_by && submitterIdentifiers.push(String(r.submitted_by).trim()));
+
+          const initialRows = await this.userRepo.query(
+            `SELECT submitted_by FROM incident_initial_reports WHERE incident_id = ? AND submitted_by IS NOT NULL`,
+            [incidentId],
+          ).catch(() => this.userRepo.query(
+            `SELECT submitted_by FROM incident_initial_report WHERE incident_id = ? AND submitted_by IS NOT NULL`,
+            [incidentId],
+          ).catch(() => []));
+          initialRows.forEach((r: any) => r.submitted_by && submitterIdentifiers.push(String(r.submitted_by).trim()));
+
+          const invRows = await this.userRepo.query(
+            `SELECT signatures, team FROM incident_investigations WHERE incident_id = ?`,
+            [incidentId],
+          ).catch(() => this.userRepo.query(
+            `SELECT signatures, team FROM incident_investigation WHERE incident_id = ?`,
+            [incidentId],
+          ).catch(() => []));
+
+          for (const row of invRows) {
+            if (row.signatures) {
+              try {
+                const sigs = typeof row.signatures === 'string' ? JSON.parse(row.signatures) : row.signatures;
+                if (Array.isArray(sigs)) {
+                  sigs.forEach(s => s && s.name && submitterIdentifiers.push(String(s.name).trim()));
+                }
+              } catch (_) {}
+            }
+            if (row.team) {
+              try {
+                const team = typeof row.team === 'string' ? JSON.parse(row.team) : row.team;
+                if (Array.isArray(team)) {
+                  team.forEach(t => {
+                    if (typeof t === 'string' && t.trim()) submitterIdentifiers.push(t.trim());
+                    else if (t && t.name) submitterIdentifiers.push(String(t.name).trim());
+                    else if (t && t.email) submitterIdentifiers.push(String(t.email).trim());
+                  });
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (stepErr) {
+          console.warn('[Notification] Could not query step submitters:', stepErr);
+        }
+      }
+
+      // Resolve user accounts for all found submitter identifiers
+      const uniqueIdentifiers = Array.from(new Set(submitterIdentifiers.filter(Boolean)));
+      for (const ident of uniqueIdentifiers) {
+        const matchedUsers = await this.findUsersBySubmitterIdentifier(ident);
+        for (const u of matchedUsers) {
+          if (!userMap.has(u.id)) {
+            userMap.set(u.id, u);
+          }
+        }
+      }
+
+      if (userMap.size > 0) {
+        console.log(`[Notification] Resolved ${userMap.size} exact submitter user(s) for incident ${incident.caseNumber || incident.id}:`, Array.from(userMap.values()).map(u => `${u.name} (ID: ${u.id}, Email: ${u.email || 'none'}, Phone: ${u.phone || 'none'})`));
+        return Array.from(userMap.values());
+      }
+
+      console.warn(`[Notification] No exact submitter found for incident ${incident.caseNumber || incident.id}.`);
+    } catch (err) {
+      console.error('[Notification] Error resolving contractor submitter users for incident:', err);
+    }
+    return Array.from(userMap.values());
+  }
+
+  /**
+   * Resolve single contractor submitter user (for backwards-compatibility).
+   */
+  async getContractorUserForIncident(incident: any, stepName?: string): Promise<{ id?: number; username?: string; email?: string; phone?: string; name?: string } | null> {
+    const list = await this.getContractorUsersForIncident(incident, stepName);
+    return list.length > 0 ? list[0] : null;
+  }
+
+  /**
+   * Trigger notifications when a contractor submits an incident step report.
+   * Sends:
+   * 1. In-App Notification to all Department/Department1 Notification Group users AND all Admin/SuperAdmin users.
+   * 2. SMS to group users with isSmsEnabled = true.
+   * 3. Email to group users with isEmailEnabled = true.
+   * Text: "{contractor_name} has submitted the {Step of incident} report for {incident type category} with {incident number}."
+   */
+  async triggerIncidentSubmissionNotification(
+    incident: any,
+    stepName: string,
+    contractorName?: string,
+    actorUserId?: number,
+  ): Promise<void> {
+    try {
+      const cName = contractorName || incident.contractorsInvolved || incident.contractorName || 'Contractor';
+      const categoryName = Array.isArray(incident.categories) && incident.categories.length > 0
+        ? incident.categories.join(', ')
+        : (incident.category || incident.type || 'Incident');
+      const caseNumber = incident.caseNumber || `INC-${incident.id}`;
+
+      const message = `${cName} has submitted the ${stepName} report for ${categoryName} with ${caseNumber}.`;
+      const title = `New ${stepName} Submitted`;
+
+      // 1. Fetch all system users with live contacts to ensure all Admin, SuperAdmin, Department, and Department1 accounts receive alerts
+      const allSystemUsers = await this.userRepo.createQueryBuilder('user')
+        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
+          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
+        })
+        .select([
+          'user.id AS id',
+          'user.username AS username',
+          'user.userType AS userType',
+          'user.typeId AS typeId',
+          'emp.email AS email',
+          'emp.phonenumber AS phone',
+          'emp.employeeName AS employeeName',
+        ])
+        .getRawMany();
+
+      // 2. Fetch configured group members (hydrated with live users table contacts)
+      const groupUsers = await this.getIncidentNotificationGroupUsers();
+
+      // 3. Build unified recipient map keyed by userId
+      const recipientMap = new Map<number, {
+        userId: number;
+        username: string;
+        email?: string;
+        phone?: string;
+        name?: string;
+        userType?: string;
+        isInAppEnabled: boolean;
+        isSmsEnabled: boolean;
+        isEmailEnabled: boolean;
+      }>();
+
+      // Match and add all Department, Department1, Admin, and SuperAdmin users (in-app enabled by default)
+      for (const u of allSystemUsers) {
+        const uId = (u.id !== null && u.id !== undefined) ? Number(u.id) : NaN;
+        if (isNaN(uId)) continue;
+
+        const uType = (u.userType || '').toLowerCase();
+        const uName = (u.username || '').toLowerCase();
+        const typeId = Number(u.typeId);
+
+        const isTarget =
+          uType.includes('admin') ||
+          uType.includes('superadmin') ||
+          uType.includes('department') ||
+          uType.includes('department1') ||
+          uType.includes('site manager') ||
+          uType.includes('hse') ||
+          uName.includes('admin') ||
+          uName.includes('superadmin') ||
+          uName === 'south_admin' ||
+          uId === 0 ||
+          uId === 1 ||
+          uId === 785 ||
+          typeId === 0 ||
+          typeId === 1;
+
+        if (isTarget) {
+          recipientMap.set(uId, {
+            userId: uId,
+            username: u.username || `User-${uId}`,
+            email: u.email || (u.username && u.username.includes('@') ? u.username : undefined),
+            phone: u.phone,
+            name: u.employeeName || u.username,
+            userType: u.userType || 'User',
+            isInAppEnabled: true,
+            isSmsEnabled: false,
+            isEmailEnabled: false,
+          });
+        }
+      }
+
+      // Explicitly guarantee all known admin/superadmin accounts (IDs: 0, 1, 785) are in recipientMap
+      for (const adminId of [0, 1, 785]) {
+        if (!recipientMap.has(adminId)) {
+          recipientMap.set(adminId, {
+            userId: adminId,
+            username: adminId === 0 ? 'Superadmin' : adminId === 1 ? 'Admin-South' : 'superadmin@gmail.com',
+            email: adminId === 785 ? 'superadmin@gmail.com' : undefined,
+            isInAppEnabled: true,
+            isSmsEnabled: false,
+            isEmailEnabled: false,
+          });
+        }
+      }
+
+      // 4. Overlay configured group members (using live contacts from users table + configured channel preferences)
+      for (const rx of groupUsers) {
+        if (rx.userId !== null && rx.userId !== undefined) {
+          const uId = Number(rx.userId);
+          if (!isNaN(uId)) {
+            const existing = recipientMap.get(uId);
+            recipientMap.set(uId, {
+              userId: uId,
+              username: rx.username || existing?.username || `User-${uId}`,
+              email: rx.email || existing?.email,
+              phone: rx.phone || existing?.phone,
+              name: rx.username || existing?.name,
+              userType: rx.userType || existing?.userType || 'Group Member',
+              isInAppEnabled: rx.isInAppEnabled !== false,
+              isSmsEnabled: rx.isSmsEnabled === true,
+              isEmailEnabled: rx.isEmailEnabled === true,
+            });
+          }
+        }
+      }
+
+      const recipientSummary = Array.from(recipientMap.values()).map(r => `[ID:${r.userId} (${r.username}/${r.userType}) InApp:${r.isInAppEnabled}]`).join(', ');
+      console.log(`[Notification] Dispatching Incident submission alert to ${recipientMap.size} recipients: ${recipientSummary}`);
+
+      for (const rx of recipientMap.values()) {
+        if (actorUserId !== undefined && actorUserId !== null && rx.userId === actorUserId) {
+          continue;
+        }
+
+        // 1. In-App Notification
+        if (rx.isInAppEnabled !== false && rx.userId !== null && rx.userId !== undefined && !isNaN(Number(rx.userId))) {
+          await this.notificationRepo.save(
+            this.notificationRepo.create({
+              receiverUserId: Number(rx.userId),
+              senderUserId: actorUserId || undefined,
+              notificationType: 'INCIDENT_SUBMISSION',
+              permitStatus: stepName,
+              title,
+              message,
+              isRead: 0,
+              metadata: JSON.stringify({
+                module: 'INCIDENTS',
+                incidentId: incident.id,
+                caseNumber,
+                stepName,
+                contractorName: cName,
+                category: categoryName,
+              }),
+            }),
+          );
+        }
+
+        // 2. SMS Dispatch (if enabled)
+        if (rx.isSmsEnabled && rx.phone) {
+          await this.smsService.sendSms(rx.phone, message);
+        }
+
+        // 3. Email Dispatch (if enabled)
+        if (rx.isEmailEnabled && rx.email) {
+          await this.emailService.sendEmail({
+            to: rx.email,
+            subject: `Incident Alert: ${caseNumber} - ${stepName} Submitted`,
+            text: message,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <h3 style="color: #0f172a; margin-top: 0;">Incident Report Submitted</h3>
+                <p style="font-size: 15px; line-height: 1.6; color: #334155;">
+                  <strong>${cName}</strong> has submitted the <strong>${stepName}</strong> report for <strong>${categoryName}</strong> with <strong>${caseNumber}</strong>.
+                </p>
+                <div style="margin-top: 16px; padding: 12px 16px; background-color: #f8fafc; border-left: 4px solid #3b82f6; border-radius: 4px; font-size: 14px;">
+                  <div><strong>Case Number:</strong> ${caseNumber}</div>
+                  <div><strong>Incident Type / Category:</strong> ${categoryName}</div>
+                  <div><strong>Submitted Step:</strong> ${stepName}</div>
+                  <div><strong>Contractor:</strong> ${cName}</div>
+                </div>
+              </div>
+            `,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Notification] Error in triggerIncidentSubmissionNotification:', err);
+    }
+  }
+
+  /**
+   * Trigger notifications when Department / Department1 / Admin reviews & approves an incident step, returns it for revision, or closes the incident.
+   * Sends In-App Notification, Email, and SMS back to the contractor user(s) who submitted the incident.
+   * Text (Approval): "{approver_name} has reviewed and approved the {Step of incident} report for {incident type category} with {incident number}."
+   * Text (Closure): "{approver_name} has approved and closed incident {incident number} ({incident type category})."
+   * Text (Revision): "{approver_name} has returned the {Step of incident} report for revision on {incident number}. Reason: {returnReason}"
+   */
+  async triggerIncidentApprovalNotification(
+    incident: any,
+    stepName: string,
+    approverName: string,
+    actorUserId?: number,
+    isClosed: boolean = false,
+    isReturned: boolean = false,
+    returnReason?: string,
+  ): Promise<void> {
+    try {
+      const categoryName = Array.isArray(incident.categories) && incident.categories.length > 0
+        ? incident.categories.join(', ')
+        : (incident.category || incident.type || 'Incident');
+      const caseNumber = incident.caseNumber || `INC-${incident.id}`;
+
+      let message = '';
+      let title = '';
+      let notifType = 'INCIDENT_APPROVED';
+
+      if (isReturned) {
+        message = `${approverName} has returned the ${stepName} report for revision on ${caseNumber}.${returnReason ? ` Reason: ${returnReason}` : ''}`;
+        title = `${stepName} Returned for Revision`;
+        notifType = 'INCIDENT_REVISION';
+      } else if (isClosed) {
+        message = `${approverName} has approved and closed incident ${caseNumber} (${categoryName}).`;
+        title = 'Incident Approved & Closed';
+        notifType = 'INCIDENT_CLOSED';
+      } else {
+        message = `${approverName} has reviewed and approved the ${stepName} report for ${categoryName} with ${caseNumber}.`;
+        title = `${stepName} Approved`;
+        notifType = 'INCIDENT_APPROVED';
+      }
+
+      const contractorUsers = await this.getContractorUsersForIncident(incident, stepName);
+      if (!contractorUsers || contractorUsers.length === 0) {
+        console.warn(`[Notification] Could not find contractor submitter user to notify for incident ${caseNumber}`);
+        return;
+      }
+
+      console.log(`[Notification] Dispatching Incident status update (${notifType}) to ${contractorUsers.length} contractor user(s).`);
+
+      for (const contractorUser of contractorUsers) {
+        if (actorUserId && contractorUser.id === actorUserId) {
+          continue;
+        }
+
+        // 1. In-App Notification
+        if (contractorUser.id) {
+          await this.notificationRepo.save(
+            this.notificationRepo.create({
+              receiverUserId: contractorUser.id,
+              senderUserId: actorUserId || undefined,
+              notificationType: notifType,
+              permitStatus: stepName,
+              title,
+              message,
+              isRead: 0,
+              metadata: JSON.stringify({
+                module: 'INCIDENTS',
+                incidentId: incident.id,
+                caseNumber,
+                stepName,
+                approverName,
+                isClosed,
+                isReturned,
+                returnReason,
+              }),
+            }),
+          );
+        }
+
+        // 2. SMS Dispatch
+        if (contractorUser.phone) {
+          await this.smsService.sendSms(contractorUser.phone, message);
+        }
+
+        // 3. Email Dispatch
+        if (contractorUser.email) {
+          const emailSubject = isReturned
+            ? `Incident Revision Required: ${caseNumber} - ${stepName}`
+            : isClosed
+            ? `Incident Closed: ${caseNumber}`
+            : `Incident Report Approved: ${caseNumber} - ${stepName}`;
+
+          await this.emailService.sendEmail({
+            to: contractorUser.email,
+            subject: emailSubject,
+            text: message,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <h3 style="color: ${isReturned ? '#b91c1c' : '#065f46'}; margin-top: 0;">${title}</h3>
+                <p style="font-size: 15px; line-height: 1.6; color: #334155;">
+                  ${message}
+                </p>
+                <div style="margin-top: 16px; padding: 12px 16px; background-color: ${isReturned ? '#fef2f2' : '#f0fdf4'}; border-left: 4px solid ${isReturned ? '#ef4444' : '#10b981'}; border-radius: 4px; font-size: 14px;">
+                  <div><strong>Case Number:</strong> ${caseNumber}</div>
+                  <div><strong>Step:</strong> ${stepName}</div>
+                  <div><strong>Reviewed By:</strong> ${approverName}</div>
+                  ${isReturned && returnReason ? `<div><strong>Reason:</strong> ${returnReason}</div>` : ''}
+                </div>
+              </div>
+            `,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Notification] Error in triggerIncidentApprovalNotification:', err);
+    }
+  }
+
+  /**
    * Get paginated notifications list for a user with optional module filter.
    */
   async getNotificationsForUser(
@@ -419,16 +1276,27 @@ export class NotificationsService {
     limit: number = 10,
     module?: string,
   ): Promise<{ data: Notification[]; total: number; page: number; limit: number; totalPages: number }> {
-    const qb = this.notificationRepo.createQueryBuilder('n')
-      .where('n.receiverUserId = :userId', { userId })
-      .orderBy('n.createdAt', 'DESC')
+    const qb = this.notificationRepo.createQueryBuilder('n');
+
+    const uIdNum = Number(userId);
+    const isSuperOrAdmin = uIdNum === 0 || uIdNum === 1 || uIdNum === 785;
+
+    if (isSuperOrAdmin) {
+      qb.where('(n.receiverUserId = :userId OR n.receiverUserId IN (0, 1, 785))', { userId: uIdNum });
+    } else {
+      qb.where('n.receiverUserId = :userId', { userId: uIdNum });
+    }
+
+    qb.orderBy('n.createdAt', 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
     if (module === 'observations') {
       qb.andWhere("(n.notificationType LIKE 'OBSERVATION%' OR n.metadata LIKE '%\"module\":\"OBSERVATIONS\"%')");
+    } else if (module === 'incidents') {
+      qb.andWhere("(n.notificationType LIKE 'INCIDENT%' OR n.metadata LIKE '%\"module\":\"INCIDENTS\"%')");
     } else if (module === 'permits') {
-      qb.andWhere("(n.notificationType NOT LIKE 'OBSERVATION%' AND (n.metadata IS NULL OR n.metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%'))");
+      qb.andWhere("(n.notificationType NOT LIKE 'OBSERVATION%' AND n.notificationType NOT LIKE 'INCIDENT%' AND (n.metadata IS NULL OR (n.metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%' AND n.metadata NOT LIKE '%\"module\":\"INCIDENTS\"%')))");
     }
 
     const [data, total] = await qb.getManyAndCount();
@@ -446,14 +1314,25 @@ export class NotificationsService {
    * Get total count of unread notifications for a user with optional module filter.
    */
   async getUnreadCount(userId: number, module?: string): Promise<number> {
-    const qb = this.notificationRepo.createQueryBuilder('n')
-      .where('n.receiverUserId = :userId', { userId })
-      .andWhere('n.isRead = 0');
+    const qb = this.notificationRepo.createQueryBuilder('n');
+
+    const uIdNum = Number(userId);
+    const isSuperOrAdmin = uIdNum === 0 || uIdNum === 1 || uIdNum === 785;
+
+    if (isSuperOrAdmin) {
+      qb.where('(n.receiverUserId = :userId OR n.receiverUserId IN (0, 1, 785))', { userId: uIdNum });
+    } else {
+      qb.where('n.receiverUserId = :userId', { userId: uIdNum });
+    }
+
+    qb.andWhere('n.isRead = 0');
 
     if (module === 'observations') {
       qb.andWhere("(n.notificationType LIKE 'OBSERVATION%' OR n.metadata LIKE '%\"module\":\"OBSERVATIONS\"%')");
+    } else if (module === 'incidents') {
+      qb.andWhere("(n.notificationType LIKE 'INCIDENT%' OR n.metadata LIKE '%\"module\":\"INCIDENTS\"%')");
     } else if (module === 'permits') {
-      qb.andWhere("(n.notificationType NOT LIKE 'OBSERVATION%' AND (n.metadata IS NULL OR n.metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%'))");
+      qb.andWhere("(n.notificationType NOT LIKE 'OBSERVATION%' AND n.notificationType NOT LIKE 'INCIDENT%' AND (n.metadata IS NULL OR (n.metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%' AND n.metadata NOT LIKE '%\"module\":\"INCIDENTS\"%')))");
     }
 
     return qb.getCount();
@@ -463,8 +1342,20 @@ export class NotificationsService {
    * Mark a single notification as read.
    */
   async markAsRead(notificationId: number, userId: number): Promise<boolean> {
+    const uIdNum = Number(userId);
+    const isSuperOrAdmin = uIdNum === 0 || uIdNum === 1 || uIdNum === 785;
+
+    if (isSuperOrAdmin) {
+      const result = await this.notificationRepo.createQueryBuilder()
+        .update(Notification)
+        .set({ isRead: 1 })
+        .where('id = :id AND (receiverUserId = :userId OR receiverUserId IN (0, 1, 785))', { id: notificationId, userId: uIdNum })
+        .execute();
+      return (result.affected ?? 0) > 0;
+    }
+
     const result = await this.notificationRepo.update(
-      { id: notificationId, receiverUserId: userId },
+      { id: notificationId, receiverUserId: uIdNum },
       { isRead: 1 },
     );
     return (result.affected ?? 0) > 0;
@@ -474,8 +1365,20 @@ export class NotificationsService {
    * Mark all notifications as read for a user.
    */
   async markAllAsRead(userId: number): Promise<boolean> {
+    const uIdNum = Number(userId);
+    const isSuperOrAdmin = uIdNum === 0 || uIdNum === 1 || uIdNum === 785;
+
+    if (isSuperOrAdmin) {
+      const result = await this.notificationRepo.createQueryBuilder()
+        .update(Notification)
+        .set({ isRead: 1 })
+        .where('isRead = 0 AND (receiverUserId = :userId OR receiverUserId IN (0, 1, 785))', { userId: uIdNum })
+        .execute();
+      return (result.affected ?? 0) > 0;
+    }
+
     const result = await this.notificationRepo.update(
-      { receiverUserId: userId, isRead: 0 },
+      { receiverUserId: uIdNum, isRead: 0 },
       { isRead: 1 },
     );
     return (result.affected ?? 0) > 0;

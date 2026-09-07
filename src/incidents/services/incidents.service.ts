@@ -12,6 +12,7 @@ import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
 import { CreateActionItemDto, UpdateActionItemDto } from '../dtos/action-item.dto';
 
 import { saveBase64Signature } from '../utils/signature-storage.util';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 @Injectable()
 export class IncidentsService implements OnModuleInit {
@@ -28,6 +29,7 @@ export class IncidentsService implements OnModuleInit {
     private readonly investigationRepo: Repository<IncidentInvestigation>,
     @InjectRepository(IncidentActionItem)
     private readonly actionItemRepo: Repository<IncidentActionItem>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -374,6 +376,13 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
+    // Trigger incident submission notification to Department/Department1 notification group
+    this.notificationsService.triggerIncidentSubmissionNotification(
+      savedIncident,
+      'Heads-Up Notification',
+      dto.contractorsInvolved || savedIncident.contractorsInvolved,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up submission notification:', err));
+
     return { incident: savedIncident, headsUp: savedHeadsUp };
   }
 
@@ -503,7 +512,18 @@ export class IncidentsService implements OnModuleInit {
     headsUp.approverRole = dto.approverRole || 'NNE Peer Reviewer';
     headsUp.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_appr_${incidentId}`) : undefined;
     headsUp.approvedTime = new Date();
-    return await this.headsUpRepo.save(headsUp);
+    const savedHeadsUp = await this.headsUpRepo.save(headsUp);
+
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (incident) {
+      this.notificationsService.triggerIncidentApprovalNotification(
+        incident,
+        'Heads-Up Notification',
+        dto.approvedBy,
+      ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up approval notification:', err));
+    }
+
+    return savedHeadsUp;
   }
 
   /**
@@ -627,6 +647,13 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
+    // Trigger incident submission notification to Department/Department1 notification group
+    this.notificationsService.triggerIncidentSubmissionNotification(
+      savedIncident,
+      'Initial Incident Report',
+      savedIncident.contractorsInvolved,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Initial Report submission notification:', err));
+
     return { incident: savedIncident, initialReport: savedReport };
   }
 
@@ -642,7 +669,18 @@ export class IncidentsService implements OnModuleInit {
     initialReport.approverRole = dto.approverRole || 'Customer Approver';
     initialReport.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_appr_${incidentId}`) : undefined;
     initialReport.approvedTime = new Date();
-    return await this.initialReportRepo.save(initialReport);
+    const savedReport = await this.initialReportRepo.save(initialReport);
+
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (incident) {
+      this.notificationsService.triggerIncidentApprovalNotification(
+        incident,
+        'Initial Incident Report',
+        dto.approvedBy,
+      ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Initial Report approval notification:', err));
+    }
+
+    return savedReport;
   }
 
   /**
@@ -762,6 +800,13 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(correctiveEntities);
     }
 
+    // Trigger incident submission notification to Department/Department1 notification group
+    this.notificationsService.triggerIncidentSubmissionNotification(
+      savedIncident,
+      'Incident Investigation Report',
+      savedIncident.contractorsInvolved,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Investigation submission notification:', err));
+
     return { incident: savedIncident, investigation: savedInvestigation };
   }
 
@@ -781,7 +826,18 @@ export class IncidentsService implements OnModuleInit {
     investigation.reviewerRole = dto.reviewerRole || dto.approverRole || 'Site HSE Lead Reviewer';
     investigation.reviewerSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_invest_rev_${incidentId}`) : undefined;
     investigation.reviewedTime = new Date();
-    return await this.investigationRepo.save(investigation);
+    const savedInv = await this.investigationRepo.save(investigation);
+
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (incident) {
+      this.notificationsService.triggerIncidentApprovalNotification(
+        incident,
+        'Incident Investigation Report',
+        reviewerName,
+      ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Investigation review notification:', err));
+    }
+
+    return savedInv;
   }
 
   /**
@@ -862,7 +918,24 @@ export class IncidentsService implements OnModuleInit {
     }
 
     incident.updatedTime = new Date();
-    await this.incidentRepo.save(incident);
+    const savedIncident = await this.incidentRepo.save(incident);
+
+    // Notify contractor that report was returned for revision
+    const stageLabel = dto.stage === 'HEADS_UP'
+      ? 'Heads-Up Notification'
+      : dto.stage === 'INITIAL_REPORT'
+      ? 'Initial Incident Report'
+      : 'Incident Investigation Report';
+
+    this.notificationsService.triggerIncidentApprovalNotification(
+      savedIncident,
+      stageLabel,
+      dto.returnedBy || 'Reviewer',
+      undefined,
+      false,
+      true,
+      dto.reason,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Incident revision notification:', err));
 
     return {
       success: true,
@@ -925,7 +998,18 @@ export class IncidentsService implements OnModuleInit {
     if (dto?.closureComments) incident.closureComments = dto.closureComments;
     if (dto?.signature) incident.closureSignature = saveBase64Signature(dto.signature, `sig_close_${incidentId}`);
 
-    return await this.incidentRepo.save(incident);
+    const savedClosed = await this.incidentRepo.save(incident);
+
+    // Trigger incident closure notification to contractor user
+    this.notificationsService.triggerIncidentApprovalNotification(
+      savedClosed,
+      'Incident Closure',
+      dto?.closedBy || 'System Admin / Site HSE',
+      undefined,
+      true,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Incident closure notification:', err));
+
+    return savedClosed;
   }
 
   /**

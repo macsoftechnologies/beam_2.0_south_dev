@@ -56,6 +56,7 @@ import {
   RequestPressureTesting,
 } from './requests/entities/request-subtables.entity';
 import { RamsFile, RequestNote, UploadImage, RequestLog, RequestLogData } from './requests/entities/supporting.entity';
+import { IncidentNotificationGroupMember } from './notifications/entities/incident-notification-group-member.entity';
 import { Incident } from './incidents/entities/incident.entity';
 import { IncidentHeadsUp } from './incidents/entities/incident-headsup.entity';
 import { IncidentInitialReport } from './incidents/entities/incident-initial-report.entity';
@@ -115,6 +116,7 @@ import { ObservationsModule } from './observations/observations.module';
         Role,
         Notification,
         NotificationSetting,
+        IncidentNotificationGroupMember,
         Incident,
         IncidentHeadsUp,
         IncidentInitialReport,

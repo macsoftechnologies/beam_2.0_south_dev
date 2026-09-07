@@ -10,6 +10,7 @@ import { IncidentSlaService } from './services/incident-sla.service';
 import { IncidentsController } from './controllers/incidents.controller';
 
 import { IncidentPdfService } from './services/incident-pdf.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { IncidentPdfService } from './services/incident-pdf.service';
       IncidentInvestigation,
       IncidentActionItem,
     ]),
+    NotificationsModule,
   ],
   controllers: [IncidentsController],
   providers: [IncidentsService, IncidentSlaService, IncidentPdfService],
