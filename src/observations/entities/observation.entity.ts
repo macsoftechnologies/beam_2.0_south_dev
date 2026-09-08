@@ -67,6 +67,9 @@ export class Observation {
   @Column({ name: 'safety_category', type: 'varchar', length: 150 })
   safetyCategory: string;
 
+  @Column({ name: 'subcategory', type: 'varchar', length: 255, nullable: true })
+  subcategory?: string | null;
+
   @Column({
     name: 'risk_level',
     type: 'enum',

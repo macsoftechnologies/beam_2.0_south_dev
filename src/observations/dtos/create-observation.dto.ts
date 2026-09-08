@@ -21,6 +21,10 @@ export class CreateObservationDto {
 
   @IsString()
   @IsOptional()
+  subcategory?: string;
+
+  @IsString()
+  @IsOptional()
   date?: string;
 
   @IsString()

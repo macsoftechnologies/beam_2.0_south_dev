@@ -76,6 +76,9 @@ export class ObservationsService implements OnModuleInit {
       try {
         await this.obsRepo.query(`ALTER TABLE \`observations\` ADD COLUMN \`immediate_action_taken\` TEXT NULL;`);
       } catch {}
+      try {
+        await this.obsRepo.query(`ALTER TABLE \`observations\` ADD COLUMN \`subcategory\` VARCHAR(255) NULL;`);
+      } catch {}
 
       await this.logRepo.query(`
         CREATE TABLE IF NOT EXISTS \`observation_action_logs\` (
@@ -147,6 +150,7 @@ export class ObservationsService implements OnModuleInit {
       observationTime: dto.observationTime || dto.time || undefined,
       immediateActionTaken: dto.immediateActionTaken || undefined,
       safetyCategory: dto.safetyCategory,
+      subcategory: dto.subcategory || undefined,
       riskLevel: dto.riskLevel || ObservationRiskLevel.MEDIUM,
       description: dto.description,
       projectName: dto.projectName,
