@@ -151,4 +151,8 @@ export class CreateHeadsUpDto {
     return value;
   })
   noFurtherInvestigation?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  skipNotification?: boolean;
 }

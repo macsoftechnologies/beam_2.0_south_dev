@@ -376,12 +376,14 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
-    // Trigger incident submission notification to Department/Department1 notification group
-    this.notificationsService.triggerIncidentSubmissionNotification(
-      savedIncident,
-      'Heads-Up Notification',
-      dto.contractorsInvolved || savedIncident.contractorsInvolved,
-    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up submission notification:', err));
+    // Trigger incident submission notification to Department/Department1 notification group (unless skipped e.g. when escalated from Observation)
+    if (!dto.skipNotification && !dto.origin?.startsWith('SO-') && !dto.origin?.startsWith('OBS-')) {
+      this.notificationsService.triggerIncidentSubmissionNotification(
+        savedIncident,
+        'Heads-Up Notification',
+        dto.contractorsInvolved || savedIncident.contractorsInvolved,
+      ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up submission notification:', err));
+    }
 
     return { incident: savedIncident, headsUp: savedHeadsUp };
   }

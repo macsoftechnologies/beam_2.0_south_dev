@@ -278,11 +278,15 @@ export class NotificationsService {
       createdByUserId?: number | null;
       createdByUserName?: string | null;
     },
-    actionType: 'CREATED' | 'REASSIGNED' | 'CONTRACTOR_ACCEPTED' | 'CONTRACTOR_REJECTED' | 'RESOLVED' | 'CLOSED',
+    actionType: 'CREATED' | 'REASSIGNED' | 'CONTRACTOR_ACCEPTED' | 'CONTRACTOR_REJECTED' | 'RESOLVED' | 'CLOSED' | 'ESCALATED',
     actorUserId?: number,
     actorName?: string,
     actorRole?: string,
     extraRemarks?: string,
+    extraData?: {
+      escalatedIncidentId?: number;
+      incidentCaseNumber?: string;
+    },
   ): Promise<void> {
     try {
       const contractorId = observation.assignedContractorId;
@@ -295,8 +299,8 @@ export class NotificationsService {
       let message = '';
       let notifType = `OBSERVATION_${actionType}`;
 
-      // SCENARIO 1: Observation Created, Reassigned, or Closed -> Notify Contractor Users
-      if (actionType === 'CREATED' || actionType === 'REASSIGNED' || actionType === 'CLOSED') {
+      // SCENARIO 1: Observation Created, Reassigned, Closed, or Escalated -> Notify Contractor Users
+      if (actionType === 'CREATED' || actionType === 'REASSIGNED' || actionType === 'CLOSED' || actionType === 'ESCALATED') {
         let resolvedSubId: number | null = contractorId ?? null;
         let matchedContractorName = contractorName;
 
@@ -372,6 +376,11 @@ export class NotificationsService {
             const creator = await this.userRepo.findOne({ where: { id: observation.createdByUserId } });
             if (creator) recipients.push(creator);
           }
+        } else if (actionType === 'ESCALATED') {
+          title = 'Safety Observation Escalated to Incident';
+          const incCase = extraData?.incidentCaseNumber ? ` to Incident ${extraData.incidentCaseNumber}` : ' to an official Incident';
+          const reasonText = extraRemarks ? ` Reason: "${extraRemarks}"` : '';
+          message = `Safety Observation ${observation.observationNumber} (${observation.subject || observation.safetyCategory || 'Finding'}) assigned to ${matchedContractorName || 'your company'} has been escalated${incCase} by ${actorDisplayName}.${reasonText}`;
         }
       } 
       // SCENARIO 2: Contractor Accepts, Rejects, or Submits Resolution -> Notify Department & Admin Users
@@ -417,11 +426,17 @@ export class NotificationsService {
       // Deduplicate recipients
       const uniqueRecipients = Array.from(new Map(recipients.map(u => [u.id, u])).values());
 
+      // Fetch live contacts (email & phone) for recipients
+      const contactsMap = await this.resolveLiveUserContacts(uniqueRecipients.map(u => u.id));
+
       for (const rx of uniqueRecipients) {
         if (actorUserId && rx.id === actorUserId) {
           continue;
         }
 
+        const contact = contactsMap.get(rx.id);
+
+        // 1. In-App Notification
         await this.notificationRepo.save(
           this.notificationRepo.create({
             receiverUserId: rx.id,
@@ -442,9 +457,61 @@ export class NotificationsService {
               contractorName: contractorName,
               actionType,
               remarks: extraRemarks,
+              escalatedIncidentId: extraData?.escalatedIncidentId,
+              incidentCaseNumber: extraData?.incidentCaseNumber,
             }),
           }),
         );
+
+        // 2. Dispatch Email & SMS when observation is ESCALATED
+        if (actionType === 'ESCALATED') {
+          // SMS Dispatch
+          if (contact?.phone) {
+            await this.smsService.sendSms(contact.phone, message).catch((smsErr) => {
+              console.error(`[Notification] SMS error to ${contact.phone} for escalated observation ${observation.observationNumber}:`, smsErr);
+            });
+          }
+
+          // Email Dispatch
+          if (contact?.email) {
+            const incCaseStr = extraData?.incidentCaseNumber || 'Incident';
+            const emailSubject = `Safety Alert: Observation ${observation.observationNumber} Escalated to ${incCaseStr}`;
+            const emailHtml = `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <div style="background-color: #E32B50; color: #ffffff; padding: 14px 18px; border-radius: 6px 6px 0 0; font-weight: bold; font-size: 16px;">
+                  ⚠️ Safety Observation Escalated to Incident
+                </div>
+                <div style="padding: 18px 0;">
+                  <p style="font-size: 15px; line-height: 1.6; color: #334155; margin-top: 0;">
+                    ${message}
+                  </p>
+                  <div style="margin-top: 16px; padding: 14px 18px; background-color: #fff1f2; border-left: 4px solid #E32B50; border-radius: 4px; font-size: 14px; color: #1e293b;">
+                    <div style="margin-bottom: 8px;"><strong>Observation Ref:</strong> ${observation.observationNumber}</div>
+                    <div style="margin-bottom: 8px;"><strong>Subject:</strong> ${observation.subject || 'N/A'}</div>
+                    <div style="margin-bottom: 8px;"><strong>Category:</strong> ${observation.safetyCategory || 'N/A'}</div>
+                    <div style="margin-bottom: 8px;"><strong>Risk Level:</strong> <span style="color: #E32B50; font-weight: bold;">${observation.riskLevel || 'HIGH'}</span></div>
+                    <div style="margin-bottom: 8px;"><strong>Assigned Contractor:</strong> ${contractorName || 'N/A'}</div>
+                    <div style="margin-bottom: 8px;"><strong>Escalated Incident:</strong> <strong>${extraData?.incidentCaseNumber || 'Generated Incident'}</strong></div>
+                    <div style="margin-bottom: 8px;"><strong>Escalated By:</strong> ${actorDisplayName}</div>
+                    ${extraRemarks ? `<div style="margin-bottom: 4px;"><strong>Escalation Remarks:</strong> ${extraRemarks}</div>` : ''}
+                  </div>
+                </div>
+                <div style="font-size: 12px; color: #64748b; margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+                  This is an automated high-priority safety notification from the BEAM System.
+                </div>
+              </div>
+            `;
+
+            await this.emailService.sendEmail({
+              to: contact.email,
+              subject: emailSubject,
+              text: message,
+              html: emailHtml,
+            }).catch((emailErr) => {
+              console.error(`[Notification] Email error to ${contact.email} for escalated observation ${observation.observationNumber}:`, emailErr);
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('[Notification] Error in triggerObservationNotification:', error);

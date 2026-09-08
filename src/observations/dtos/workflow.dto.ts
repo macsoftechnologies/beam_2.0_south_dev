@@ -126,6 +126,11 @@ export class EscalateObservationDto {
   @IsNumber()
   @IsOptional()
   @Type(() => Number)
+  escalatedByUserId?: number;
+
+  @IsNumber()
+  @IsOptional()
+  @Type(() => Number)
   actualSeverity?: number;
 
   @IsNumber()

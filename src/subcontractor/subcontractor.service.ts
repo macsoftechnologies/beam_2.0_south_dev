@@ -48,6 +48,23 @@ export class SubcontractorService {
     }
   }
 
+  async onModuleInit() {
+    try {
+      const existingNne = await this.subcontractorRepo.findOne({
+        where: [{ subContractorName: 'NNE' }, { subContractorName: Like('%NNE%') }],
+      });
+      if (!existingNne) {
+        const nne = this.subcontractorRepo.create({
+          subContractorName: 'NNE',
+          departId: 1,
+        });
+        await this.subcontractorRepo.save(nne);
+      }
+    } catch (err) {
+      // Ignore seeding error
+    }
+  }
+
   async findAll(query: SubcontractorPaginationQueryDto, loggedInUserId?: number) {
     try {
       const { page = 1, limit = 10, isExport = false, search = "" } = query;
@@ -61,7 +78,7 @@ export class SubcontractorService {
       }
 
       const cacheKey = subContractorId
-        ? `subcontractors:list:${isExport}:${page}:${limit}:${search}:subcon:${subContractorId}`
+        ? `subcontractors:list:${isExport}:${page}:${limit}:${search}:subcon:${subContractorId}:with_nne`
         : `subcontractors:list:${isExport}:${page}:${limit}:${search}`;
 
       return this.redisCacheService.getOrSet(
@@ -71,12 +88,19 @@ export class SubcontractorService {
             order: { subContractorName: 'ASC' },
           };
           if (subContractorId) {
-            findOptions.where = { id: subContractorId };
+            findOptions.where = [
+              { id: subContractorId },
+              { subContractorName: Like('%NNE%') },
+            ];
           }
           if (search) {
             const searchFilter = { subContractorName: Like(`%${search}%`) };
             if (findOptions.where) {
-              findOptions.where = { ...findOptions.where, ...searchFilter };
+              if (Array.isArray(findOptions.where)) {
+                findOptions.where = findOptions.where.map(w => ({ ...w, ...searchFilter }));
+              } else {
+                findOptions.where = { ...findOptions.where, ...searchFilter };
+              }
             } else {
               findOptions.where = searchFilter;
             }
@@ -85,7 +109,32 @@ export class SubcontractorService {
             findOptions.take = limit;
             findOptions.skip = (page - 1) * limit;
           }
-          const [subcontractors, total] = await this.subcontractorRepo.findAndCount(findOptions);
+          let [subcontractors, total] = await this.subcontractorRepo.findAndCount(findOptions);
+
+          // If contractor user and NNE was not yet in DB, include NNE
+          if (subContractorId) {
+            const hasNne = subcontractors.some(s => (s.subContractorName || '').toUpperCase().trim().includes('NNE'));
+            if (!hasNne) {
+              const nneInDb = await this.subcontractorRepo.findOne({
+                where: [{ subContractorName: 'NNE' }, { subContractorName: Like('%NNE%') }],
+              });
+              if (nneInDb) {
+                subcontractors.push(nneInDb);
+                total += 1;
+              } else {
+                const autoNne = this.subcontractorRepo.create({
+                  subContractorName: 'NNE',
+                  departId: 1,
+                });
+                const savedNne = await this.subcontractorRepo.save(autoNne).catch(() => null);
+                if (savedNne) {
+                  subcontractors.push(savedNne);
+                  total += 1;
+                }
+              }
+            }
+          }
+
           if (total === 0) {
             return { statusCode: HttpStatus.NOT_FOUND, message: 'No SubContractors Found', data: [], total: 0 };
           }

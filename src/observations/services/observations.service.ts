@@ -423,6 +423,7 @@ export class ObservationsService implements OnModuleInit {
       descriptionWhatHappened: `[ESCALATED FROM ${obs.observationNumber}]: ${obs.description}`,
       descriptionConsequence: `Escalated safety observation due to ${obs.riskLevel} risk level.`,
       submittedBy: dto.escalatedBy,
+      skipNotification: true,
     });
 
     obs.status = ObservationStatus.ESCALATED;
@@ -439,6 +440,21 @@ export class ObservationsService implements OnModuleInit {
     });
 
     await this.logRepo.save(log);
+
+    // Trigger in-app, SMS, and email notification to contractor users of assigned contractor company
+    this.notificationsService.triggerObservationNotification(
+      savedObs,
+      'ESCALATED',
+      dto.escalatedByUserId,
+      dto.escalatedBy,
+      'SITE_HSE',
+      dto.remarks,
+      {
+        escalatedIncidentId: incidentResult.incident?.id,
+        incidentCaseNumber: incidentResult.incident?.caseNumber,
+      },
+    ).catch((err) => this.logger.error('Observation notification error on escalate:', err));
+
     const history = await this.logRepo.find({ where: { observationId: id }, order: { id: 'ASC' } });
 
     return { observation: savedObs, incident: incidentResult, history };
