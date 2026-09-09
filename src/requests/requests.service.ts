@@ -378,6 +378,13 @@ export class RequestsService implements OnModuleInit {
 
     // Rule C: Transition to rejected
     if (normalizedNew === 'rejected') {
+      const allowedRejectionStatuses = ['draft', 'hold', 'pre-approved', 'approved'];
+      if (!allowedRejectionStatuses.includes(normalizedCurrent)) {
+        throw new BadRequestException(
+          `Permits in '${existing.requestStatus}' status cannot be rejected`
+        );
+      }
+
       if (role !== 'admin' && role !== 'multi_dept') {
         if (role === 'contractor') {
           if (normalizedCurrent !== 'draft' && normalizedCurrent !== 'hold') {
@@ -385,31 +392,25 @@ export class RequestsService implements OnModuleInit {
               `Contractor is not authorized to reject permits in '${existing.requestStatus}' status`
             );
           }
-        } else if (normalizedCurrent === 'draft' || normalizedCurrent === 'hold') {
-          if (isBothConstruction && role !== 'CoNM') {
+        } else if (isBothConstruction) {
+          if (normalizedCurrent === 'pre-approved') {
+            throw new BadRequestException('Pre-approved status is not applicable for Construction-only permits');
+          }
+          if (role !== 'CoNM') {
             throw new BadRequestException('Rejection for Construction-only permits must be done by a ConM department user');
           }
-          if (isBothCommissioning && role !== 'C&Q') {
+        } else if (isBothCommissioning) {
+          if (normalizedCurrent === 'pre-approved') {
+            throw new BadRequestException('Pre-approved status is not applicable for Commissioning-only permits');
+          }
+          if (role !== 'C&Q') {
             throw new BadRequestException('Rejection for Commissioning-only permits must be done by a C&Q department user');
           }
-          if (isUnderConstTypeComm && role !== 'C&Q') {
-            throw new BadRequestException('Rejection at pre-approval stage for Construction under Commissioning must be done by a C&Q department user');
-          }
-          if (isUnderCommTypeConst && role !== 'CoNM') {
-            throw new BadRequestException('Rejection at pre-approval stage for Commissioning under Construction must be done by a ConM department user');
-          }
-        } else if (normalizedCurrent === 'pre-approved' || normalizedCurrent === 'approved') {
-          if (isBothConstruction && role !== 'CoNM') {
-            throw new BadRequestException('Rejection for Construction-only permits must be done by a ConM department user');
-          }
-          if (isBothCommissioning && role !== 'C&Q') {
-            throw new BadRequestException('Rejection for Commissioning-only permits must be done by a C&Q department user');
-          }
-          if (isUnderConstTypeComm && role !== 'CoNM') {
-            throw new BadRequestException('Final rejection for Construction under Commissioning permits must be done by a ConM department user');
-          }
-          if (isUnderCommTypeConst && role !== 'C&Q') {
-            throw new BadRequestException('Final rejection for Commissioning under Construction permits must be done by a C&Q department user');
+        } else if (isUnderConstTypeComm || isUnderCommTypeConst) {
+          // Mixed status: permit_under/permit_type are Construction and Commissioning
+          // Both CoNM (Department) and C&Q (Department1) users can reject at Hold, Pre-Approved, and Approved
+          if (role !== 'CoNM' && role !== 'C&Q') {
+            throw new BadRequestException('Rejection for this permit must be done by a ConM or C&Q department user');
           }
         }
       }

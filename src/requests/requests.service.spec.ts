@@ -527,5 +527,99 @@ describe('RequestsService - Validation and Zone Logic', () => {
         service['validateStatusTransitionAndRole'](mockRequest, 'approved', 4), // C&Q
       ).rejects.toThrow(/Final approval for Construction under Commissioning permits must be done by a ConM/);
     });
+
+    it('should validate rejection rules according to BEAM Rejection Flow chart', async () => {
+      mockUserRepo.findOne.mockImplementation(async (query: any) => {
+        if (query.where.id === 3) return { id: 3, userType: 'Department', empId: 10 };
+        if (query.where.id === 4) return { id: 4, userType: 'Department', empId: 11 };
+        return null;
+      });
+
+      mockEmployeeRepo.findOne.mockImplementation(async (query: any) => {
+        if (query.where.id === 10) return { id: 10, departId: 5 };
+        if (query.where.id === 11) return { id: 11, departId: 6 };
+        return null;
+      });
+
+      mockDepartmentRepo.findOne.mockImplementation(async (query: any) => {
+        if (query.where.id === 5) return { id: 5, departmentName: 'CoNM Dept' };
+        if (query.where.id === 6) return { id: 6, departmentName: 'C&Q Dept' };
+        return null;
+      });
+
+      // 1. Pure Construction: ConM can reject at Hold & Approved, C&Q cannot
+      mockRequest.permitUnder = 'Construction';
+      mockRequest.permitType = 'Construction';
+      mockRequest.requestStatus = 'hold';
+
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 3), // ConM
+      ).resolves.not.toThrow();
+
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 4), // C&Q
+      ).rejects.toThrow(/Rejection for Construction-only permits must be done by a ConM/);
+
+      mockRequest.requestStatus = 'approved';
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 3), // ConM
+      ).resolves.not.toThrow();
+
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 4), // C&Q
+      ).rejects.toThrow(/Rejection for Construction-only permits must be done by a ConM/);
+
+      // 2. Pure Commissioning: C&Q can reject at Hold & Approved, ConM cannot
+      mockRequest.permitUnder = 'Commissioning';
+      mockRequest.permitType = 'Commissioning';
+      mockRequest.requestStatus = 'hold';
+
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 4), // C&Q
+      ).resolves.not.toThrow();
+
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 3), // ConM
+      ).rejects.toThrow(/Rejection for Commissioning-only permits must be done by a C&Q/);
+
+      mockRequest.requestStatus = 'approved';
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 4), // C&Q
+      ).resolves.not.toThrow();
+
+      await expect(
+        service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 3), // ConM
+      ).rejects.toThrow(/Rejection for Commissioning-only permits must be done by a C&Q/);
+
+      // 3. Mixed: Construction Under Commissioning: Both ConM & C&Q can reject at Hold, Pre-Approved, Approved
+      mockRequest.permitUnder = 'Commissioning';
+      mockRequest.permitType = 'Construction';
+
+      for (const st of ['hold', 'pre-approved', 'approved']) {
+        mockRequest.requestStatus = st;
+        await expect(
+          service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 3), // ConM
+        ).resolves.not.toThrow();
+
+        await expect(
+          service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 4), // C&Q
+        ).resolves.not.toThrow();
+      }
+
+      // 4. Mixed: Commissioning Under Construction: Both ConM & C&Q can reject at Hold, Pre-Approved, Approved
+      mockRequest.permitUnder = 'Construction';
+      mockRequest.permitType = 'Commissioning';
+
+      for (const st of ['hold', 'pre-approved', 'approved']) {
+        mockRequest.requestStatus = st;
+        await expect(
+          service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 3), // ConM
+        ).resolves.not.toThrow();
+
+        await expect(
+          service['validateStatusTransitionAndRole'](mockRequest, 'rejected', 4), // C&Q
+        ).resolves.not.toThrow();
+      }
+    });
   });
 });
