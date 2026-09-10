@@ -220,6 +220,19 @@ export class IncidentsController {
   }
 
   /**
+   * Delete an Incident and all its associated reports (Admin/SuperAdmin only)
+   * DELETE /incidents/:id
+   */
+  @Delete(':id')
+  async deleteIncident(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('userId') userId?: string,
+    @Query('userRole') userRole?: string,
+  ) {
+    return await this.incidentsService.deleteIncident(id, userId ? parseInt(userId, 10) : undefined, userRole);
+  }
+
+  /**
    * Export 3-in-1 Official Incident Forms as PDF (Heads-up, Initial Report, Investigation)
    * GET /incidents/:id/export-pdf
    */

@@ -784,4 +784,27 @@ export class ObservationsService implements OnModuleInit {
       bodyParts: bodyParts.length > 0 ? bodyParts : defaultBodyPartsZero,
     };
   }
+
+  /**
+   * Delete a safety observation record (Admin/SuperAdmin only)
+   */
+  async deleteObservation(id: number, requestingUserId?: number, requestingUserRole?: string) {
+    const observation = await this.obsRepo.findOne({ where: { id } });
+    if (!observation) {
+      throw new NotFoundException(`Observation with ID ${id} not found`);
+    }
+
+    // Delete child action logs
+    await this.logRepo.delete({ observationId: id });
+    // Delete observation
+    await this.obsRepo.delete(id);
+
+    this.logger.log(`Safety Observation ${observation.observationNumber} (ID: ${id}) deleted by user ${requestingUserId || 'unknown'} (${requestingUserRole || 'Admin'})`);
+
+    return {
+      statusCode: 200,
+      message: `Observation ${observation.observationNumber || id} deleted successfully`,
+      id,
+    };
+  }
 }

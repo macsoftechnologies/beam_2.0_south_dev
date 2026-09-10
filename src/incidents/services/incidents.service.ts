@@ -1478,6 +1478,31 @@ export class IncidentsService implements OnModuleInit {
       },
     };
   }
+
+  /**
+   * Delete an entire incident and its associated records (Admin/SuperAdmin only)
+   */
+  async deleteIncident(id: number, requestingUserId?: number, requestingUserRole?: string) {
+    const incident = await this.incidentRepo.findOne({ where: { id } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${id} not found`);
+    }
+
+    // Delete related child entities
+    await this.actionItemRepo.delete({ incidentId: id });
+    await this.investigationRepo.delete({ incidentId: id });
+    await this.initialReportRepo.delete({ incidentId: id });
+    await this.headsUpRepo.delete({ incidentId: id });
+    await this.incidentRepo.delete(id);
+
+    this.logger.log(`Incident ${incident.caseNumber || id} (ID: ${id}) deleted by user ${requestingUserId || 'unknown'} (${requestingUserRole || 'Admin'})`);
+
+    return {
+      statusCode: 200,
+      message: `Incident ${incident.caseNumber || id} deleted successfully`,
+      id,
+    };
+  }
 }
 
 

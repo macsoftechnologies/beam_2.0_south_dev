@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import 'multer';
 import { ObservationsService } from '../services/observations.service';
@@ -231,5 +231,18 @@ export class ObservationsController {
       page: pageNum,
       limit: limitNum,
     });
+  }
+
+  /**
+   * Delete an observation record (Admin/SuperAdmin only)
+   * DELETE /observations/:id
+   */
+  @Delete(':id')
+  async deleteObservation(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('userId') userId?: string,
+    @Query('userRole') userRole?: string,
+  ) {
+    return await this.obsService.deleteObservation(id, userId ? parseInt(userId, 10) : undefined, userRole);
   }
 }
