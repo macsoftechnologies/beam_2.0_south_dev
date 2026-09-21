@@ -66,6 +66,11 @@ import { IncidentsModule } from './incidents/incidents.module';
 import { Observation } from './observations/entities/observation.entity';
 import { ObservationActionLog } from './observations/entities/observation-action-log.entity';
 import { ObservationsModule } from './observations/observations.module';
+import { SafetyInspection } from './safety-inspections/entities/safety-inspection.entity';
+import { SafetyInspectionItem } from './safety-inspections/entities/safety-inspection-item.entity';
+import { SafetyInspectionsModule } from './safety-inspections/safety-inspections.module';
+import { SpotCheck } from './spot-checks/entities/spot-check.entity';
+import { SpotChecksModule } from './spot-checks/spot-checks.module';
 
 @Module({
   imports: [
@@ -124,6 +129,9 @@ import { ObservationsModule } from './observations/observations.module';
         IncidentActionItem,
         Observation,
         ObservationActionLog,
+        SafetyInspection,
+        SafetyInspectionItem,
+        SpotCheck,
       ],
       synchronize: false,
     }),
@@ -146,6 +154,8 @@ import { ObservationsModule } from './observations/observations.module';
     NotificationsModule,
     IncidentsModule,
     ObservationsModule,
+    SafetyInspectionsModule,
+    SpotChecksModule,
   ],
   controllers: [HealthController],
 })

@@ -61,6 +61,9 @@ export class Observation {
   @Column({ name: 'observation_time', type: 'varchar', length: 50, nullable: true })
   observationTime?: string | null;
 
+  @Column({ name: 'deadline', type: 'date', nullable: true })
+  deadline?: string | null;
+
   @Column({ name: 'immediate_action_taken', type: 'text', nullable: true })
   immediateActionTaken?: string | null;
 

@@ -193,7 +193,7 @@ export class ObservationsController {
    * GET /observations/:id
    */
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
+  async findOne(@Param('id') id: string) {
     return await this.obsService.findOne(id);
   }
 

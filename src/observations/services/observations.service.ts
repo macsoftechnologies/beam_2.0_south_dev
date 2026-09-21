@@ -79,6 +79,9 @@ export class ObservationsService implements OnModuleInit {
       try {
         await this.obsRepo.query(`ALTER TABLE \`observations\` ADD COLUMN \`subcategory\` VARCHAR(255) NULL;`);
       } catch {}
+      try {
+        await this.obsRepo.query(`ALTER TABLE \`observations\` ADD COLUMN \`deadline\` DATE NULL;`);
+      } catch {}
 
       await this.logRepo.query(`
         CREATE TABLE IF NOT EXISTS \`observation_action_logs\` (
@@ -148,6 +151,7 @@ export class ObservationsService implements OnModuleInit {
       subject: dto.subject,
       observationDate: dto.observationDate || dto.date || undefined,
       observationTime: dto.observationTime || dto.time || undefined,
+      deadline: dto.deadline || dto.dueDate || dto.targetDate || undefined,
       immediateActionTaken: dto.immediateActionTaken || undefined,
       safetyCategory: dto.safetyCategory,
       subcategory: dto.subcategory || undefined,
@@ -461,15 +465,32 @@ export class ObservationsService implements OnModuleInit {
   }
 
   /**
-   * Get single observation with full audit history timeline
+   * Get single observation with full audit history timeline by ID or observation reference number
    */
-  async findOne(id: number): Promise<{ observation: Observation; history: ObservationActionLog[] }> {
-    const observation = await this.obsRepo.findOne({ where: { id } });
-    if (!observation) {
-      throw new NotFoundException(`Observation with ID ${id} not found`);
+  async findOne(idOrNumber: string | number): Promise<{ observation: Observation; history: ObservationActionLog[] }> {
+    let observation: Observation | null = null;
+    const numId = typeof idOrNumber === 'number' ? idOrNumber : (isNaN(Number(idOrNumber)) ? null : Number(idOrNumber));
+
+    if (numId) {
+      observation = await this.obsRepo.findOne({ where: { id: numId } });
     }
+
+    if (!observation && typeof idOrNumber === 'string') {
+      const trimmed = idOrNumber.trim();
+      observation = await this.obsRepo.findOne({
+        where: [
+          { observationNumber: trimmed },
+          { observationNumber: Like(`%${trimmed}%`) },
+        ],
+      });
+    }
+
+    if (!observation) {
+      throw new NotFoundException(`Observation with ID or number "${idOrNumber}" not found`);
+    }
+
     const history = await this.logRepo.find({
-      where: { observationId: id },
+      where: { observationId: observation.id },
       order: { id: 'ASC' },
     });
 

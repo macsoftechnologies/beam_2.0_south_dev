@@ -73,14 +73,25 @@ export class CreateObservationDto {
   @IsOptional()
   specificLocation?: string;
 
-  @IsNumber()
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => (value === '' || value === null || value === undefined ? undefined : Number(value)))
   assignedContractorId?: number;
 
   @IsString()
   @IsOptional()
   assignedContractorName?: string;
+
+  @IsString()
+  @IsOptional()
+  deadline?: string;
+
+  @IsString()
+  @IsOptional()
+  dueDate?: string;
+
+  @IsString()
+  @IsOptional()
+  targetDate?: string;
 
   @IsArray()
   @IsOptional()
@@ -97,18 +108,16 @@ export class CreateObservationDto {
   })
   photos?: string[];
 
-  @IsNumber()
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => (value === '' || value === null || value === undefined ? undefined : Number(value)))
   createdByUserId?: number;
 
   @IsString()
   @IsOptional()
   createdByUserName?: string;
 
-  @IsNumber()
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => (value === '' || value === null || value === undefined ? undefined : Number(value)))
   createdByContractorId?: number;
 
   @IsString()

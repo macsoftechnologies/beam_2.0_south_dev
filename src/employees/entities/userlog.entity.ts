@@ -8,7 +8,7 @@ export class UserLog {
   @Column({ nullable: true })
   action: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'longtext', nullable: true })
   body: string;
 
   @Column({ nullable: true })
