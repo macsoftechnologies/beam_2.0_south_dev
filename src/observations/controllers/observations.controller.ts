@@ -1,15 +1,38 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import 'multer';
 import { ObservationsService } from '../services/observations.service';
+import { ObservationPdfService } from '../services/observation-pdf.service';
 import { CreateObservationDto } from '../dtos/create-observation.dto';
+import { UpdateObservationDto } from '../dtos/update-observation.dto';
 import { ContractorReviewDto, ReassignObservationDto, ResolveObservationDto, CloseObservationDto, EscalateObservationDto } from '../dtos/workflow.dto';
 import { ObservationType, ObservationRiskLevel, ObservationStatus } from '../entities/observation.entity';
 import { observationMulterConfig } from '../config/multer.config';
 
 @Controller('observations')
 export class ObservationsController {
-  constructor(private readonly obsService: ObservationsService) {}
+  constructor(
+    private readonly obsService: ObservationsService,
+    private readonly obsPdfService: ObservationPdfService,
+  ) {}
+
+  /**
+   * Download Observation Official PDF
+   * GET /observations/:id/download-pdf
+   */
+  @Get(':id/download-pdf')
+  async downloadPdf(@Param('id') id: string, @Res() res: any) {
+    const details = await this.obsService.findOne(id);
+    const obs = details.observation;
+    const history = details.history || [];
+    const pdfBuffer = await this.obsPdfService.generateObservationPdf(obs, history);
+    const ref = obs.observationNumber || `SO-${obs.id}`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${ref}_Safety_Observation.pdf"`);
+    res.end(pdfBuffer);
+  }
 
   /**
    * Upload photo files for observations via Multer into uploads/observations/
@@ -63,6 +86,21 @@ export class ObservationsController {
     dto.photos = photosList;
 
     return await this.obsService.createObservation(dto);
+  }
+
+  /**
+   * Update core observation record details (Department/Admin users)
+   * PUT /observations/:id
+   * Supports BOTH JSON body AND direct multipart/form-data photo file uploads!
+   */
+  @Put(':id')
+  @UseInterceptors(FilesInterceptor('photos', 10, observationMulterConfig))
+  async updateObservation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateObservationDto,
+    @UploadedFiles() files?: any[],
+  ) {
+    return await this.obsService.updateObservationDetails(id, dto, files);
   }
 
   /**

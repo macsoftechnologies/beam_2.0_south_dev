@@ -18,6 +18,10 @@ export class SpotCheck {
   @Column({ name: 'work_package', type: 'varchar', length: 255, nullable: true })
   workPackage?: string;
 
+  get projectName(): string | undefined {
+    return this.workPackage;
+  }
+
   @Column({ name: 'date', type: 'date', nullable: true })
   date?: string;
 

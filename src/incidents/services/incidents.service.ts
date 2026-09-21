@@ -233,6 +233,17 @@ export class IncidentsService implements OnModuleInit {
         }
       }
 
+      // Ensure existing immediate actions (containment measures from Heads-Up / Initial Report) are marked COMPLETED
+      try {
+        await this.actionItemRepo.query(`
+          UPDATE \`incident_action_items\` 
+          SET \`status\` = 'COMPLETED' 
+          WHERE \`action_type\` = 'IMMEDIATE' AND \`status\` = 'PENDING';
+        `);
+      } catch (e) {
+        // Ignore safely
+      }
+
       this.logger.log('✅ Incident tables auto-initialization check completed successfully.');
     } catch (err) {
       this.logger.error('❌ Failed to auto-create incident tables in MySQL', err);
@@ -361,14 +372,14 @@ export class IncidentsService implements OnModuleInit {
           responsible: act.responsible,
           targetDate: (act.targetDate || act.date) ? ((act.targetDate || act.date) as any) : undefined,
           timeImplemented: act.timeImplemented,
-          status: ActionItemStatus.PENDING,
+          status: ActionItemStatus.COMPLETED,
           updatedBy: dto.submittedBy,
           statusHistory: [
             {
-              status: ActionItemStatus.PENDING,
+              status: ActionItemStatus.COMPLETED,
               updatedBy: dto.submittedBy || 'System',
               timestamp: new Date().toISOString(),
-              remarks: 'Initial immediate action item created during Stage 1 Heads-Up',
+              remarks: 'Immediate containment action implemented on site',
             },
           ],
         }),
@@ -484,11 +495,11 @@ export class IncidentsService implements OnModuleInit {
           responsible: act.responsible || 'Site Team',
           targetDate: (act.targetDate || act.date || savedIncident.incidentDate) as any,
           timeImplemented: act.timeImplemented || act.time,
-          status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+          status: act.implemented !== false ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
           updatedBy: dto.submittedBy || 'System',
           statusHistory: [
             {
-              status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+              status: act.implemented !== false ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
               updatedBy: dto.submittedBy || 'System',
               timestamp: new Date().toISOString(),
               remarks: 'Immediate action updated in Stage 1 Heads-Up',
@@ -505,7 +516,7 @@ export class IncidentsService implements OnModuleInit {
   /**
    * Stage 1 Approval
    */
-  async approveHeadsUp(incidentId: number, dto: { approvedBy: string; approverRole?: string; signature?: string }): Promise<IncidentHeadsUp> {
+  async approveHeadsUp(incidentId: number, dto: { approvedBy: string; approverRole?: string; signature?: string; noFurtherInvestigation?: boolean }): Promise<IncidentHeadsUp> {
     const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
     if (!headsUp) {
       throw new NotFoundException(`Heads-up notification for incident ID ${incidentId} not found`);
@@ -514,10 +525,17 @@ export class IncidentsService implements OnModuleInit {
     headsUp.approverRole = dto.approverRole || 'NNE Peer Reviewer';
     headsUp.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_appr_${incidentId}`) : undefined;
     headsUp.approvedTime = new Date();
+    if (dto.noFurtherInvestigation !== undefined) {
+      headsUp.noFurtherInvestigation = Boolean(dto.noFurtherInvestigation);
+    }
     const savedHeadsUp = await this.headsUpRepo.save(headsUp);
 
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (incident) {
+      if (dto.noFurtherInvestigation !== undefined) {
+        incident.noFurtherInvestigation = Boolean(dto.noFurtherInvestigation);
+        await this.incidentRepo.save(incident);
+      }
       this.notificationsService.triggerIncidentApprovalNotification(
         incident,
         'Heads-Up Notification',
@@ -600,6 +618,7 @@ export class IncidentsService implements OnModuleInit {
     initialReport.treatmentProvided = dto.treatmentProvided || [];
     initialReport.accidentCategories = dto.accidentCategories || [];
     initialReport.injuryTypes = dto.injuryTypes || [];
+    initialReport.injuryOtherText = dto.injuryOtherText;
     initialReport.bodyPartsInjured = dto.bodyPartsInjured;
 
     initialReport.injuredPersonName = dto.injuredPersonName;
@@ -634,11 +653,11 @@ export class IncidentsService implements OnModuleInit {
           responsible: act.responsible || 'Site Team',
           targetDate: (act.targetDate || act.date || savedIncident.incidentDate) as any,
           timeImplemented: act.timeImplemented || act.time,
-          status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+          status: act.implemented !== false ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
           updatedBy: dto.submittedBy || 'System',
           statusHistory: [
             {
-              status: act.implemented ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
+              status: act.implemented !== false ? ActionItemStatus.COMPLETED : ActionItemStatus.PENDING,
               updatedBy: dto.submittedBy || 'System',
               timestamp: new Date().toISOString(),
               remarks: 'Immediate action updated in Stage 2 Initial Report',
@@ -662,7 +681,7 @@ export class IncidentsService implements OnModuleInit {
   /**
    * Stage 2 Approval
    */
-  async approveInitialReport(incidentId: number, dto: { approvedBy: string; approverRole?: string; signature?: string }): Promise<IncidentInitialReport> {
+  async approveInitialReport(incidentId: number, dto: { approvedBy: string; approverRole?: string; signature?: string; noFurtherInvestigation?: boolean }): Promise<IncidentInitialReport> {
     const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
     if (!initialReport) {
       throw new NotFoundException(`Initial report for incident ID ${incidentId} not found`);
@@ -671,10 +690,17 @@ export class IncidentsService implements OnModuleInit {
     initialReport.approverRole = dto.approverRole || 'Customer Approver';
     initialReport.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_appr_${incidentId}`) : undefined;
     initialReport.approvedTime = new Date();
+    if (dto.noFurtherInvestigation !== undefined) {
+      initialReport.noFurtherInvestigation = Boolean(dto.noFurtherInvestigation);
+    }
     const savedReport = await this.initialReportRepo.save(initialReport);
 
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (incident) {
+      if (dto.noFurtherInvestigation !== undefined) {
+        incident.noFurtherInvestigation = Boolean(dto.noFurtherInvestigation);
+        await this.incidentRepo.save(incident);
+      }
       this.notificationsService.triggerIncidentApprovalNotification(
         incident,
         'Initial Incident Report',
@@ -983,14 +1009,35 @@ export class IncidentsService implements OnModuleInit {
         );
       }
 
-      // Standard workflow: All action items MUST be completed first
+      // Standard workflow: All corrective action items MUST be completed first
       const actionItems = await this.actionItemRepo.find({ where: { incidentId } });
-      const incompleteActions = actionItems.filter((item) => item.status !== ActionItemStatus.COMPLETED);
+      const correctiveActions = actionItems.filter(
+        (item) => item.actionType === ActionItemType.CORRECTIVE || (!item.actionType && !item.timeImplemented),
+      );
+      const incompleteActions = correctiveActions.filter((item) => item.status !== ActionItemStatus.COMPLETED);
       if (incompleteActions.length > 0) {
         const summaryList = incompleteActions.map((act) => `#${act.id} ("${act.action}" - Status: ${act.status})`).join(', ');
         throw new BadRequestException(
-          `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). All action items must be COMPLETED first. Incomplete action item(s) (${incompleteActions.length}): ${summaryList}.`,
+          `Cannot close Incident ${incident.caseNumber} (ID: ${incidentId}). All corrective action items must be COMPLETED first. Incomplete corrective action item(s) (${incompleteActions.length}): ${summaryList}.`,
         );
+      }
+
+      // Auto-complete any immediate containment actions associated with this incident
+      const pendingImmediate = actionItems.filter(
+        (item) => (item.actionType === ActionItemType.IMMEDIATE || item.timeImplemented) && item.status !== ActionItemStatus.COMPLETED,
+      );
+      if (pendingImmediate.length > 0) {
+        for (const act of pendingImmediate) {
+          act.status = ActionItemStatus.COMPLETED;
+          if (!act.statusHistory) act.statusHistory = [];
+          act.statusHistory.push({
+            status: ActionItemStatus.COMPLETED,
+            updatedBy: dto?.closedBy || 'System Closure',
+            timestamp: new Date().toISOString(),
+            remarks: 'Immediate containment action auto-completed upon incident closure',
+          });
+        }
+        await this.actionItemRepo.save(pendingImmediate);
       }
     }
 
@@ -1421,7 +1468,7 @@ export class IncidentsService implements OnModuleInit {
             if (str.includes('(l)') || str.includes('left')) frontMap['L. Hand'] = (frontMap['L. Hand'] || 0) + 1;
             else frontMap['R. Hand'] = (frontMap['R. Hand'] || 0) + 1;
           }
-          if (str.includes('arm') || str.includes('elbow')) {
+          if (str.includes('arm') || str.includes('elbow') || str.includes('shoulder')) {
             if (str.includes('(l)') || str.includes('left')) frontMap['L. Forearm'] = (frontMap['L. Forearm'] || 0) + 1;
             else frontMap['R. Forearm'] = (frontMap['R. Forearm'] || 0) + 1;
           }

@@ -134,7 +134,7 @@ export class SpotChecksService implements OnModuleInit {
 
     const spotCheck = this.spotCheckRepo.create({
       spotCheckRef,
-      workPackage: this.sanitizeString(dto.workPackage, 'Safety Internal - HSE Spot Check'),
+      workPackage: this.sanitizeString(dto.projectName || dto.workPackage, 'M3SOUTH'),
       date: this.sanitizeDate(dto.date) || new Date().toISOString().split('T')[0],
       time: this.sanitizeString(dto.time) || new Date().toTimeString().slice(0, 5),
       buildingId: dto.buildingId ? Number(dto.buildingId) : undefined,

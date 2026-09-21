@@ -11,6 +11,10 @@ export class CreateSpotCheckDto {
 
   @IsOptional()
   @IsString()
+  projectName?: string;
+
+  @IsOptional()
+  @IsString()
   date?: string;
 
   @IsOptional()

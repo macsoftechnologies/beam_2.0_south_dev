@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
 
 export class StageApprovalDto {
   @IsString()
@@ -16,6 +16,10 @@ export class StageApprovalDto {
   @IsString()
   @IsOptional()
   comments?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  noFurtherInvestigation?: boolean;
 }
 
 export class ReviewInvestigationDto {

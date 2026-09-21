@@ -7,6 +7,8 @@ import { ObservationsController } from './controllers/observations.controller';
 import { IncidentsModule } from '../incidents/incidents.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
+import { ObservationPdfService } from './services/observation-pdf.service';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([Observation, ObservationActionLog]),
@@ -14,7 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [ObservationsController],
-  providers: [ObservationsService],
-  exports: [ObservationsService],
+  providers: [ObservationsService, ObservationPdfService],
+  exports: [ObservationsService, ObservationPdfService],
 })
 export class ObservationsModule {}

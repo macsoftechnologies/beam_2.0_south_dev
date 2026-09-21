@@ -42,6 +42,9 @@ export class IncidentInitialReport {
   @Column({ name: 'injury_types', type: 'json', nullable: true })
   injuryTypes?: string[]; // 21 NNE types (Abrasion, Concussion, Burn, Fracture, etc.)
 
+  @Column({ name: 'injury_other_text', type: 'text', nullable: true })
+  injuryOtherText?: string;
+
   @Column({ name: 'body_parts_injured', type: 'json', nullable: true })
   bodyPartsInjured?: {
     selections: BodyPartInjurySelection[];

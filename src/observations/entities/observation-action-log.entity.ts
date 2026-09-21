@@ -9,6 +9,7 @@ export enum ObservationActionType {
   RESOLVED = 'RESOLVED',
   CLOSED = 'CLOSED',
   ESCALATED = 'ESCALATED',
+  EDITED = 'EDITED',
 }
 
 @Entity('observation_action_logs')

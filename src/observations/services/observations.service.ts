@@ -4,6 +4,7 @@ import { Repository, Like } from 'typeorm';
 import { Observation, ObservationType, NatureOfFinding, ObservationRiskLevel, ObservationStatus } from '../entities/observation.entity';
 import { ObservationActionLog, ObservationActionType } from '../entities/observation-action-log.entity';
 import { CreateObservationDto } from '../dtos/create-observation.dto';
+import { UpdateObservationDto } from '../dtos/update-observation.dto';
 import { ContractorReviewDto, ContractorAction, ReassignObservationDto, ResolveObservationDto, CloseObservationDto, EscalateObservationDto } from '../dtos/workflow.dto';
 import { IncidentsService } from '../../incidents/services/incidents.service';
 import { NotificationsService } from '../../notifications/notifications.service';
@@ -87,7 +88,7 @@ export class ObservationsService implements OnModuleInit {
         CREATE TABLE IF NOT EXISTS \`observation_action_logs\` (
           \`id\` INT AUTO_INCREMENT PRIMARY KEY,
           \`observation_id\` INT NOT NULL,
-          \`action_type\` ENUM('CREATED', 'ASSIGNED', 'CONTRACTOR_ACCEPTED', 'CONTRACTOR_REJECTED', 'REASSIGNED', 'RESOLVED', 'CLOSED', 'ESCALATED') NOT NULL,
+          \`action_type\` ENUM('CREATED', 'ASSIGNED', 'CONTRACTOR_ACCEPTED', 'CONTRACTOR_REJECTED', 'REASSIGNED', 'RESOLVED', 'CLOSED', 'ESCALATED', 'EDITED') NOT NULL,
           \`performed_by_user_id\` INT NULL,
           \`performed_by_user_name\` VARCHAR(255) NOT NULL,
           \`performed_by_user_role\` VARCHAR(100) NOT NULL,
@@ -99,6 +100,10 @@ export class ObservationsService implements OnModuleInit {
           CONSTRAINT \`fk_obs_log\` FOREIGN KEY (\`observation_id\`) REFERENCES \`observations\` (\`id\`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
+
+      try {
+        await this.logRepo.query(`ALTER TABLE \`observation_action_logs\` MODIFY COLUMN \`action_type\` ENUM('CREATED', 'ASSIGNED', 'CONTRACTOR_ACCEPTED', 'CONTRACTOR_REJECTED', 'REASSIGNED', 'RESOLVED', 'CLOSED', 'ESCALATED', 'EDITED') NOT NULL;`);
+      } catch {}
 
       this.logger.log('✅ Safety Observations tables auto-initialization check completed successfully.');
     } catch (err) {
@@ -213,6 +218,93 @@ export class ObservationsService implements OnModuleInit {
     }
 
     const history = await this.logRepo.find({ where: { observationId: savedObservation.id }, order: { id: 'ASC' } });
+    return { observation: savedObservation, history };
+  }
+
+  /**
+   * Update core observation details (Department / Admin users only).
+   * Strictly modifies only observation details; preserves workflow status, contractor resolution, and closure sign-offs.
+   */
+  async updateObservationDetails(
+    id: number,
+    dto: UpdateObservationDto,
+    newFiles?: any[],
+  ): Promise<{ observation: Observation; history: ObservationActionLog[] }> {
+    const observation = await this.obsRepo.findOne({ where: { id } });
+    if (!observation) {
+      throw new NotFoundException(`Observation with ID ${id} not found`);
+    }
+
+    const currentStatus = String(observation.status || '').toUpperCase();
+    if (currentStatus === ObservationStatus.CLOSED || currentStatus === ObservationStatus.ESCALATED) {
+      throw new BadRequestException(`Cannot edit observation ${observation.observationNumber} as it is already ${observation.status}.`);
+    }
+
+    // Retained existing photos
+    let updatedPhotos: string[] = [];
+    if (dto.existingPhotos && Array.isArray(dto.existingPhotos)) {
+      updatedPhotos = [...dto.existingPhotos];
+    } else if (dto.photos && Array.isArray(dto.photos)) {
+      updatedPhotos = [...dto.photos];
+    } else if (Array.isArray(observation.photos)) {
+      updatedPhotos = [...observation.photos];
+    }
+
+    // Append newly uploaded files
+    if (newFiles && newFiles.length > 0) {
+      const uploadedUrls = newFiles.map((file) => `/uploads/observations/${file.filename}`);
+      updatedPhotos = [...updatedPhotos, ...uploadedUrls];
+    }
+
+    // Update only core details
+    if (dto.subject !== undefined) observation.subject = dto.subject;
+    if (dto.description !== undefined) observation.description = dto.description;
+    if (dto.observationType !== undefined) observation.observationType = dto.observationType;
+    if (dto.natureOfFinding !== undefined) observation.natureOfFinding = dto.natureOfFinding;
+    if (dto.safetyCategory !== undefined) observation.safetyCategory = dto.safetyCategory;
+    if (dto.subcategory !== undefined) observation.subcategory = dto.subcategory;
+    if (dto.riskLevel !== undefined) observation.riskLevel = dto.riskLevel;
+    if (dto.observationDate !== undefined || dto.date !== undefined) {
+      observation.observationDate = dto.observationDate || dto.date;
+    }
+    if (dto.observationTime !== undefined || dto.time !== undefined) {
+      observation.observationTime = dto.observationTime || dto.time;
+    }
+    if (dto.deadline !== undefined || dto.dueDate !== undefined || dto.targetDate !== undefined) {
+      observation.deadline = dto.deadline || dto.dueDate || dto.targetDate;
+    }
+    if (dto.immediateActionTaken !== undefined) {
+      observation.immediateActionTaken = dto.immediateActionTaken;
+    }
+    if (dto.projectName !== undefined) observation.projectName = dto.projectName;
+    if (dto.projectId !== undefined) observation.projectId = dto.projectId;
+    if (dto.buildingId !== undefined) observation.buildingId = dto.buildingId;
+    if (dto.buildingName !== undefined) observation.buildingName = dto.buildingName;
+    if (dto.floorLevel !== undefined) observation.floorLevel = dto.floorLevel;
+    if (dto.specificLocation !== undefined) observation.specificLocation = dto.specificLocation;
+    if (dto.assignedContractorId !== undefined) observation.assignedContractorId = dto.assignedContractorId;
+    if (dto.assignedContractorName !== undefined) observation.assignedContractorName = dto.assignedContractorName;
+    observation.photos = updatedPhotos;
+
+    const savedObservation = await this.obsRepo.save(observation);
+
+    // Record EDITED action log
+    const editLog = this.logRepo.create({
+      observationId: savedObservation.id,
+      actionType: ObservationActionType.EDITED,
+      performedByUserId: dto.editedByUserId,
+      performedByUserName: dto.editedByUserName || 'Department User',
+      performedByUserRole: dto.editedByUserRole || 'DEPARTMENT',
+      remarks: dto.editRemarks || 'Observation details updated.',
+      photos: updatedPhotos,
+    });
+    await this.logRepo.save(editLog);
+
+    const history = await this.logRepo.find({
+      where: { observationId: savedObservation.id },
+      order: { id: 'ASC' },
+    });
+
     return { observation: savedObservation, history };
   }
 

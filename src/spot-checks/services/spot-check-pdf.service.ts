@@ -467,8 +467,8 @@ export class SpotCheckPdfService {
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td class="lbl" style="width: 18%;">Work package</td>
-                <td class="val" style="width: 32%;">${sc.workPackage || 'Safety Internal - HSE Spot Check'}</td>
+                <td class="lbl" style="width: 18%;">Project Name</td>
+                <td class="val" style="width: 32%;">${sc.projectName || sc.workPackage || 'M3SOUTH'}</td>
                 <td class="lbl" style="width: 18%;">Spot check ref.</td>
                 <td class="val" style="width: 32%;"><b>${refNo}</b></td>
               </tr>
@@ -480,9 +480,7 @@ export class SpotCheckPdfService {
               </tr>
               <tr>
                 <td class="lbl">Location</td>
-                <td class="val">${locFormatted}</td>
-                <td class="lbl">Weather conditions</td>
-                <td class="val">${sc.weather || '-'}</td>
+                <td class="val" colspan="3">${locFormatted}</td>
               </tr>
               <tr>
                 <td class="lbl">Activity / Task name</td>
@@ -637,9 +635,7 @@ export class SpotCheckPdfService {
             <tbody>
               <tr>
                 <td class="lbl" style="width: 20%;">2.1.1 Date of briefing</td>
-                <td class="val" style="width: 30%;">${this.formatDate(sc.briefingDate)}</td>
-                <td class="lbl" style="width: 20%;">Time</td>
-                <td class="val" style="width: 30%;">${sc.briefingTime || ''}</td>
+                <td class="val" colspan="3">${this.formatDate(sc.briefingDate)}</td>
               </tr>
               <tr>
                 <td class="lbl">2.1.2 Conducted by</td>
@@ -740,42 +736,7 @@ export class SpotCheckPdfService {
             ${sc.findings || ''}
           </div>
 
-          <div style="font-weight: 700; font-size: 9.5px; margin: 6px 0 2px 0;">Corrective actions</div>
-          <table class="sc-grid">
-            <thead>
-              <tr class="chk-table-hdr">
-                <th style="text-align: left;">Action required</th>
-                <th style="width: 25%; text-align: left;">Responsible person</th>
-                <th style="width: 15%; text-align: left;">Due date</th>
-                <th style="width: 50px; text-align: center;">Closed</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${correctiveActionsList && correctiveActionsList.length > 0 ? (
-                correctiveActionsList.map(ca => `
-                  <tr>
-                    <td><b>${ca.action || ca.actionRequired || '-'}</b></td>
-                    <td>${ca.responsible || ca.responsiblePerson || '-'}</td>
-                    <td>${this.formatDate(ca.dueDate)}</td>
-                    <td class="center-td">${renderCheckbox(Boolean(ca.closed), '')}</td>
-                  </tr>
-                `).join('')
-              ) : `
-                <tr>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td class="center-td">${renderCheckbox(false, '')}</td>
-                </tr>
-                <tr>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td>&nbsp;</td>
-                  <td class="center-td">${renderCheckbox(false, '')}</td>
-                </tr>
-              `}
-            </tbody>
-          </table>
+
         </div>
 
         <!-- ==========================================
@@ -784,7 +745,7 @@ export class SpotCheckPdfService {
         <div class="pdf-page">
           <div class="section-hdr">3 | SUMMARY - SIGNATURES AND EVIDENCE</div>
           
-          <div style="font-weight: 700; font-size: 9.5px; margin: 8px 0 4px 0;">3.1 Foreman / Lead-hand confirmation</div>
+          <div style="font-weight: 700; font-size: 9.5px; margin: 8px 0 4px 0;">3.1 Foreman / Supervisor Details</div>
           <table class="sc-grid">
             <tbody>
               <tr>

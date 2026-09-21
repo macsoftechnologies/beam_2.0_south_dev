@@ -498,6 +498,17 @@ export class IncidentPdfService {
       if (huActs && Array.isArray(huActs)) {
         list.push(...huActs);
       }
+      let incActs = inc.immediateActions;
+      if (typeof incActs === 'string') {
+        try { incActs = JSON.parse(incActs); } catch (e) {}
+      }
+      if (incActs && Array.isArray(incActs)) {
+        incActs.forEach((act: any) => {
+          if (!list.some((existing) => (existing.action || existing.description) === (act.action || act.description))) {
+            list.push(act);
+          }
+        });
+      }
       let irActs = initial.immediateActions;
       if (typeof irActs === 'string') {
         try { irActs = JSON.parse(irActs); } catch (e) {}
@@ -530,8 +541,8 @@ export class IncidentPdfService {
       if (immActionsList.length > 0) {
         return immActionsList.map(a => {
           const actText = a.action || a.actionItem || a.description || 'Cordon off area and perform immediate risk control.';
-          const respText = a.responsible || a.owner || headsUpSubmitter;
-          const timeText = a.timeImplemented || a.targetDate || a.date || 'Immediate';
+          const respText = a.responsible || a.owner || a.assignedTo || headsUpSubmitter;
+          const timeText = a.timeImplemented || a.targetDate || a.date || a.time || 'Immediate';
           const historyHtml = renderStatusHistory(a.statusHistory);
 
           return `
@@ -628,25 +639,109 @@ export class IncidentPdfService {
     const anticipatedAbsence = initial.anticipatedAbsence ? (String(initial.anticipatedAbsence).includes('day') ? initial.anticipatedAbsence : `${initial.anticipatedAbsence} days`) : '0 days';
     const medicalTreatmentClass = initial.medicalTreatmentClass || initial.treatmentPrescribed || (initial.hasInjuryIllness ? 'Medical Treatment' : 'No Treatment');
 
-    // Accident Categories helper
+    // Accident Categories helper & list matching Frontend Section H
+    const accidentCategoriesList = [
+      'Contact with an object or equipment', 'Electrocution – electrical injury', 'Malfunctioning/Defective tools and equipment',
+      'Tool accidents', 'Scaffolding accidents', 'Asphyxiation – Confined space',
+      'Cuts', 'Accidents involving cranes and other equipment/Machinery', 'Biological',
+      'Slip, Trip and fall accidents', 'Fire and explosions', 'Psychological',
+      'Falls from heights', 'Exposure to hazardous materials and chemicals', 'Extreme Temperature',
+      'Falling objects from height', 'Noise', 'Radiation',
+      'Push and pull', 'Vibration', '',
+      'Transportation accidents', 'Ergonomic', ''
+    ];
+
     const isAccidentCategory = (catName: string) => {
+      if (!catName) return false;
       let accCats = initial.accidentCategories || [];
       if (typeof accCats === 'string') {
         try { accCats = JSON.parse(accCats); } catch (e) {}
       }
-      if (Array.isArray(accCats) && accCats.some((c: string) => {
+      if (!Array.isArray(accCats)) accCats = [accCats];
+      const target = catName.toLowerCase().trim();
+      return accCats.some((c: any) => {
+        if (!c) return false;
         const cLower = String(c).toLowerCase().trim();
-        const targetLower = catName.toLowerCase().trim();
-        return cLower.includes(targetLower) || targetLower.includes(cLower);
-      })) return true;
-      return false;
+        if (cLower === target || cLower.includes(target) || target.includes(cLower)) return true;
+        const targetWords = target.split(/[\s,\/–-]+/).filter(w => w.length > 3);
+        const cWords = cLower.split(/[\s,\/–-]+/).filter(w => w.length > 3);
+        return targetWords.length > 0 && targetWords.some(tw => cWords.includes(tw));
+      });
     };
 
-    // Injury Types helper
+    const renderAccidentCategoriesRows = () => {
+      const rows: string[] = [];
+      for (let i = 0; i < accidentCategoriesList.length; i += 3) {
+        const c1 = accidentCategoriesList[i];
+        const c2 = accidentCategoriesList[i + 1];
+        const c3 = accidentCategoriesList[i + 2];
+        rows.push(`
+          <tr>
+            <td style="width: 33.33%;">${c1 ? renderCheckbox(isAccidentCategory(c1), c1) : ''}</td>
+            <td style="width: 33.33%;">${c2 ? renderCheckbox(isAccidentCategory(c2), c2) : ''}</td>
+            <td style="width: 33.33%;">${c3 ? renderCheckbox(isAccidentCategory(c3), c3) : ''}</td>
+          </tr>
+        `);
+      }
+      return rows.join('');
+    };
+
+    // Injury Types helper & list matching Frontend Section I
+    const injuryTypesList = [
+      'Abrasion, Laceration', 'Drowning or Suffocation', 'Acute infection', 'Wound',
+      'Dislocation of body part', 'Animal bite', 'Electrical Injury', 'Acute exposure',
+      'Bruising or Contusion', 'Concussion/Compression', 'Psychological shock', 'Poisoning',
+      'Burn or Scald', 'Amputation and Crush Injury', 'Paralysis', 'Hearing loss',
+      'Fracture', 'Frost bite', 'Sprain', 'Irradiation',
+      'Other'
+    ];
+
     const isInjuryType = (type: string) => {
-      const types = initial.injuryTypes || [];
-      if (Array.isArray(types) && types.some((t: string) => t.toLowerCase().includes(type.toLowerCase()))) return true;
-      return false;
+      if (!type) return false;
+      let types = initial.injuryTypes || [];
+      if (typeof types === 'string') {
+        try { types = JSON.parse(types); } catch (e) {}
+      }
+      if (!Array.isArray(types)) types = [types];
+      const target = type.toLowerCase().trim();
+      return types.some((t: any) => {
+        if (!t) return false;
+        const tLower = String(t).toLowerCase().trim();
+        if (tLower === target || tLower.includes(target) || target.includes(tLower)) return true;
+        const targetWords = target.split(/[\s,\/–-]+/).filter(w => w.length > 3);
+        const tWords = tLower.split(/[\s,\/–-]+/).filter(w => w.length > 3);
+        return targetWords.length > 0 && targetWords.some(tw => tWords.includes(tw));
+      });
+    };
+
+    const renderInjuryTypesRows = () => {
+      const rows: string[] = [];
+      for (let i = 0; i < injuryTypesList.length; i += 4) {
+        const c1 = injuryTypesList[i];
+        const c2 = injuryTypesList[i + 1];
+        const c3 = injuryTypesList[i + 2];
+        const c4 = injuryTypesList[i + 3];
+        rows.push(`
+          <tr>
+            <td style="width: 25%;">${c1 ? renderCheckbox(isInjuryType(c1), c1) : ''}</td>
+            <td style="width: 25%;">${c2 ? renderCheckbox(isInjuryType(c2), c2) : ''}</td>
+            <td style="width: 25%;">${c3 ? renderCheckbox(isInjuryType(c3), c3) : ''}</td>
+            <td style="width: 25%;">${c4 ? renderCheckbox(isInjuryType(c4), c4) : ''}</td>
+          </tr>
+        `);
+      }
+      const otherChecked = isInjuryType('Other');
+      const otherText = initial.injuryOtherText || initial.otherInjuryText || '';
+      if (otherChecked && otherText) {
+        rows.push(`
+          <tr>
+            <td colspan="4" style="background: #f8fafc; padding: 4px 8px; font-size: 8.5px;">
+              <strong>Other (please state):</strong> ${otherText}
+            </td>
+          </tr>
+        `);
+      }
+      return rows.join('');
     };
 
     // Body Parts helper
@@ -1041,18 +1136,11 @@ export class IncidentPdfService {
 
     const renderLessonsPrevention = (): string => {
       const lessons = inv.lessonsLearned || inv.lessons_learned || inv.lessons || 'Ensure pre-task risk assessments explicitly include site safety controls and risk mitigation measures.';
-      const prevention = inv.preventativeMeasures || inv.preventative_measures || inv.preventionMeasures || inv.prevention || 'Implement permanent corrective engineering controls, updated procedures and supervisory oversight.';
 
       return `
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-            <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Lessons Learned</div>
-            <div style="font-size: 8px; color: #334155; line-height: 1.4;">${lessons}</div>
-          </div>
-          <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-            <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Recurrence Prevention Measures</div>
-            <div style="font-size: 8px; color: #334155; line-height: 1.4;">${prevention}</div>
-          </div>
+        <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
+          <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Lessons Learned</div>
+          <div style="font-size: 8px; color: #334155; line-height: 1.4;">${lessons}</div>
         </div>
       `;
     };
@@ -1101,7 +1189,6 @@ export class IncidentPdfService {
         { keys: ["trainingRecords", "training", "competencyRecords"], label: "Training Records", match: "training", idx: 5 },
         { keys: ["permitsToWork", "permitToWork", "ptw", "permit"], label: "Permit to Work (PTW)", match: "permit", idx: 4 },
         { keys: ["safePlanOfAction", "spa", "tsti", "preTaskBriefing"], label: "Safe Plan of Action (SPA)", match: "spa", idx: 3 },
-        { keys: ["photos", "incidentPhotos", "locationPhotos"], label: "Photos from Incident Location", match: "photo", idx: 6, isPhotos: true },
         { keys: ["evidenceForActionsTaken", "evidenceActions", "actionsEvidence"], label: "Evidence for Actions Taken", match: "evidence", idx: 7 },
         { keys: ["wasteDisposalInvoice", "wasteDisposal", "wasteInvoice"], label: "Waste Disposal Invoice (if applicable)", match: "waste", idx: 8 },
       ];
@@ -1110,8 +1197,8 @@ export class IncidentPdfService {
 
       const rowsHtml = items.map(item => {
         const info = getAttachmentInfo(item.keys, item.match || item.label, item.idx);
-        const isAttached = item.isPhotos ? (info.checked || resolvedPhotos.length > 0) : (info.checked || !!info.fileUrl);
-        const displayFileName = info.fileName || (item.isPhotos && resolvedPhotos.length > 0 ? `${resolvedPhotos.length} photo(s) attached` : '');
+        const isAttached = info.checked || !!info.fileUrl;
+        const displayFileName = info.fileName || '';
         return `
         <tr>
           <td style="width: 70%; font-weight: 600;">
@@ -1465,6 +1552,43 @@ export class IncidentPdfService {
             </tbody>
           </table>
 
+          ${isCat('Environmental') ? `
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin: 8px 0 4px 0;">4 Environmental Incident Details</div>
+          <table class="nne-tbl">
+            <tbody>
+              <tr>
+                <td class="lbl-cell" style="width: 22%;">Type of Spillage:</td>
+                <td style="width: 28%;"><strong>${
+                  Array.isArray(headsUp.spillType) ? headsUp.spillType.join(', ') :
+                  (headsUp.spillType || '-')
+                }</strong></td>
+                <td class="lbl-cell" style="width: 22%;">Substance Spilled:</td>
+                <td><strong>${headsUp.spillSubstance || '-'}</strong></td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">Cause of Spillage:</td>
+                <td>${headsUp.spillCause || '-'}</td>
+                <td class="lbl-cell">Approx Quantity:</td>
+                <td>${headsUp.spillQuantity || '-'}</td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">System / Media Entered:</td>
+                <td colspan="3">${
+                  Array.isArray(headsUp.spillSystemEntered) ? headsUp.spillSystemEntered.join(', ') :
+                  (headsUp.spillSystemEntered || '-')
+                }</td>
+              </tr>
+              <tr>
+                <td class="lbl-cell">Gatekeeper Informed?</td>
+                <td><strong>${(headsUp.gatekeeperInformed !== undefined ? headsUp.gatekeeperInformed : inc.gatekeeperInformed) ? 'Yes' : 'No'}</strong></td>
+                <td class="lbl-cell">Gatekeeper Name:</td>
+                <td>${(headsUp.gatekeeperInformed !== undefined ? headsUp.gatekeeperInformed : inc.gatekeeperInformed) ? (headsUp.gatekeeperName || inc.gatekeeperName || '-') : 'N/A'}</td>
+              </tr>
+            </tbody>
+          </table>
+          ` : ''}
+
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin: 8px 0 4px 0;">${isCat('Environmental') ? '5' : '4'} Immediate Actions Taken</div>
           <table class="nne-tbl">
             <thead>
               <tr class="dark-hdr">
@@ -1631,7 +1755,7 @@ export class IncidentPdfService {
                   <td>${injuredJobTitle}</td>
                 </tr>
                 <tr>
-                  <td class="lbl-cell">Length of Service:</td>
+                  <td class="lbl-cell">Length of Service for Project:</td>
                   <td>${lengthOfService}</td>
                   <td class="lbl-cell">Experience in Role:</td>
                   <td>${experienceInRole}</td>
@@ -1652,26 +1776,7 @@ export class IncidentPdfService {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td>${renderCheckbox(isAccidentCategory('Contact') || isAccidentCategory('Object'), 'Contact with object/equipment')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Electrical') || isAccidentCategory('Electrocution'), 'Electrocution – electrical injury')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Defective') || isAccidentCategory('Equipment'), 'Defective tools/equipment')}</td>
-                </tr>
-                <tr>
-                  <td>${renderCheckbox(isAccidentCategory('Manual') || isAccidentCategory('Handling'), 'Manual Handling')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Hazardous') || isAccidentCategory('Substance') || isAccidentCategory('Chemical'), 'Hazardous Substance')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Slip') || isAccidentCategory('Trip') || isAccidentCategory('Fall'), 'Slip / Trip / Fall')}</td>
-                </tr>
-                <tr>
-                  <td>${renderCheckbox(isAccidentCategory('Tool'), 'Tool accidents')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Scaffold'), 'Scaffolding / Height accidents')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Confined') || isAccidentCategory('Asphyxiation'), 'Asphyxiation – Confined space')}</td>
-                </tr>
-                <tr>
-                  <td>${renderCheckbox(isAccidentCategory('Cut') || isAccidentCategory('Laceration') || isAccidentCategory('Personal'), 'Cuts / Lacerations')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Vehicle') || isAccidentCategory('Machinery'), 'Accidents involving machinery/vehicle')}</td>
-                  <td>${renderCheckbox(isAccidentCategory('Near Miss'), 'Near Miss Event')}</td>
-                </tr>
+                ${renderAccidentCategoriesRows()}
               </tbody>
             </table>
           </div>
@@ -1684,24 +1789,7 @@ export class IncidentPdfService {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td>${renderCheckbox(isInjuryType('Cut') || isInjuryType('Laceration'), 'Cut / Laceration')}</td>
-                  <td>${renderCheckbox(isInjuryType('Burn'), 'Burn / Scald')}</td>
-                  <td>${renderCheckbox(isInjuryType('Fracture') || isInjuryType('Break'), 'Fracture / Bone injury')}</td>
-                  <td>${renderCheckbox(isInjuryType('Sprain') || isInjuryType('Strain'), 'Sprain / Strain')}</td>
-                </tr>
-                <tr>
-                  <td>${renderCheckbox(isInjuryType('Bruise') || isInjuryType('Contusion'), 'Bruise / Contusion')}</td>
-                  <td>${renderCheckbox(isInjuryType('Eye'), 'Eye Injury')}</td>
-                  <td>${renderCheckbox(isInjuryType('Puncture'), 'Puncture Wound')}</td>
-                  <td>${renderCheckbox(isInjuryType('Amputation'), 'Amputation')}</td>
-                </tr>
-                <tr>
-                  <td>${renderCheckbox(isInjuryType('Internal'), 'Internal Injury')}</td>
-                  <td>${renderCheckbox(isInjuryType('Foreign'), 'Foreign Body')}</td>
-                  <td>${renderCheckbox(isInjuryType('Illness') || isInjuryType('Occupational'), 'Occupational Illness')}</td>
-                  <td>${renderCheckbox(!initial.hasInjuryIllness || (Array.isArray(initial.injuryTypes) && initial.injuryTypes.length === 0), 'No Injury / N/A')}</td>
-                </tr>
+                ${renderInjuryTypesRows()}
               </tbody>
             </table>
           </div>
@@ -1719,10 +1807,6 @@ export class IncidentPdfService {
                   <td style="width: 25%;">${treatmentPrescribed}</td>
                   <td class="lbl-cell" style="width: 25%;">Anticipated Absence:</td>
                   <td style="width: 25%;">${anticipatedAbsence}</td>
-                </tr>
-                <tr>
-                  <td class="lbl-cell">Medical Classification:</td>
-                  <td colspan="3"><strong>${medicalTreatmentClass}</strong></td>
                 </tr>
               </tbody>
             </table>
@@ -1959,23 +2043,23 @@ export class IncidentPdfService {
           <!-- Section 4. Fishbone Analysis – Cause and Effect -->
           ${renderFishboneSvg()}
 
-          <!-- Section 5. Effect Description & 6. Problem Statement -->
+          <!-- Section 5. Incident / Effect & 7. Problem Statement -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
               <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">5. Effect Description</div>
+                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">5. Incident / Effect</div>
                 <div style="font-size: 8px; color: #334155; line-height: 1.4;">${inv.effect || inv.effectDescription || title || 'Incident outcome analyzed.'}</div>
               </div>
               <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">6. Problem Statement</div>
+                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">7. Problem Statement</div>
                 <div style="font-size: 8px; color: #334155; line-height: 1.4;">${inv.problemStatement || description || 'Problem statement under investigation.'}</div>
               </div>
             </div>
           </div>
 
-          <!-- Section 8. 5-Whys Root Cause Analysis -->
+          <!-- Section 6. 5-Whys Root Cause Analysis -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">8. 5-Whys Root Cause Analysis</div>
+            <div class="sec-title">6. 5-Whys Root Cause Analysis</div>
             ${renderFiveWhysRows()}
           </div>
 
@@ -2057,9 +2141,9 @@ export class IncidentPdfService {
           </div>
         ` : ''}
 
-          <!-- Section 13. Lessons Learned & Recurrence Prevention -->
+          <!-- Section 13. Lessons Learned -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">13. Lessons Learned & Prevention</div>
+            <div class="sec-title">13. Lessons Learned</div>
             ${renderLessonsPrevention()}
           </div>
 

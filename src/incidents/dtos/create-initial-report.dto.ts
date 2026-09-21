@@ -140,6 +140,10 @@ export class CreateInitialReportDto {
   })
   injuryTypes?: string[];
 
+  @IsString()
+  @IsOptional()
+  injuryOtherText?: string;
+
   @IsOptional()
   @Transform(({ value }) => {
     if (typeof value === 'string') {
