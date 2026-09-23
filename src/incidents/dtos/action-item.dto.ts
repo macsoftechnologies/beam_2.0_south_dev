@@ -37,6 +37,32 @@ export class CreateActionItemDto {
   @IsString()
   @IsOptional()
   updatedBy?: string;
+
+  @IsString()
+  @IsOptional()
+  attachmentUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  attachmentName?: string;
+
+  @IsString()
+  @IsOptional()
+  fileUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  fileName?: string;
+
+  @IsOptional()
+  fileSize?: number;
+
+  @IsString()
+  @IsOptional()
+  fileType?: string;
+
+  @IsOptional()
+  attachments?: any;
 }
 
 export class UpdateActionItemDto {
@@ -79,4 +105,30 @@ export class UpdateActionItemDto {
   @IsString()
   @IsOptional()
   remarks?: string;
+
+  @IsString()
+  @IsOptional()
+  attachmentUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  attachmentName?: string;
+
+  @IsString()
+  @IsOptional()
+  fileUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  fileName?: string;
+
+  @IsOptional()
+  fileSize?: number;
+
+  @IsString()
+  @IsOptional()
+  fileType?: string;
+
+  @IsOptional()
+  attachments?: any;
 }

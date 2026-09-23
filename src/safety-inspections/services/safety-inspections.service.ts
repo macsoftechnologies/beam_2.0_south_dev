@@ -244,6 +244,8 @@ export class SafetyInspectionsService implements OnModuleInit {
     status?: string;
     search?: string;
     building?: string;
+    floor?: string;
+    room?: string;
     contractor?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -262,9 +264,24 @@ export class SafetyInspectionsService implements OnModuleInit {
     }
 
     if (query.building && query.building.trim() !== '') {
-      qb.andWhere('(si.buildingName LIKE :building OR si.buildingId = :buildingId)', {
-        building: `%${query.building}%`,
-        buildingId: isNaN(Number(query.building)) ? -1 : Number(query.building),
+      const bTerm = `%${query.building.trim()}%`;
+      const bId = isNaN(Number(query.building)) ? -1 : Number(query.building);
+      qb.andWhere('(si.buildingName LIKE :bTerm OR si.buildingId = :bId)', {
+        bTerm,
+        bId,
+      });
+    }
+
+    if (query.floor && query.floor.trim() !== '') {
+      qb.andWhere('si.floorLevel LIKE :floor', {
+        floor: `%${query.floor.trim()}%`,
+      });
+    }
+
+    if (query.room && query.room.trim() !== '') {
+      const roomTerm = `%${query.room.trim()}%`;
+      qb.andWhere('(CAST(si.selectedRooms AS CHAR) LIKE :roomTerm OR si.specificLocation LIKE :roomTerm)', {
+        roomTerm,
       });
     }
 

@@ -9,17 +9,54 @@ import { SpotCheck } from '../entities/spot-check.entity';
 export class SpotCheckPdfService {
   private readonly logger = new Logger(SpotCheckPdfService.name);
 
+  private async launchBrowser(): Promise<any> {
+    const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
+    try {
+      return await puppeteer.launch({
+        headless: true,
+        args: launchArgs,
+      });
+    } catch (e1) {
+      try {
+        return await puppeteer.launch({
+          channel: 'chrome' as any,
+          headless: true,
+          args: launchArgs,
+        });
+      } catch (e2) {
+        const candidatePaths = [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+          'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/chromium',
+        ];
+        for (const p of candidatePaths) {
+          if (existsSync(p)) {
+            try {
+              return await puppeteer.launch({
+                executablePath: p,
+                headless: true,
+                args: launchArgs,
+              });
+            } catch (e3) {}
+          }
+        }
+        throw e1;
+      }
+    }
+  }
+
   /**
    * Generates official printable PDF for a Spot Check record matching the exact form design
    * and merges all attached PDF documents at the end of the form.
    */
-  async generateSpotCheckPdf(spotCheck: SpotCheck): Promise<Buffer> {
-    const html = this.buildHtml(spotCheck);
+  async generateSpotCheckPdf(spotCheck: SpotCheck, includeAttachments: boolean = true): Promise<Buffer> {
+    const html = this.buildHtml(spotCheck, includeAttachments);
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    const browser = await this.launchBrowser();
 
     let basePdfBuffer: Buffer;
     try {
@@ -38,10 +75,11 @@ export class SpotCheckPdfService {
       await browser.close();
     }
 
-    // Merge attached PDF documents directly after the Spot Check form
-    try {
-      const attachmentsList = this.parseJsonField<any[]>(spotCheck.attachments, []);
-      const pdfAttachments: { fileName: string; bytes: Buffer }[] = [];
+    // Merge attached PDF documents directly after the Spot Check form if includeAttachments is true
+    if (includeAttachments) {
+      try {
+        const attachmentsList = this.parseJsonField<any[]>(spotCheck.attachments, []);
+        const pdfAttachments: { fileName: string; bytes: Buffer }[] = [];
 
       for (const att of attachmentsList) {
         if (!att) continue;
@@ -133,6 +171,7 @@ export class SpotCheckPdfService {
     } catch (mergeErr) {
       this.logger.warn('Error during Spot Check PDF attachment merging, falling back to base form PDF:', mergeErr);
     }
+    }
 
     return basePdfBuffer;
   }
@@ -160,7 +199,7 @@ export class SpotCheckPdfService {
     }
   }
 
-  private buildHtml(sc: SpotCheck): string {
+  private buildHtml(sc: SpotCheck, includeAttachments: boolean = true): string {
     // Load Logos from src/images/logos/
     const nneLogoPath = join(process.cwd(), 'src', 'images', 'logos', 'nne_logo.png');
     const projectLogoPath = join(process.cwd(), 'src', 'images', 'logos', 'Logo.jpeg');
@@ -463,7 +502,7 @@ export class SpotCheckPdfService {
         <div class="pdf-page">
           ${renderPageHeader()}
 
-          <div class="section-hdr">0 | GENERAL INFORMATION</div>
+          <div class="section-hdr">GENERAL INFORMATION</div>
           <table class="sc-grid">
             <tbody>
               <tr>
@@ -501,9 +540,9 @@ export class SpotCheckPdfService {
             Instructions: Tick one response for each checkpoint. Use N/A only when the checkpoint does not apply. Record relevant facts in the comments field.
           </div>
 
-          <div class="section-hdr">1 | PERMIT TO WORK (PTW)</div>
+          <div class="section-hdr">PERMIT TO WORK (PTW)</div>
           
-          <div class="sub-hdr-bar">1.1 High-risk activities included</div>
+          <div class="sub-hdr-bar">High-risk activities included</div>
           <table class="sc-grid" style="margin-bottom: 0;">
             <tbody>
               <tr>
@@ -540,7 +579,6 @@ export class SpotCheckPdfService {
           <table class="sc-grid" style="margin-top: 6px;">
             <thead>
               <tr class="chk-table-hdr">
-                <th style="width: 42px; text-align: center;">No.</th>
                 <th style="text-align: left;">Checkpoint</th>
                 <th style="width: 42px; text-align: center;">Yes</th>
                 <th style="width: 42px; text-align: center;">No</th>
@@ -549,49 +587,42 @@ export class SpotCheckPdfService {
             </thead>
             <tbody>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.2</b></td>
                 <td>Does the description of work, including scope, location and times, match the work performed?</td>
                 ${renderCheckTd(sc.chk1_2, 'Yes')}
                 ${renderCheckTd(sc.chk1_2, 'No')}
                 ${renderCheckTd(sc.chk1_2, 'N/A')}
               </tr>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.3</b></td>
                 <td>Are the PTW and RAMS valid for the work performed?</td>
                 ${renderCheckTd(sc.chk1_3, 'Yes')}
                 ${renderCheckTd(sc.chk1_3, 'No')}
                 ${renderCheckTd(sc.chk1_3, 'N/A')}
               </tr>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.4</b></td>
                 <td>Are key risks controlled? Consider barriers, signage and whether controls are working as planned and coordinated.</td>
                 ${renderCheckTd(sc.chk1_4, 'Yes')}
                 ${renderCheckTd(sc.chk1_4, 'No')}
                 ${renderCheckTd(sc.chk1_4, 'N/A')}
               </tr>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.5</b></td>
                 <td>Do workers know the emergency plan? Consider contact information, medical centre, alarm / muster arrangements and rescue / emergency arrangements.</td>
                 ${renderCheckTd(sc.chk1_5, 'Yes')}
                 ${renderCheckTd(sc.chk1_5, 'No')}
                 ${renderCheckTd(sc.chk1_5, 'N/A')}
               </tr>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.6</b></td>
                 <td>Is correct task-specific PPE in use, in proper condition and worn properly?</td>
                 ${renderCheckTd(sc.chk1_6, 'Yes')}
                 ${renderCheckTd(sc.chk1_6, 'No')}
                 ${renderCheckTd(sc.chk1_6, 'N/A')}
               </tr>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.7</b></td>
                 <td>Is supervision present? Is the responsible person named on the PTW overseeing the work?</td>
                 ${renderCheckTd(sc.chk1_7, 'Yes')}
                 ${renderCheckTd(sc.chk1_7, 'No')}
                 ${renderCheckTd(sc.chk1_7, 'N/A')}
               </tr>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>1.8</b></td>
                 <td>Is the area orderly and safe? Consider clear access / egress, housekeeping and unblocked exits.</td>
                 ${renderCheckTd(sc.chk1_8, 'Yes')}
                 ${renderCheckTd(sc.chk1_8, 'No')}
@@ -605,11 +636,10 @@ export class SpotCheckPdfService {
              PAGE 2: COMMUNICATION / TOOLBOX TALK & 3 | SUMMARY
         =========================================== -->
         <div class="pdf-page">
-          <div class="section-hdr">2 | COMMUNICATION / TOOLBOX TALK</div>
+          <div class="section-hdr">COMMUNICATION / TOOLBOX TALK</div>
           <table class="sc-grid" style="margin-top: 4px;">
             <thead>
               <tr class="chk-table-hdr">
-                <th style="width: 42px; text-align: center;">No.</th>
                 <th style="text-align: left;">Checkpoint</th>
                 <th style="width: 42px; text-align: center;">Yes</th>
                 <th style="width: 42px; text-align: center;">No</th>
@@ -618,7 +648,6 @@ export class SpotCheckPdfService {
             </thead>
             <tbody>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>2.1</b></td>
                 <td>Has a Toolbox Talk / pre-start briefing been held?</td>
                 ${renderCheckTd(sc.chk2_1, 'Yes')}
                 ${renderCheckTd(sc.chk2_1, 'No')}
@@ -628,17 +657,17 @@ export class SpotCheckPdfService {
           </table>
 
           <div class="instructions-text">
-            If YES, complete items 2.1.1 to 2.1.5. If NO, complete the explanation box below.
+            If YES, complete the items below. If NO, complete the explanation box below.
           </div>
 
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td class="lbl" style="width: 20%;">2.1.1 Date of briefing</td>
+                <td class="lbl" style="width: 20%;">Date of briefing</td>
                 <td class="val" colspan="3">${this.formatDate(sc.briefingDate)}</td>
               </tr>
               <tr>
-                <td class="lbl">2.1.2 Conducted by</td>
+                <td class="lbl">Conducted by</td>
                 <td class="val">${sc.conductedBy || '-'}</td>
                 <td class="lbl">Number of participants</td>
                 <td class="val">${sc.participants || '-'}</td>
@@ -646,7 +675,7 @@ export class SpotCheckPdfService {
             </tbody>
           </table>
 
-          <div style="font-weight: 700; font-size: 9.5px; margin: 6px 0 3px 0;">2.1.4 Key topics covered</div>
+          <div style="font-weight: 700; font-size: 9.5px; margin: 6px 0 3px 0;">Key topics covered</div>
           <table class="sc-grid">
             <tbody>
               <tr>
@@ -671,7 +700,6 @@ export class SpotCheckPdfService {
           <table class="sc-grid" style="margin-top: 4px;">
             <thead>
               <tr class="chk-table-hdr">
-                <th style="width: 42px; text-align: center;">No.</th>
                 <th style="text-align: left;">Checkpoint</th>
                 <th style="width: 42px; text-align: center;">Yes</th>
                 <th style="width: 42px; text-align: center;">No</th>
@@ -679,7 +707,6 @@ export class SpotCheckPdfService {
             </thead>
             <tbody>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>2.1.5</b></td>
                 <td>Have all workers confirmed understanding of the PTW and RAMS requirements?</td>
                 ${renderCheckTd(sc.chk2_1_5, 'Yes')}
                 ${renderCheckTd(sc.chk2_1_5, 'No')}
@@ -688,17 +715,16 @@ export class SpotCheckPdfService {
           </table>
 
           <div style="font-weight: 700; font-size: 9.5px; margin: 6px 0 2px 0;">
-            2.1.6 If NO, explain why the Toolbox Talk / pre-start briefing was not held
+            If NO, explain why the Toolbox Talk / pre-start briefing was not held
           </div>
           <div class="comment-box">
             ${sc.explainNoBriefing || ''}
           </div>
 
-          <div class="section-hdr">3 | SUMMARY</div>
+          <div class="section-hdr">SUMMARY</div>
           <table class="sc-grid" style="margin-top: 4px;">
             <thead>
               <tr class="chk-table-hdr">
-                <th style="width: 42px; text-align: center;">No.</th>
                 <th style="text-align: left;">Checkpoint</th>
                 <th style="width: 42px; text-align: center;">Yes</th>
                 <th style="width: 42px; text-align: center;">No</th>
@@ -706,7 +732,6 @@ export class SpotCheckPdfService {
             </thead>
             <tbody>
               <tr>
-                <td class="lbl" style="text-align: center;"><b>3.2</b></td>
                 <td>Was the activity in compliance?</td>
                 ${renderCheckTd(sc.chk3_2, 'Yes')}
                 ${renderCheckTd(sc.chk3_2, 'No')}
@@ -715,7 +740,7 @@ export class SpotCheckPdfService {
           </table>
 
           <div style="font-weight: 700; font-size: 9.5px; margin: 6px 0 2px 0;">
-            3.2.1 Safety issue traceability, if activity is not compliant
+            Safety issue traceability, if activity is not compliant
           </div>
           <table class="sc-grid">
             <tbody>
@@ -743,9 +768,9 @@ export class SpotCheckPdfService {
              PAGE 3: 3 | SUMMARY - SIGNATURES AND EVIDENCE
         =========================================== -->
         <div class="pdf-page">
-          <div class="section-hdr">3 | SUMMARY - SIGNATURES AND EVIDENCE</div>
+          <div class="section-hdr">SUMMARY - SIGNATURES AND EVIDENCE</div>
           
-          <div style="font-weight: 700; font-size: 9.5px; margin: 8px 0 4px 0;">3.1 Foreman / Supervisor Details</div>
+          <div style="font-weight: 700; font-size: 9.5px; margin: 8px 0 4px 0;">Foreman / Supervisor Details</div>
           <table class="sc-grid">
             <tbody>
               <tr>
@@ -766,7 +791,7 @@ export class SpotCheckPdfService {
           </table>
 
           <div style="font-weight: 700; font-size: 9.5px; margin: 12px 0 4px 0;">
-            3.3 Photographs and attachments <span style="color: #be123c; font-weight: normal;">(required)</span>
+            Photographs and attachments <span style="color: #be123c; font-weight: normal;">(required)</span>
           </div>
           <table class="sc-grid">
             <thead>

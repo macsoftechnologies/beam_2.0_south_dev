@@ -40,6 +40,67 @@ export class SafetyInspectionPdfService {
     private readonly obsRepo: Repository<Observation>,
   ) {}
 
+  private async launchBrowser(): Promise<any> {
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+    ];
+
+    try {
+      return await puppeteer.launch({
+        headless: true,
+        args: launchArgs,
+      });
+    } catch (e1) {
+      try {
+        return await puppeteer.launch({
+          channel: 'chrome' as any,
+          headless: true,
+          args: launchArgs,
+        });
+      } catch (e2) {
+        try {
+          return await puppeteer.launch({
+            channel: 'msedge' as any,
+            headless: true,
+            args: launchArgs,
+          });
+        } catch (e3) {
+          const candidatePaths = [
+            process.env.PUPPETEER_EXECUTABLE_PATH,
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Users\\' + (process.env.USERNAME || '') + '\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium',
+          ].filter(Boolean) as string[];
+
+          for (const p of candidatePaths) {
+            if (existsSync(p)) {
+              try {
+                return await puppeteer.launch({
+                  executablePath: p,
+                  headless: true,
+                  args: launchArgs,
+                });
+              } catch (e4) {}
+            }
+          }
+          throw e1;
+        }
+      }
+    }
+  }
+
   /**
    * Generates official printable PDF for a Safety Inspection audit report,
    * complete with attached Safety Observation details for each non-compliant point.
@@ -52,10 +113,7 @@ export class SafetyInspectionPdfService {
     const html = this.buildHtml(inspection, enrichedItems);
 
     // 3. Render PDF with Puppeteer
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    const browser = await this.launchBrowser();
 
     try {
       const page = await browser.newPage();
@@ -81,7 +139,18 @@ export class SafetyInspectionPdfService {
     const result: any[] = [];
 
     for (const item of items) {
-      const rawIssues = Array.isArray(item.issues) ? item.issues : [];
+      let rawIssues: any[] = [];
+      if (Array.isArray(item.issues)) {
+        rawIssues = item.issues;
+      } else if (typeof item.issues === 'string') {
+        try {
+          const parsed = JSON.parse(item.issues);
+          rawIssues = Array.isArray(parsed) ? parsed : [item.issues];
+        } catch {
+          rawIssues = [];
+        }
+      }
+
       const enrichedIssues: any[] = [];
 
       for (const iss of rawIssues) {
@@ -202,7 +271,18 @@ export class SafetyInspectionPdfService {
       }
 
       // Photos
-      const photos = Array.isArray(item.photos) ? item.photos : [];
+      let photos: string[] = [];
+      if (Array.isArray(item.photos)) {
+        photos = item.photos;
+      } else if (typeof item.photos === 'string') {
+        try {
+          const parsed = JSON.parse(item.photos);
+          photos = Array.isArray(parsed) ? parsed : [item.photos];
+        } catch {
+          photos = item.photos.includes(',') ? item.photos.split(',').map((s: string) => s.trim()) : [item.photos];
+        }
+      }
+
       let photosHtml = '';
       if (photos.length > 0) {
         const photoTags = photos
@@ -237,8 +317,19 @@ export class SafetyInspectionPdfService {
           const immAction = obs?.immediateActionTaken || 'None recorded';
           const obsStatus = obs?.status || 'OPEN';
 
+          let obsPhotos: string[] = [];
+          if (Array.isArray(obs?.photos)) {
+            obsPhotos = obs.photos;
+          } else if (typeof obs?.photos === 'string') {
+            try {
+              const parsed = JSON.parse(obs.photos);
+              obsPhotos = Array.isArray(parsed) ? parsed : [obs.photos];
+            } catch {
+              obsPhotos = obs.photos.includes(',') ? obs.photos.split(',').map((s: string) => s.trim()) : [obs.photos];
+            }
+          }
+
           let obsPhotosHtml = '';
-          const obsPhotos = Array.isArray(obs?.photos) ? obs.photos : (typeof obs?.photos === 'string' ? JSON.parse(obs.photos || '[]') : []);
           if (obsPhotos.length > 0) {
             const pTags = obsPhotos.map((p: string) => {
               const src = this.resolveImageSrc(p);

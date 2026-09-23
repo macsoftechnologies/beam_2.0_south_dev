@@ -65,6 +65,21 @@ export class IncidentActionItem {
   @Column({ name: 'status_history', type: 'json', nullable: true })
   statusHistory?: ActionItemStatusHistoryLog[];
 
+  @Column({ name: 'attachment_url', type: 'text', nullable: true })
+  attachmentUrl?: string;
+
+  @Column({ name: 'attachment_name', type: 'varchar', length: 255, nullable: true })
+  attachmentName?: string;
+
+  @Column({ name: 'file_size', type: 'int', nullable: true })
+  fileSize?: number;
+
+  @Column({ name: 'file_type', type: 'varchar', length: 100, nullable: true })
+  fileType?: string;
+
+  @Column({ name: 'attachments', type: 'json', nullable: true })
+  attachments?: any;
+
   @CreateDateColumn({ name: 'created_time', type: 'datetime' })
   createdTime: Date;
 

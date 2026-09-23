@@ -8,14 +8,52 @@ import { join } from 'path';
 export class IncidentPdfService {
   private readonly logger = new Logger(IncidentPdfService.name);
 
-  async generate3In1Pdf(details: any, formType: string = 'all', options: { includeWitnesses?: boolean } = {}): Promise<Buffer> {
-    const includeWitnesses = options?.includeWitnesses === true || String(options?.includeWitnesses) === 'true';
-    const html = this.buildFullHtml(details, formType, { includeWitnesses });
+  private async launchBrowser(): Promise<any> {
+    const launchArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
+    try {
+      return await puppeteer.launch({
+        headless: true,
+        args: launchArgs,
+      });
+    } catch (e1) {
+      try {
+        return await puppeteer.launch({
+          channel: 'chrome' as any,
+          headless: true,
+          args: launchArgs,
+        });
+      } catch (e2) {
+        const candidatePaths = [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+          'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/chromium',
+        ];
+        for (const p of candidatePaths) {
+          if (existsSync(p)) {
+            try {
+              return await puppeteer.launch({
+                executablePath: p,
+                headless: true,
+                args: launchArgs,
+              });
+            } catch (e3) {}
+          }
+        }
+        throw e1;
+      }
+    }
+  }
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+  async generate3In1Pdf(details: any, formType: string = 'all', options: { includeWitnesses?: boolean; includeAttachments?: boolean } = {}): Promise<Buffer> {
+    const includeWitnesses = options?.includeWitnesses === true || String(options?.includeWitnesses) === 'true';
+    const includeAttachments = options?.includeAttachments === undefined ? true : (options?.includeAttachments === true || String(options?.includeAttachments) === 'true');
+    const html = this.buildFullHtml(details, formType, { includeWitnesses, includeAttachments });
+
+    const browser = await this.launchBrowser();
 
     let basePdfBuffer: Buffer;
     try {
@@ -35,8 +73,8 @@ export class IncidentPdfService {
       await browser.close();
     }
 
-    // Merge uploaded PDF attachments if Form 3 or All Forms is selected
-    if (formType === 'investigation' || formType === '3' || formType === 'all') {
+    // Merge uploaded PDF attachments if Form 3 or All Forms is selected and includeAttachments is true
+    if (includeAttachments && (formType === 'investigation' || formType === '3' || formType === 'all')) {
       try {
         const inv = details.investigation || details.incident_investigation || {};
         let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || {};
@@ -138,8 +176,9 @@ export class IncidentPdfService {
     return basePdfBuffer;
   }
 
-  private buildFullHtml(details: any, formType: string = 'all', options: { includeWitnesses?: boolean } = {}): string {
+  private buildFullHtml(details: any, formType: string = 'all', options: { includeWitnesses?: boolean; includeAttachments?: boolean } = {}): string {
     const includeWitnesses = options?.includeWitnesses === true || String(options?.includeWitnesses) === 'true';
+    const includeAttachments = options?.includeAttachments === undefined ? true : (options?.includeAttachments === true || String(options?.includeAttachments) === 'true');
     const inc = details.incident || details;
     const headsUp = details.headsUp || {};
     const initial = details.initialReport || {};
@@ -934,7 +973,7 @@ export class IncidentPdfService {
 
       return `
         <div style="border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; padding: 12px; margin-top: 6px; margin-bottom: 12px; page-break-inside: avoid; break-inside: avoid;">
-          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 6px;">3 Fishbone Analysis – Cause and Effect</div>
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 6px;">Fishbone Analysis – Cause and Effect</div>
           <svg viewBox="0 0 ${W} ${H}" style="display: block; width: 100%; height: auto;">
             <defs>
               <marker id="fbArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
@@ -1456,7 +1495,7 @@ export class IncidentPdfService {
             The following template must be completed within 2 hours of the incident occurrence.
           </div>
 
-          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">1 Project Details</div>
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">Project Details</div>
           <table class="nne-tbl">
             <tbody>
               <tr>
@@ -1494,7 +1533,7 @@ export class IncidentPdfService {
             </tbody>
           </table>
 
-          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">2 Incident Records</div>
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">Incident Records</div>
           <table class="nne-tbl">
             <thead>
               <tr class="dark-hdr">
@@ -1553,7 +1592,7 @@ export class IncidentPdfService {
           </table>
 
           ${isCat('Environmental') ? `
-          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin: 8px 0 4px 0;">4 Environmental Incident Details</div>
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin: 8px 0 4px 0;">Environmental Incident Details</div>
           <table class="nne-tbl">
             <tbody>
               <tr>
@@ -1588,7 +1627,7 @@ export class IncidentPdfService {
           </table>
           ` : ''}
 
-          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin: 8px 0 4px 0;">${isCat('Environmental') ? '5' : '4'} Immediate Actions Taken</div>
+          <div style="font-size: 11px; font-weight: 800; color: #0f172a; margin: 8px 0 4px 0;">Immediate Actions Taken</div>
           <table class="nne-tbl">
             <thead>
               <tr class="dark-hdr">
@@ -1639,9 +1678,9 @@ export class IncidentPdfService {
             The following template must be completed within 24 hours of the incident occurrence.
           </div>
 
-          <!-- 1. Project Details -->
+          <!-- Project Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">1. Project Details</div>
+            <div class="sec-title">Project Details</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -1677,9 +1716,9 @@ export class IncidentPdfService {
           </div>
 
           ${isEnv ? `
-          <!-- 2. Environmental Incident Details -->
+          <!-- Environmental Incident Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">2. Environmental Incident Details</div>
+            <div class="sec-title">Environmental Incident Details</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -1708,9 +1747,9 @@ export class IncidentPdfService {
             </table>
           </div>
         ` : isPropertyDamage ? `
-          <!-- 2. Property Damage Details -->
+          <!-- Property Damage Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">2. Property Damage & Asset Details</div>
+            <div class="sec-title">Property Damage & Asset Details</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -1737,9 +1776,9 @@ export class IncidentPdfService {
             </table>
           </div>
         ` : `
-          <!-- 2. Injured Person Details -->
+          <!-- Injured Person Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">2 Injured / Ill Person Details</div>
+            <div class="sec-title">Injured / Ill Person Details</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -1960,9 +1999,9 @@ export class IncidentPdfService {
             The following template must be completed as soon as possible and within 7 days of the incident occurrence.
           </div>
 
-          <!-- Section 1: Project Details & Incident Overview -->
+          <!-- Section: Project Details & Incident Overview -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">1 Project Details & Incident Overview</div>
+            <div class="sec-title">Project Details & Incident Overview</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -1993,9 +2032,9 @@ export class IncidentPdfService {
             </table>
           </div>
 
-          <!-- Section 1. Investigation Team -->
+          <!-- Section: Investigation Team -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">1. Investigation Team</div>
+            <div class="sec-title">Investigation Team</div>
             <table class="nne-tbl">
               <thead>
                 <tr class="dark-hdr">
@@ -2011,18 +2050,18 @@ export class IncidentPdfService {
             </table>
           </div>
 
-          <!-- Section 2. Investigation Details -->
+          <!-- Section: Investigation Details -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">2. Investigation Details</div>
+            <div class="sec-title">Investigation Details</div>
             <div style="font-size: 8.5px; color: #334155; line-height: 1.4; background: #fff; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 4px;">
               ${inv.investigationDetails || inv.investigation_details || description || 'Detailed investigation process completed covering timeline, tools, equipment inspection, interviews, and system review.'}
             </div>
           </div>
 
-          <!-- Section 3. Witness Statements -->
+          <!-- Section: Witness Statements -->
           ${includeWitnesses ? `
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">3. Witness Statements</div>
+            <div class="sec-title">Witness Statements</div>
             <table class="nne-tbl">
               <thead>
                 <tr class="dark-hdr">
@@ -2040,46 +2079,46 @@ export class IncidentPdfService {
           </div>
           ` : ''}
 
-          <!-- Section 4. Fishbone Analysis – Cause and Effect -->
+          <!-- Section: Fishbone Analysis – Cause and Effect -->
           ${renderFishboneSvg()}
 
-          <!-- Section 5. Incident / Effect & 7. Problem Statement -->
+          <!-- Section: Incident / Effect & Problem Statement -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
               <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">5. Incident / Effect</div>
+                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Incident / Effect</div>
                 <div style="font-size: 8px; color: #334155; line-height: 1.4;">${inv.effect || inv.effectDescription || title || 'Incident outcome analyzed.'}</div>
               </div>
               <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">7. Problem Statement</div>
+                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Problem Statement</div>
                 <div style="font-size: 8px; color: #334155; line-height: 1.4;">${inv.problemStatement || description || 'Problem statement under investigation.'}</div>
               </div>
             </div>
           </div>
 
-          <!-- Section 6. 5-Whys Root Cause Analysis -->
+          <!-- Section: 5-Whys Root Cause Analysis -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">6. 5-Whys Root Cause Analysis</div>
+            <div class="sec-title">5-Whys Root Cause Analysis</div>
             ${renderFiveWhysRows()}
           </div>
 
-          <!-- Section 9. Identified Root Causes & 10. Contributing Factors -->
+          <!-- Section: Identified Root Causes & Contributing Factors -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
               <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-                <div style="font-size: 8.5px; font-weight: 700; color: #dc2626; margin-bottom: 4px; border-bottom: 1px dashed #fee2e2; padding-bottom: 2px;">9. Identified Root Causes</div>
+                <div style="font-size: 8.5px; font-weight: 700; color: #dc2626; margin-bottom: 4px; border-bottom: 1px dashed #fee2e2; padding-bottom: 2px;">Identified Root Causes</div>
                 ${renderRootCausesRows()}
               </div>
               <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 4px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">10. Contributing Factors</div>
+                <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 4px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Contributing Factors</div>
                 ${renderFactorsRows()}
               </div>
             </div>
           </div>
 
-          <!-- Section 11. Corrective & Preventive Actions -->
+          <!-- Section: Corrective & Preventive Actions -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">11. Corrective & Preventive Actions</div>
+            <div class="sec-title">Corrective & Preventive Actions</div>
             <table class="nne-tbl">
               <thead>
                 <tr class="dark-hdr">
@@ -2095,16 +2134,16 @@ export class IncidentPdfService {
             </table>
           </div>
 
-          <!-- Section 12. Severity Assessment -->
+          <!-- Section: Severity Assessment -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">12. Severity Assessment</div>
+            <div class="sec-title">Severity Assessment</div>
             ${renderSeverityAssessment()}
           </div>
 
         ${isEnv ? `
-          <!-- Section 12b. Environmental Remediation & Waste Management -->
+          <!-- Section: Environmental Remediation & Waste Management -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">12. Environmental Remediation & Waste Management</div>
+            <div class="sec-title">Environmental Remediation & Waste Management</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -2121,9 +2160,9 @@ export class IncidentPdfService {
             </table>
           </div>
         ` : isPropertyDamage ? `
-          <!-- Section 12b. Property Damage & Loss Assessment -->
+          <!-- Section: Property Damage & Loss Assessment -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">12. Property Damage & Loss Assessment</div>
+            <div class="sec-title">Property Damage & Loss Assessment</div>
             <table class="nne-tbl">
               <tbody>
                 <tr>
@@ -2141,24 +2180,24 @@ export class IncidentPdfService {
           </div>
         ` : ''}
 
-          <!-- Section 13. Lessons Learned -->
+          <!-- Section: Lessons Learned -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">13. Lessons Learned</div>
+            <div class="sec-title">Lessons Learned</div>
             ${renderLessonsPrevention()}
           </div>
 
-          <!-- Section 15. Mandatory Attachments -->
+          <!-- Section: Mandatory Attachments -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
-            <div class="sec-title">15. Mandatory Attachments Checklist</div>
+            <div class="sec-title">Mandatory Attachments Checklist</div>
             ${renderMandatoryAttachmentsTable()}
           </div>
 
-          <!-- Section 17. Signatures & Sign-Off -->
+          <!-- Section: Signatures & Sign-Off -->
           <div class="pdf-section" style="page-break-inside: avoid; break-inside: avoid;">
             <table class="nne-tbl">
               <thead>
                 <tr class="dark-hdr">
-                  <th colspan="4">17. Signatures & Distribution Sign-Off</th>
+                  <th colspan="4">Signatures & Distribution Sign-Off</th>
                 </tr>
               </thead>
               <tbody>
@@ -2184,6 +2223,7 @@ export class IncidentPdfService {
         </div>
 
         ${(() => {
+          if (!includeAttachments) return '';
           let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || {};
           if (typeof att === 'string') {
             try { att = JSON.parse(att); } catch (e) {}
@@ -2241,7 +2281,7 @@ export class IncidentPdfService {
                   ${renderNneHeader(`Mandatory Attachment Appendix: ${img.label}`)}
                   <div class="pdf-section" style="margin-top: 10px;">
                     <div class="sec-title" style="display: flex; justify-content: space-between;">
-                      <span>Appendix ${idx + 1}: ${img.label}</span>
+                      <span>Appendix: ${img.label}</span>
                       <span style="font-weight: normal; font-size: 9px; color: #64748b;">${img.fileName}</span>
                     </div>
                     <div style="text-align: center; margin: 16px auto; padding: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">

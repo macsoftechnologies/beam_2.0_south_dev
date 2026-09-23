@@ -242,6 +242,7 @@ export class IncidentsController {
     @Query('form') form: string,
     @Query('stage') stage: string,
     @Query('includeWitnesses') includeWitnessesQuery: string,
+    @Query('includeAttachments') includeAttachmentsQuery: string,
     @Res() res: Response,
   ) {
     let details: any;
@@ -281,7 +282,8 @@ export class IncidentsController {
 
     const requestedForm = form || stage || 'all';
     const includeWitnesses = includeWitnessesQuery === 'true' || includeWitnessesQuery === '1';
-    const pdfBuffer = await this.incidentPdfService.generate3In1Pdf(details, requestedForm, { includeWitnesses });
+    const includeAttachments = includeAttachmentsQuery === undefined ? true : (includeAttachmentsQuery === 'true' || includeAttachmentsQuery === '1');
+    const pdfBuffer = await this.incidentPdfService.generate3In1Pdf(details, requestedForm, { includeWitnesses, includeAttachments });
     const caseName = details.incident?.caseNumber || details.incident?.id || id;
     const formSuffix = requestedForm === 'headsUp' || requestedForm === '1' ? '_Form1_HeadsUp'
       : requestedForm === 'initialReport' || requestedForm === '2' ? '_Form2_InitialReport'

@@ -193,6 +193,11 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`edit_history\` JSON NULL`,
         `ALTER TABLE \`incident_action_items\` ADD COLUMN \`updated_by\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incident_action_items\` ADD COLUMN \`status_history\` JSON NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`attachment_url\` TEXT NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`attachment_name\` VARCHAR(255) NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`file_size\` INT NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`file_type\` VARCHAR(100) NULL`,
+        `ALTER TABLE \`incident_action_items\` ADD COLUMN \`attachments\` JSON NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
         `ALTER TABLE \`incident_headsup\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
@@ -1261,6 +1266,11 @@ export class IncidentsService implements OnModuleInit {
     const targetDateVal = dto.targetDate || dto.date;
     const statusVal = dto.status || ActionItemStatus.PENDING;
     const userVal = dto.createdBy || dto.updatedBy || 'System';
+    const attachmentUrlVal = dto.attachmentUrl || dto.fileUrl || (dto.attachments && dto.attachments[0]?.url) || (dto.attachments && dto.attachments[0]?.fileUrl);
+    const attachmentNameVal = dto.attachmentName || dto.fileName || (dto.attachments && dto.attachments[0]?.name) || (dto.attachments && dto.attachments[0]?.fileName);
+    const fileSizeVal = dto.fileSize || (dto.attachments && dto.attachments[0]?.size) || (dto.attachments && dto.attachments[0]?.fileSize);
+    const fileTypeVal = dto.fileType || (dto.attachments && dto.attachments[0]?.type) || (dto.attachments && dto.attachments[0]?.fileType);
+
     const actionItem = this.actionItemRepo.create({
       incidentId,
       actionType: dto.actionType || ActionItemType.IMMEDIATE,
@@ -1270,6 +1280,11 @@ export class IncidentsService implements OnModuleInit {
       timeImplemented: dto.timeImplemented,
       status: statusVal,
       updatedBy: userVal,
+      attachmentUrl: attachmentUrlVal,
+      attachmentName: attachmentNameVal,
+      fileSize: fileSizeVal,
+      fileType: fileTypeVal,
+      attachments: dto.attachments || (attachmentUrlVal ? [{ url: attachmentUrlVal, name: attachmentNameVal, size: fileSizeVal, type: fileTypeVal }] : null),
       statusHistory: [
         {
           status: statusVal,
@@ -1316,6 +1331,26 @@ export class IncidentsService implements OnModuleInit {
     if (dto.timeImplemented !== undefined) actionItem.timeImplemented = dto.timeImplemented;
     if (dto.status !== undefined) actionItem.status = dto.status;
     if (updaterName) actionItem.updatedBy = updaterName;
+
+    if (dto.attachmentUrl !== undefined || dto.fileUrl !== undefined) {
+      actionItem.attachmentUrl = dto.attachmentUrl || dto.fileUrl || undefined;
+    }
+    if (dto.attachmentName !== undefined || dto.fileName !== undefined) {
+      actionItem.attachmentName = dto.attachmentName || dto.fileName || undefined;
+    }
+    if (dto.fileSize !== undefined) {
+      actionItem.fileSize = dto.fileSize || undefined;
+    }
+    if (dto.fileType !== undefined) {
+      actionItem.fileType = dto.fileType || undefined;
+    }
+    if (dto.attachments !== undefined) {
+      actionItem.attachments = dto.attachments;
+    } else if (dto.attachmentUrl !== undefined || dto.fileUrl !== undefined) {
+      const url = dto.attachmentUrl || dto.fileUrl;
+      const name = dto.attachmentName || dto.fileName;
+      actionItem.attachments = url ? [{ url, name, size: dto.fileSize, type: dto.fileType }] : undefined;
+    }
 
     // Record status change or update in audit history
     if (dto.status !== undefined || updaterName !== undefined) {

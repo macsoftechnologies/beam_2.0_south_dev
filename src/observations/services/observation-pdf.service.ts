@@ -9,6 +9,64 @@ import { ObservationActionLog } from '../entities/observation-action-log.entity'
 export class ObservationPdfService {
   private readonly logger = new Logger(ObservationPdfService.name);
 
+  private async launchBrowser(): Promise<any> {
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ];
+
+    try {
+      return await puppeteer.launch({
+        headless: true,
+        args: launchArgs,
+      });
+    } catch (e1) {
+      try {
+        return await puppeteer.launch({
+          channel: 'chrome' as any,
+          headless: true,
+          args: launchArgs,
+        });
+      } catch (e2) {
+        try {
+          return await puppeteer.launch({
+            channel: 'msedge' as any,
+            headless: true,
+            args: launchArgs,
+          });
+        } catch (e3) {
+          const candidatePaths = [
+            process.env.PUPPETEER_EXECUTABLE_PATH,
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+            'C:\\Users\\' + (process.env.USERNAME || '') + '\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium',
+          ].filter(Boolean) as string[];
+
+          for (const p of candidatePaths) {
+            if (existsSync(p)) {
+              try {
+                return await puppeteer.launch({
+                  executablePath: p,
+                  headless: true,
+                  args: launchArgs,
+                });
+              } catch (e4) {}
+            }
+          }
+          throw e1;
+        }
+      }
+    }
+  }
+
   /**
    * Generates official printable PDF for a Safety Observation record,
    * matching corporate NNE standards with details, findings, resolutions, signatures, and action timeline.
@@ -16,10 +74,7 @@ export class ObservationPdfService {
   async generateObservationPdf(observation: Observation, history: ObservationActionLog[] = []): Promise<Buffer> {
     const html = await this.buildHtml(observation, history);
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    const browser = await this.launchBrowser();
 
     try {
       const page = await browser.newPage();
@@ -255,9 +310,9 @@ export class ObservationPdfService {
     </tr>
   </table>
 
-  <!-- 1. General & Classification Details -->
+  <!-- General & Classification Details -->
   <div class="section-card">
-    <div class="section-header">1 | Observation Classification &amp; Location</div>
+    <div class="section-header">Observation Classification &amp; Location</div>
     <table class="data-table">
       <tr>
         <td class="label">Subject / Title</td>
@@ -294,9 +349,9 @@ export class ObservationPdfService {
     </table>
   </div>
 
-  <!-- 2. Observation Description & Initial Finding -->
+  <!-- Observation Description & Initial Finding -->
   <div class="section-card">
-    <div class="section-header">2 | Finding Description &amp; Immediate Action</div>
+    <div class="section-header">Finding Description &amp; Immediate Action</div>
     <div class="section-body">
       <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Detailed Description / Observations:</div>
       <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 7px 10px; font-size: 10.5px; white-space: pre-wrap; margin-bottom: 8px;">
@@ -317,10 +372,10 @@ export class ObservationPdfService {
     </div>
   </div>
 
-  <!-- 3. Contractor Resolution Details (if available) -->
+  <!-- Contractor Resolution Details (if available) -->
   ${(obs.resolutionNotes || (resolvedResolutionPhotos && resolvedResolutionPhotos.length > 0)) ? `
   <div class="section-card">
-    <div class="section-header">3 | Contractor Corrective Action &amp; Resolution</div>
+    <div class="section-header">Contractor Corrective Action &amp; Resolution</div>
     <div class="section-body">
       <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Resolution Notes &amp; Actions Implemented:</div>
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 7px 10px; font-size: 10.5px; white-space: pre-wrap; margin-bottom: 8px;">
@@ -335,9 +390,9 @@ export class ObservationPdfService {
     </div>
   </div>` : ''}
 
-  <!-- 4. Sign-off & Closure Verification -->
+  <!-- Sign-off & Closure Verification -->
   <div class="section-card">
-    <div class="section-header">4 | HSE Department Sign-off &amp; Final Closure</div>
+    <div class="section-header">HSE Department Sign-off &amp; Final Closure</div>
     <table class="data-table">
       <tr>
         <td class="label">Closed By</td>
@@ -359,10 +414,10 @@ export class ObservationPdfService {
     </table>
   </div>
 
-  <!-- 5. Complete Audit Trail History -->
+  <!-- Complete Audit Trail History -->
   ${resolvedHistory && resolvedHistory.length > 0 ? `
   <div class="section-card">
-    <div class="section-header">5 | Action History &amp; Audit Trail</div>
+    <div class="section-header">Action History &amp; Audit Trail</div>
     <table class="history-table">
       <thead>
         <tr>

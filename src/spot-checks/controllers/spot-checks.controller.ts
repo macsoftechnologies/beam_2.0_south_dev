@@ -64,10 +64,15 @@ export class SpotChecksController {
    * GET /spot-checks/:id/export-pdf
    */
   @Get(':id/export-pdf')
-  async exportPdf(@Param('id') id: string, @Res() res: Response) {
+  async exportPdf(
+    @Param('id') id: string,
+    @Query('includeAttachments') includeAttachmentsQuery: string,
+    @Res() res: Response,
+  ) {
     const numericId = parseInt(id, 10);
     const spotCheck = await this.scService.findOne(numericId);
-    const pdfBuffer = await this.scPdfService.generateSpotCheckPdf(spotCheck);
+    const includeAttachments = includeAttachmentsQuery === undefined ? true : (includeAttachmentsQuery === 'true' || includeAttachmentsQuery === '1');
+    const pdfBuffer = await this.scPdfService.generateSpotCheckPdf(spotCheck, includeAttachments);
     const ref = spotCheck.spotCheckRef || `SC-${spotCheck.id}`;
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -80,10 +85,15 @@ export class SpotChecksController {
    * GET /spot-checks/:id/download-pdf
    */
   @Get(':id/download-pdf')
-  async downloadPdf(@Param('id') id: string, @Res() res: Response) {
+  async downloadPdf(
+    @Param('id') id: string,
+    @Query('includeAttachments') includeAttachmentsQuery: string,
+    @Res() res: Response,
+  ) {
     const numericId = parseInt(id, 10);
     const spotCheck = await this.scService.findOne(numericId);
-    const pdfBuffer = await this.scPdfService.generateSpotCheckPdf(spotCheck);
+    const includeAttachments = includeAttachmentsQuery === undefined ? true : (includeAttachmentsQuery === 'true' || includeAttachmentsQuery === '1');
+    const pdfBuffer = await this.scPdfService.generateSpotCheckPdf(spotCheck, includeAttachments);
     const ref = spotCheck.spotCheckRef || `SC-${spotCheck.id}`;
 
     res.setHeader('Content-Type', 'application/pdf');
