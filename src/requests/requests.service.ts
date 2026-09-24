@@ -3167,6 +3167,30 @@ export class RequestsService implements OnModuleInit {
           qb.andWhere(`(${activeHraConds.join(' OR ')})`);
         }
 
+        if (dto.electrical_works) {
+          const eleIds = String(dto.electrical_works).split(',').map((s) => s.trim()).filter(Boolean);
+          if (eleIds.length > 0) {
+            const eleConds = eleIds.map((_, i) => `FIND_IN_SET(:eleWorkVal${i}, REPLACE(extraMisc.electrical_works, ' ', '')) > 0`).join(' OR ');
+            const params: Record<string, string> = {};
+            eleIds.forEach((id, i) => {
+              params[`eleWorkVal${i}`] = id;
+            });
+            qb.andWhere(`(${eleConds})`, params);
+          }
+        }
+
+        if (dto.mechanical_works) {
+          const mechIds = String(dto.mechanical_works).split(',').map((s) => s.trim()).filter(Boolean);
+          if (mechIds.length > 0) {
+            const mechConds = mechIds.map((_, i) => `FIND_IN_SET(:mechWorkVal${i}, REPLACE(extraMisc.mechanical_works, ' ', '')) > 0`).join(' OR ');
+            const params: Record<string, string> = {};
+            mechIds.forEach((id, i) => {
+              params[`mechWorkVal${i}`] = id;
+            });
+            qb.andWhere(`(${mechConds})`, params);
+          }
+        }
+
         // PPE Equipment Filters
         if (dto.specific_gloves !== undefined && dto.specific_gloves !== null && Number(dto.specific_gloves) === 1) {
           qb.andWhere('ppe.specific_gloves = 1');

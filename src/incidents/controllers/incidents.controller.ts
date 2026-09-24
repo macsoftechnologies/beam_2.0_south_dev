@@ -29,7 +29,7 @@ export class IncidentsController {
     if (!files || files.length === 0) {
       throw new BadRequestException('No image files were provided for upload.');
     }
-    const urls = files.map((file) => `/uploads/incidents/${file.filename}`);
+    const urls = files.map((file) => `/incidents/${file.filename}`);
     return {
       statusCode: 200,
       message: `${files.length} image(s) uploaded successfully`,
@@ -47,7 +47,7 @@ export class IncidentsController {
     if (!file) {
       throw new BadRequestException('No image file was provided for upload.');
     }
-    const url = `/uploads/incidents/${file.filename}`;
+    const url = `/incidents/${file.filename}`;
     return {
       statusCode: 200,
       message: 'Image uploaded successfully',
@@ -68,7 +68,7 @@ export class IncidentsController {
     if (!file) {
       throw new BadRequestException('No attachment file was provided for upload.');
     }
-    const url = `/uploads/incidents/${file.filename}`;
+    const url = `/incidents/${file.filename}`;
     return {
       statusCode: 200,
       message: 'Attachment uploaded successfully',
@@ -118,11 +118,27 @@ export class IncidentsController {
     @Body() dto: CreateInitialReportDto,
     @UploadedFiles() files?: any[],
   ) {
-    let photosList: string[] = dto.photos || [];
+    let photosList: string[] = [];
+
+    if (dto.photos) {
+      const existing = Array.isArray(dto.photos) ? dto.photos : [dto.photos];
+      photosList.push(...existing);
+    }
+    if ((dto as any).existingPhotos) {
+      try {
+        const ep = typeof (dto as any).existingPhotos === 'string'
+          ? JSON.parse((dto as any).existingPhotos)
+          : (dto as any).existingPhotos;
+        if (Array.isArray(ep)) photosList.push(...ep);
+        else photosList.push(ep);
+      } catch {
+        photosList.push((dto as any).existingPhotos);
+      }
+    }
 
     // Append URLs of any direct file uploads in this request
     if (files && files.length > 0) {
-      const uploadedUrls = files.map((file) => `/uploads/incidents/${file.filename}`);
+      const uploadedUrls = files.map((file) => `/incidents/${file.filename}`);
       photosList = [...photosList, ...uploadedUrls];
     }
 

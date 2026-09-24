@@ -314,6 +314,8 @@ export class IncidentPdfService {
           sigFilename = cleanPath.split('/signatures/').pop() || cleanPath;
         } else if (cleanPath.includes('/uploads/incidents/')) {
           sigFilename = cleanPath.split('/uploads/incidents/').pop() || cleanPath;
+        } else if (cleanPath.includes('/incidents/')) {
+          sigFilename = cleanPath.split('/incidents/').pop() || cleanPath;
         } else if (cleanPath.includes('/uploads/')) {
           sigFilename = cleanPath.split('/uploads/').pop() || cleanPath;
         }
@@ -343,7 +345,7 @@ export class IncidentPdfService {
         // Live server public fallback URL if file on disk was not directly matched
         if (sigFilename && (sigFilename.endsWith('.png') || sigFilename.endsWith('.jpg') || sigFilename.endsWith('.jpeg') || sigFilename.startsWith('sig_'))) {
           if (cleanPath.includes('incidents')) {
-            return `https://api.beam.safesiteworks.com/development/m3south/uploads/incidents/${sigFilename}`;
+            return `https://api.beam.safesiteworks.com/development/m3south/incidents/${sigFilename}`;
           }
           return `https://api.beam.safesiteworks.com/development/m3south/signatures/${sigFilename}`;
         }
