@@ -30,6 +30,10 @@ export class UpdateInvestigationDto {
   @IsOptional()
   mandatoryAttachments?: MandatoryAttachmentChecklist;
 
+  @IsArray()
+  @IsOptional()
+  photos?: string[];
+
   @IsOptional()
   environmentalDetails?: any;
 

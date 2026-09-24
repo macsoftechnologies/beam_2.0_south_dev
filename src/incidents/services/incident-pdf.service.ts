@@ -2271,6 +2271,22 @@ export class IncidentPdfService {
             }
           });
 
+          // Also include Section 13 Photos from the incident location
+          try {
+            const invPhotosList = Array.isArray(inv.photos)
+              ? inv.photos
+              : (typeof inv.photos === 'string' ? JSON.parse(inv.photos || '[]') : []);
+            if (Array.isArray(invPhotosList)) {
+              invPhotosList.forEach((pUrl: string, pIdx: number) => {
+                checkAndAddImg(`Incident Photo ${pIdx + 1}`, {
+                  fileUrl: pUrl,
+                  fileName: `Incident_Photo_${pIdx + 1}.jpg`,
+                  label: `Incident Location Photo ${pIdx + 1}`
+                });
+              });
+            }
+          } catch (e) {}
+
           if (imgItems.length === 0) return '';
 
           return imgItems.map((img, idx) => {

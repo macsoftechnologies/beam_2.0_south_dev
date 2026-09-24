@@ -86,6 +86,9 @@ export class IncidentInvestigation {
   @Column({ name: 'mandatory_attachments', type: 'json', nullable: true })
   mandatoryAttachments?: MandatoryAttachmentChecklist;
 
+  @Column({ name: 'photos', type: 'json', nullable: true })
+  photos?: string[];
+
   @Column({ name: 'environmental_details', type: 'json', nullable: true })
   environmentalDetails?: any;
 

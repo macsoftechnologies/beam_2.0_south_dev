@@ -11,7 +11,7 @@ import { CreateInitialReportDto } from '../dtos/create-initial-report.dto';
 import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
 import { CreateActionItemDto, UpdateActionItemDto } from '../dtos/action-item.dto';
 
-import { saveBase64Signature } from '../utils/signature-storage.util';
+import { saveBase64Signature, saveBase64IncidentPhoto } from '../utils/signature-storage.util';
 import { NotificationsService } from '../../notifications/notifications.service';
 
 @Injectable()
@@ -188,6 +188,7 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`preventative_measures\` TEXT NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`pre_severity\` INT NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`post_severity\` INT NULL`,
+        `ALTER TABLE \`incident_investigations\` ADD COLUMN \`photos\` JSON NULL`,
         `ALTER TABLE \`incident_headsup\` ADD COLUMN \`edit_history\` JSON NULL`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`edit_history\` JSON NULL`,
         `ALTER TABLE \`incident_investigations\` ADD COLUMN \`edit_history\` JSON NULL`,
@@ -811,6 +812,17 @@ export class IncidentsService implements OnModuleInit {
     }
     if (dto.postSeverity !== undefined || dto.severityAfter !== undefined) {
       investigation.postSeverity = dto.postSeverity !== undefined ? Number(dto.postSeverity) : Number(dto.severityAfter);
+    }
+    if (dto.photos !== undefined) {
+      const incomingPhotos = Array.isArray(dto.photos) ? dto.photos : [dto.photos];
+      investigation.photos = incomingPhotos
+        .map((p: any, idx: number) => {
+          if (typeof p === 'string' && p.trim()) {
+            return saveBase64IncidentPhoto(p, `inv_photo_${incidentId}_${idx + 1}`);
+          }
+          return p;
+        })
+        .filter(Boolean);
     }
 
     const savedInvestigation = await this.investigationRepo.save(investigation);
