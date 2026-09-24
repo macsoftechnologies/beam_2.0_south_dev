@@ -464,6 +464,8 @@ export class NotificationsService {
         );
 
         // 2. Dispatch Email & SMS when observation is ESCALATED
+        // NOTE: Temporarily disabled for observation escalations (in-app notifications only). Code preserved for future re-enablement.
+        /*
         if (actionType === 'ESCALATED') {
           // SMS Dispatch
           if (contact?.phone) {
@@ -512,6 +514,7 @@ export class NotificationsService {
             });
           }
         }
+        */
       }
     } catch (error) {
       console.error('[Notification] Error in triggerObservationNotification:', error);
@@ -1184,6 +1187,9 @@ export class NotificationsService {
           );
         }
 
+        // SMS & Email Dispatch for incident submission
+        // NOTE: Temporarily disabled for Incident Module (in-app notifications only). Code preserved for future re-enablement.
+        /*
         // 2. SMS Dispatch (if enabled)
         if (rx.isSmsEnabled && rx.phone) {
           await this.smsService.sendSms(rx.phone, message);
@@ -1211,6 +1217,7 @@ export class NotificationsService {
             `,
           });
         }
+        */
       }
     } catch (err) {
       console.error('[Notification] Error in triggerIncidentSubmissionNotification:', err);
@@ -1295,6 +1302,9 @@ export class NotificationsService {
           );
         }
 
+        // SMS & Email Dispatch for incident approval / revision / closure
+        // NOTE: Temporarily disabled for Incident Module (in-app notifications only). Code preserved for future re-enablement.
+        /*
         // 2. SMS Dispatch
         if (contractorUser.phone) {
           await this.smsService.sendSms(contractorUser.phone, message);
@@ -1328,6 +1338,7 @@ export class NotificationsService {
             `,
           });
         }
+        */
       }
     } catch (err) {
       console.error('[Notification] Error in triggerIncidentApprovalNotification:', err);
