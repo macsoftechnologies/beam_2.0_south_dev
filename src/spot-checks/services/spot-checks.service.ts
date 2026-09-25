@@ -342,11 +342,61 @@ export class SpotChecksService implements OnModuleInit {
     complianceRate: number;
     highRiskCount: number;
     recentTrend: { label: string; count: number }[];
+    contractorStats: { name: string; count: number; compliant: number; nonCompliant: number }[];
+    buildingStats: { name: string; count: number; compliant: number; nonCompliant: number }[];
   }> {
     const totalChecks = await this.spotCheckRepo.count();
     const compliantCount = await this.spotCheckRepo.count({ where: { chk3_2: 'Yes' } });
     const nonCompliantCount = await this.spotCheckRepo.count({ where: { chk3_2: 'No' } });
     const complianceRate = totalChecks > 0 ? Math.round((compliantCount / totalChecks) * 100) : 100;
+
+    // Contractor stats
+    let contractorStats: { name: string; count: number; compliant: number; nonCompliant: number }[] = [];
+    try {
+      const contractorRaw = await this.spotCheckRepo
+        .createQueryBuilder('sc')
+        .select('sc.company_involved', 'name')
+        .addSelect('COUNT(*)', 'count')
+        .addSelect("SUM(CASE WHEN sc.chk3_2 = 'Yes' THEN 1 ELSE 0 END)", 'compliant')
+        .addSelect("SUM(CASE WHEN sc.chk3_2 = 'No' THEN 1 ELSE 0 END)", 'nonCompliant')
+        .where('sc.company_involved IS NOT NULL AND sc.company_involved != :empty', { empty: '' })
+        .groupBy('sc.company_involved')
+        .orderBy('count', 'DESC')
+        .getRawMany();
+
+      contractorStats = contractorRaw.map((r: any) => ({
+        name: r.name,
+        count: Number(r.count || 0),
+        compliant: Number(r.compliant || 0),
+        nonCompliant: Number(r.nonCompliant || 0),
+      }));
+    } catch (e) {
+      this.logger.warn(`Failed to aggregate contractor stats: ${e}`);
+    }
+
+    // Building stats
+    let buildingStats: { name: string; count: number; compliant: number; nonCompliant: number }[] = [];
+    try {
+      const buildingRaw = await this.spotCheckRepo
+        .createQueryBuilder('sc')
+        .select('COALESCE(sc.building_name, sc.location)', 'name')
+        .addSelect('COUNT(*)', 'count')
+        .addSelect("SUM(CASE WHEN sc.chk3_2 = 'Yes' THEN 1 ELSE 0 END)", 'compliant')
+        .addSelect("SUM(CASE WHEN sc.chk3_2 = 'No' THEN 1 ELSE 0 END)", 'nonCompliant')
+        .where('(sc.building_name IS NOT NULL AND sc.building_name != :empty) OR (sc.location IS NOT NULL AND sc.location != :empty)', { empty: '' })
+        .groupBy('COALESCE(sc.building_name, sc.location)')
+        .orderBy('count', 'DESC')
+        .getRawMany();
+
+      buildingStats = buildingRaw.map((r: any) => ({
+        name: r.name || 'Unspecified Building',
+        count: Number(r.count || 0),
+        compliant: Number(r.compliant || 0),
+        nonCompliant: Number(r.nonCompliant || 0),
+      }));
+    } catch (e) {
+      this.logger.warn(`Failed to aggregate building stats: ${e}`);
+    }
 
     // Last 6 weeks trend
     const recentTrend: { label: string; count: number }[] = [];
@@ -365,6 +415,8 @@ export class SpotChecksService implements OnModuleInit {
       complianceRate,
       highRiskCount: 0,
       recentTrend,
+      contractorStats,
+      buildingStats,
     };
   }
 }

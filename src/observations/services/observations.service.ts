@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { Repository, Like, Brackets } from 'typeorm';
 import { Observation, ObservationType, NatureOfFinding, ObservationRiskLevel, ObservationStatus } from '../entities/observation.entity';
 import { ObservationActionLog, ObservationActionType } from '../entities/observation-action-log.entity';
 import { CreateObservationDto } from '../dtos/create-observation.dto';
@@ -661,7 +661,19 @@ export class ObservationsService implements OnModuleInit {
         );
       }
     } else if (query.contractor) {
-      qb.andWhere('obs.assignedContractorName LIKE :contractor', { contractor: `%${query.contractor}%` });
+      const cList = query.contractor.split(',').map((c: string) => c.trim()).filter(Boolean);
+      if (cList.length === 1) {
+        qb.andWhere('obs.assignedContractorName LIKE :contractor', { contractor: `%${cList[0]}%` });
+      } else if (cList.length > 1) {
+        qb.andWhere(
+          new Brackets((subQb) => {
+            cList.forEach((c: string, i: number) => {
+              if (i === 0) subQb.where(`obs.assignedContractorName LIKE :c_${i}`, { [`c_${i}`]: `%${c}%` });
+              else subQb.orWhere(`obs.assignedContractorName LIKE :c_${i}`, { [`c_${i}`]: `%${c}%` });
+            });
+          }),
+        );
+      }
     }
 
     if (query.status) {
@@ -677,7 +689,19 @@ export class ObservationsService implements OnModuleInit {
       qb.andWhere('obs.safetyCategory LIKE :category', { category: `%${query.category}%` });
     }
     if (query.building) {
-      qb.andWhere('obs.buildingName LIKE :building', { building: `%${query.building}%` });
+      const bList = query.building.split(',').map((b: string) => b.trim()).filter(Boolean);
+      if (bList.length === 1) {
+        qb.andWhere('obs.buildingName LIKE :building', { building: `%${bList[0]}%` });
+      } else if (bList.length > 1) {
+        qb.andWhere(
+          new Brackets((subQb) => {
+            bList.forEach((b: string, i: number) => {
+              if (i === 0) subQb.where(`obs.buildingName LIKE :b_${i}`, { [`b_${i}`]: `%${b}%` });
+              else subQb.orWhere(`obs.buildingName LIKE :b_${i}`, { [`b_${i}`]: `%${b}%` });
+            });
+          }),
+        );
+      }
     }
     if (query.search) {
       const searchLike = `%${query.search}%`;
@@ -689,7 +713,45 @@ export class ObservationsService implements OnModuleInit {
 
     qb.orderBy('obs.id', 'DESC');
 
-    const total = await qb.getCount();
+    // Calculate overall statistics across the entire matching dataset (not paginated)
+    let stats = {
+      total: 0,
+      positive: 0,
+      needsAttention: 0,
+      positiveRatio: 0,
+      activeAssigned: 0,
+    };
+
+    try {
+      const statsRaw = await qb
+        .clone()
+        .orderBy()
+        .select([
+          'COUNT(obs.id) as total',
+          `SUM(CASE WHEN obs.observationType = '${ObservationType.POSITIVE}' THEN 1 ELSE 0 END) as positive`,
+          `SUM(CASE WHEN obs.observationType = '${ObservationType.NEEDS_ATTENTION}' THEN 1 ELSE 0 END) as needsAttention`,
+          `SUM(CASE WHEN obs.status IN ('${ObservationStatus.ASSIGNED}', '${ObservationStatus.ACCEPTED}') THEN 1 ELSE 0 END) as activeAssigned`,
+        ])
+        .getRawOne();
+
+      const totalCount = parseInt(statsRaw?.total || '0', 10);
+      const positiveCount = parseInt(statsRaw?.positive || '0', 10);
+      const needsAttentionCount = parseInt(statsRaw?.needsAttention || '0', 10);
+      const activeAssignedCount = parseInt(statsRaw?.activeAssigned || '0', 10);
+      const positiveRatio = totalCount > 0 ? Math.round((positiveCount / totalCount) * 100) : 0;
+
+      stats = {
+        total: totalCount,
+        positive: positiveCount,
+        needsAttention: needsAttentionCount,
+        positiveRatio,
+        activeAssigned: activeAssignedCount,
+      };
+    } catch (e) {
+      this.logger.warn(`Could not compute overall stats in findAll: ${e.message}`);
+    }
+
+    const total = stats.total || (await qb.getCount());
 
     if (query.page && query.limit) {
       const page = Math.max(1, query.page);
@@ -702,6 +764,7 @@ export class ObservationsService implements OnModuleInit {
         page,
         limit,
         totalPages: Math.ceil(total / limit),
+        stats,
       };
     }
 
@@ -712,6 +775,7 @@ export class ObservationsService implements OnModuleInit {
       page: 1,
       limit: total || 10,
       totalPages: 1,
+      stats,
     };
   }
 
@@ -774,11 +838,35 @@ export class ObservationsService implements OnModuleInit {
         );
       }
     } else if (filters.contractor) {
-      qb.andWhere('obs.assignedContractorName LIKE :contractor', { contractor: `%${filters.contractor}%` });
+      const cList = filters.contractor.split(',').map((c: string) => c.trim()).filter(Boolean);
+      if (cList.length === 1) {
+        qb.andWhere('obs.assignedContractorName LIKE :contractor', { contractor: `%${cList[0]}%` });
+      } else if (cList.length > 1) {
+        qb.andWhere(
+          new Brackets((subQb) => {
+            cList.forEach((c: string, i: number) => {
+              if (i === 0) subQb.where(`obs.assignedContractorName LIKE :c_${i}`, { [`c_${i}`]: `%${c}%` });
+              else subQb.orWhere(`obs.assignedContractorName LIKE :c_${i}`, { [`c_${i}`]: `%${c}%` });
+            });
+          }),
+        );
+      }
     }
 
     if (filters.building) {
-      qb.andWhere('obs.buildingName LIKE :building', { building: `%${filters.building}%` });
+      const bList = filters.building.split(',').map((b: string) => b.trim()).filter(Boolean);
+      if (bList.length === 1) {
+        qb.andWhere('obs.buildingName LIKE :building', { building: `%${bList[0]}%` });
+      } else if (bList.length > 1) {
+        qb.andWhere(
+          new Brackets((subQb) => {
+            bList.forEach((b: string, i: number) => {
+              if (i === 0) subQb.where(`obs.buildingName LIKE :b_${i}`, { [`b_${i}`]: `%${b}%` });
+              else subQb.orWhere(`obs.buildingName LIKE :b_${i}`, { [`b_${i}`]: `%${b}%` });
+            });
+          }),
+        );
+      }
     }
 
     const now = new Date();
@@ -788,8 +876,8 @@ export class ObservationsService implements OnModuleInit {
     let thisWeek = 0, lastWeek = 0, thisMonth = 0, lastMonth = 0;
     const contractorMap: Record<string, { id: string; thisWeek: number; lastWeek: number; total: number }> = {};
     const catMap: Record<string, { total: number; safe: number; unsafe: number }> = {};
-    const riskMap: Record<string, number> = { 'Very high': 0, 'High': 0, 'Moderate': 0, 'Medium': 0, 'Low': 0 };
-    let safe = 0, unsafe = 0;
+    const riskMap: Record<string, number> = { Critical: 0, High: 0, Medium: 0, Low: 0 };
+    let safe = 0, unsafe = 0, activeAssigned = 0;
     const weeklyCounts = [0, 0, 0, 0, 0, 0, 0, 0];
     const bodyPartsMap: Record<string, number> = {};
 
@@ -811,6 +899,10 @@ export class ObservationsService implements OnModuleInit {
       if (isPositive) safe++;
       else unsafe++;
 
+      if (obs.status === ObservationStatus.ASSIGNED || obs.status === ObservationStatus.ACCEPTED) {
+        activeAssigned++;
+      }
+
       const contractorName = obs.assignedContractorName || 'Unassigned';
       if (!contractorMap[contractorName]) {
         contractorMap[contractorName] = { id: contractorName, thisWeek: 0, lastWeek: 0, total: 0 };
@@ -825,9 +917,14 @@ export class ObservationsService implements OnModuleInit {
       if (isPositive) catMap[cat].safe++;
       else catMap[cat].unsafe++;
 
-      const rLevel = obs.riskLevel || 'Low';
-      if (riskMap[rLevel] !== undefined) riskMap[rLevel]++;
-      else riskMap[rLevel] = 1;
+      const rawRisk = String(obs.riskLevel || '').toUpperCase().trim();
+      let rLevel = 'Low';
+      if (rawRisk.includes('CRIT') || rawRisk === 'VERY HIGH') rLevel = 'Critical';
+      else if (rawRisk === 'HIGH') rLevel = 'High';
+      else if (rawRisk === 'MEDIUM' || rawRisk === 'MODERATE') rLevel = 'Medium';
+      else if (rawRisk === 'LOW' || rawRisk === 'VERY LOW') rLevel = 'Low';
+      else if (obs.riskLevel) rLevel = 'Medium';
+      riskMap[rLevel] = (riskMap[rLevel] || 0) + 1;
 
       const bp = (obs as any).bodyParts || (obs as any).bodyPart;
       if (bp) {
@@ -857,10 +954,12 @@ export class ObservationsService implements OnModuleInit {
       unsafe: catMap[k].unsafe,
     })).sort((a, b) => b.count - a.count);
 
-    const severity = ['Very high', 'High', 'Moderate', 'Medium', 'Low'].map(k => ({
-      level: k,
-      count: riskMap[k] || 0,
-    }));
+    const severity = [
+      { level: 'Critical', count: riskMap['Critical'] || 0, color: '#8F1B32' },
+      { level: 'High', count: riskMap['High'] || 0, color: '#E32B50' },
+      { level: 'Medium', count: riskMap['Medium'] || 0, color: '#C07D10' },
+      { level: 'Low', count: riskMap['Low'] || 0, color: '#7BBE97' },
+    ];
 
     const meetingKPI = contractorKPIs.filter(c => c.thisWeek >= c.target).length;
     const kpiCompliance = contractorKPIs.length > 0 ? Math.round((meetingKPI / contractorKPIs.length) * 100) : 0;
@@ -893,6 +992,8 @@ export class ObservationsService implements OnModuleInit {
       weeklyTrend,
       safe,
       unsafe,
+      activeAssigned,
+      positiveRatio: (safe + unsafe) > 0 ? Math.round((safe / (safe + unsafe)) * 100) : 0,
       severity,
       bodyParts: bodyParts.length > 0 ? bodyParts : defaultBodyPartsZero,
     };

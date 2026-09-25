@@ -46,9 +46,6 @@ export class SafetyInspectionPdfService {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
     ];
 
     try {
@@ -118,6 +115,7 @@ export class SafetyInspectionPdfService {
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
+
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -205,13 +203,29 @@ export class SafetyInspectionPdfService {
 
   private resolveImageSrc(imgUrl: string): string {
     if (!imgUrl) return '';
-    if (imgUrl.startsWith('data:') || imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+    if (imgUrl.startsWith('data:')) {
       return imgUrl;
     }
     const cleanUrl = imgUrl.startsWith('/') ? imgUrl.substring(1) : imgUrl;
-    const diskPath = join(process.cwd(), cleanUrl);
-    if (existsSync(diskPath)) {
-      return this.getBase64Image(diskPath);
+    const filename = cleanUrl.split('/').pop() || cleanUrl;
+
+    const candidatePaths = [
+      join(process.cwd(), cleanUrl),
+      join(process.cwd(), cleanUrl.replace(/^development\/m3south\//, '')),
+      join(process.cwd(), 'uploads', filename),
+      join(process.cwd(), 'uploads', 'safety-inspections', filename),
+      join(process.cwd(), 'uploads', 'observations', filename),
+      join(process.cwd(), 'uploads', 'incidents', filename),
+    ];
+
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        return this.getBase64Image(p);
+      }
+    }
+
+    if (imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+      return imgUrl;
     }
     return `http://localhost:5200/${cleanUrl}`;
   }
@@ -250,8 +264,6 @@ export class SafetyInspectionPdfService {
       else naCount++;
     });
 
-    const passedScore = inspection.score !== undefined ? `${inspection.score}%` : (items.length > 0 ? `${Math.round((greenCount / (items.length - naCount || 1)) * 100)}%` : '100%');
-
     const renderItemCard = (item: any, index: number) => {
       const catName = item.categoryName || STANDARD_CATEGORIES[index] || `Category ${index + 1}`;
       const status = String(item.status || 'na').toLowerCase();
@@ -288,7 +300,7 @@ export class SafetyInspectionPdfService {
         const photoTags = photos
           .map((p) => {
             const src = this.resolveImageSrc(p);
-            return src ? `<img src="${src}" class="item-photo" alt="Photo" />` : '';
+            return src ? `<img src="${src}" class="item-photo" alt="Visual Evidence" />` : '';
           })
           .filter(Boolean)
           .join('');
@@ -383,7 +395,7 @@ export class SafetyInspectionPdfService {
       }
 
       return `
-        <div class="checklist-item-card" style="border-left: 3.5px solid ${badgeBg};">
+        <div class="checklist-item-card" style="border-left: 4px solid ${badgeBg};">
           <div class="item-header-row">
             <div class="item-title">${catName}</div>
             <div class="item-badge" style="background-color: ${badgeBg};">${badgeLabel}</div>
@@ -402,24 +414,79 @@ export class SafetyInspectionPdfService {
       `;
     };
 
-    // Split items evenly between Page 1 and Page 2
-    const page1Items = items.slice(0, 10);
-    const page2Items = items.slice(10);
+    // Calculate item weights to distribute them cleanly across pages without congestion
+    const estimateItemHeight = (it: any): number => {
+      let h = 38; // base card height
+      if (it.comment) h += 32;
+      const ph = Array.isArray(it.photos) ? it.photos : (typeof it.photos === 'string' && it.photos ? [it.photos] : []);
+      if (ph.length > 0) h += 58;
+      const issues = Array.isArray(it.enrichedIssues) ? it.enrichedIssues : [];
+      if (issues.length > 0) {
+        issues.forEach((iss: any) => {
+          h += 105;
+          const obsPh = iss.details?.photos || [];
+          if ((Array.isArray(obsPh) && obsPh.length > 0) || (typeof obsPh === 'string' && obsPh)) {
+            h += 48;
+          }
+        });
+      }
+      return h;
+    };
 
-    const page1ItemsHtml = page1Items.map((it, idx) => renderItemCard(it, idx)).join('');
-    const page2ItemsHtml = page2Items.map((it, idx) => renderItemCard(it, idx + 10)).join('');
+    // Page 1 budget: Available height for checklist items is ~460px
+    // (Header + General Info Box + KPI Bar takes ~360px out of ~880px printable area)
+    // Subsequent pages budget: ~680px for items
+    const PAGE_1_CAPACITY = 450;
+    const SUBSEQUENT_PAGE_CAPACITY = 680;
 
-    const renderHeader = (pageNumber: number, pageTitle: string) => `
+    const pageBuckets: { pageNumber: number; items: { item: any; globalIndex: number }[]; startIndex: number; endIndex: number }[] = [];
+    let curBucket: { item: any; globalIndex: number }[] = [];
+    let curHeight = 0;
+    let curCap = PAGE_1_CAPACITY;
+    let startIdx = 1;
+
+    items.forEach((it, idx) => {
+      const h = estimateItemHeight(it);
+      // If adding this item exceeds capacity and we already have at least 4 items on this page, start new page
+      if (curBucket.length >= 4 && curHeight + h > curCap) {
+        pageBuckets.push({
+          pageNumber: pageBuckets.length + 1,
+          items: curBucket,
+          startIndex: startIdx,
+          endIndex: startIdx + curBucket.length - 1,
+        });
+        startIdx += curBucket.length;
+        curBucket = [{ item: it, globalIndex: idx }];
+        curHeight = h;
+        curCap = SUBSEQUENT_PAGE_CAPACITY;
+      } else {
+        curBucket.push({ item: it, globalIndex: idx });
+        curHeight += h;
+      }
+    });
+
+    if (curBucket.length > 0) {
+      pageBuckets.push({
+        pageNumber: pageBuckets.length + 1,
+        items: curBucket,
+        startIndex: startIdx,
+        endIndex: startIdx + curBucket.length - 1,
+      });
+    }
+
+    const totalPages = pageBuckets.length;
+
+    const renderHeader = (pageNumber: number, pageTitle: string, isPartContinued = false) => `
       <div class="header-container">
         <div class="logo-row">
           <div class="logo-left">
-            ${projectLogoBase64 ? `<img src="${projectLogoBase64}" style="height: 34px; object-fit: contain;" alt="Novo Nordisk" />` : '<div style="font-weight: 800; font-size: 14px;">Novo Nordisk</div>'}
+            ${projectLogoBase64 ? `<img src="${projectLogoBase64}" style="height: 36px; object-fit: contain;" alt="Novo Nordisk" />` : '<div style="font-weight: 800; font-size: 15px; color: #002868;">Novo Nordisk</div>'}
           </div>
           <div class="logo-center">
-            <span style="font-size: 8.5px; font-weight: 700; color: #64748b; letter-spacing: 0.5px; text-transform: uppercase;">SITE HSE QUALITY & SAFETY AUDIT</span>
+            <span style="font-size: 9px; font-weight: 700; color: #475569; letter-spacing: 0.8px; text-transform: uppercase;">SITE HSE QUALITY & SAFETY AUDIT</span>
           </div>
           <div class="logo-right">
-            ${nneLogoBase64 ? `<img src="${nneLogoBase64}" style="height: 28px; object-fit: contain;" alt="NNE" />` : '<div style="font-size: 20px; font-weight: 900; color: #002868;">nne®</div>'}
+            ${nneLogoBase64 ? `<img src="${nneLogoBase64}" style="height: 30px; object-fit: contain;" alt="NNE" />` : '<div style="font-size: 22px; font-weight: 900; color: #002868;">nne®</div>'}
           </div>
         </div>
 
@@ -428,10 +495,123 @@ export class SafetyInspectionPdfService {
             <h1 class="banner-title">${pageTitle}</h1>
             <div class="banner-subtitle">Official HSE Inspection &bull; Ref: <b>${inspectionRef}</b> &bull; Date: <b>${dateFormatted}</b></div>
           </div>
-          <div class="banner-badge">Page ${pageNumber} of 2</div>
+          <div class="banner-badge">Page ${pageNumber} of ${totalPages}</div>
         </div>
       </div>
     `;
+
+    // Render individual pages
+    const pagesHtml = pageBuckets.map((bucket, bIdx) => {
+      const isFirstPage = bIdx === 0;
+      const isLastPage = bIdx === totalPages - 1;
+      const pNum = bucket.pageNumber;
+      const pTitle = isFirstPage ? 'Site Safety Inspection Report' : `Site Safety Inspection Report (Part ${pNum})`;
+      const sectionSubtitle = `Categories ${bucket.startIndex} – ${bucket.endIndex}`;
+      const itemsHtml = bucket.items.map((entry) => renderItemCard(entry.item, entry.globalIndex)).join('');
+
+      return `
+        <div class="pdf-page">
+          ${renderHeader(pNum, pTitle, !isFirstPage)}
+
+          ${isFirstPage ? `
+            <!-- General Info Table -->
+            <div class="info-box">
+              <table class="info-table">
+                <tr>
+                  <td class="info-lbl">Inspection Ref:</td>
+                  <td class="info-val" style="color: #0284c7; font-weight: 800;">${inspectionRef}</td>
+                  <td class="info-lbl">Audit Date:</td>
+                  <td class="info-val">${dateFormatted}</td>
+                </tr>
+                <tr>
+                  <td class="info-lbl">Project Name:</td>
+                  <td class="info-val">${inspection.projectName || 'M3SOUTH'}</td>
+                  <td class="info-lbl">Project No:</td>
+                  <td class="info-val">${inspection.projectNo || '063205-010'}</td>
+                </tr>
+                <tr>
+                  <td class="info-lbl">Building:</td>
+                  <td class="info-val">${inspection.buildingName || 'Main Building'}</td>
+                  <td class="info-lbl">Floor / Level:</td>
+                  <td class="info-val">${inspection.floorLevel || '-'}</td>
+                </tr>
+                <tr>
+                  <td class="info-lbl">Location Details:</td>
+                  <td class="info-val" colspan="3">
+                    ${inspection.specificLocation || (Array.isArray(inspection.selectedRooms) ? inspection.selectedRooms.join(', ') : 'Site Wide')}
+                  </td>
+                </tr>
+                <tr>
+                  <td class="info-lbl">Lead Auditor:</td>
+                  <td class="info-val">${inspection.createdByUserName || 'Superadmin'} (${inspection.createdByRole || 'Admin'})</td>
+                  <td class="info-lbl">Audit Status:</td>
+                  <td class="info-val">
+                    <span class="status-pill status-${(inspection.status || 'IN_PROGRESS').toLowerCase()}">${inspection.status || 'IN_PROGRESS'}</span>
+                  </td>
+                </tr>
+              </table>
+            </div>
+
+            <!-- KPI Summary Bar (4 Metrics - Compliance Score Removed) -->
+            <div class="kpi-bar">
+              <div class="kpi-chip kpi-green">
+                <span class="kpi-num">${greenCount}</span>
+                <span class="kpi-lbl">Passed (Green)</span>
+              </div>
+              <div class="kpi-chip kpi-yellow">
+                <span class="kpi-num">${yellowCount}</span>
+                <span class="kpi-lbl">Warnings (Yellow)</span>
+              </div>
+              <div class="kpi-chip kpi-red">
+                <span class="kpi-num">${redCount}</span>
+                <span class="kpi-lbl">Critical (Red)</span>
+              </div>
+              <div class="kpi-chip kpi-na">
+                <span class="kpi-num">${naCount}</span>
+                <span class="kpi-lbl">Not Applicable</span>
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Section Title -->
+          <div class="section-heading">
+            <span>PART ${pNum} | INSPECTION CHECKPOINTS (${bucket.startIndex} TO ${bucket.endIndex})</span>
+            <span class="heading-sub">${sectionSubtitle}</span>
+          </div>
+
+          <!-- Checkpoints -->
+          <div class="checklist-items-wrap">
+            ${itemsHtml}
+          </div>
+
+          ${isLastPage ? `
+            <!-- Verification Sign-off Box -->
+            <div class="verification-box">
+              <div class="verif-title">Audit Verification & Sign-Off</div>
+              <div class="verif-grid">
+                <div class="verif-col">
+                  <div class="verif-line"><b>Lead Auditor:</b> ${inspection.createdByUserName || 'Safety Officer'} (${inspection.createdByRole || 'NNE'})</div>
+                  <div class="verif-line"><b>Inspection Reference:</b> ${inspectionRef}</div>
+                  <div class="verif-line"><b>Audit Status:</b> <span class="verif-badge">${inspection.status === 'CLOSED' ? 'CLOSED & VERIFIED' : (inspection.status || 'INSPECTION RECORD')}</span></div>
+                </div>
+                <div class="verif-col">
+                  <div class="verif-line"><b>Record Generation Time:</b> ${new Date().toLocaleString('en-GB')}</div>
+                  <div class="verif-line"><b>Project / Location:</b> ${inspection.projectName || 'M3SOUTH'} &bull; ${inspection.buildingName || 'JE'}</div>
+                  <div class="signature-line-wrap">
+                    <span class="signature-label">Auditor Verification Signature:</span>
+                    <div class="signature-line"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
+          <div class="page-footer-note">
+            Novo Nordisk &bull; Site HSE Management System &bull; Safety Inspection Record ${inspectionRef} &bull; Page ${pNum} of ${totalPages}
+          </div>
+        </div>
+      `;
+    }).join('');
 
     return `
       <!DOCTYPE html>
@@ -451,12 +631,12 @@ export class SafetyInspectionPdfService {
             padding: 0;
             background-color: #ffffff;
             color: #0f172a;
-            font-size: 9px;
-            line-height: 1.3;
+            font-size: 9.5px;
+            line-height: 1.35;
           }
 
           .pdf-page {
-            padding: 2px 4px;
+            padding: 0;
             page-break-after: always;
             break-after: always;
           }
@@ -467,15 +647,15 @@ export class SafetyInspectionPdfService {
 
           /* ── Header Logos & Title Banner ── */
           .header-container {
-            margin-bottom: 8px;
+            margin-bottom: 9px;
           }
           .logo-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1.5px solid #0f172a;
-            padding-bottom: 4px;
-            margin-bottom: 6px;
+            border-bottom: 2px solid #002868;
+            padding-bottom: 5px;
+            margin-bottom: 7px;
           }
           .logo-left {
             display: flex;
@@ -490,13 +670,13 @@ export class SafetyInspectionPdfService {
             justify-content: flex-end;
           }
           .title-banner {
-            background-color: #111c38;
+            background-color: #002868;
             color: #ffffff;
-            padding: 7px 12px;
+            padding: 8px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-radius: 3px;
+            border-radius: 4px;
           }
           .banner-title {
             margin: 0;
@@ -515,86 +695,150 @@ export class SafetyInspectionPdfService {
             color: #93c5fd;
             font-weight: 700;
             border: 1px solid #3b82f6;
-            padding: 2px 6px;
-            border-radius: 3px;
+            padding: 2.5px 8px;
+            border-radius: 4px;
+            background: rgba(59, 130, 246, 0.15);
           }
 
           /* ── General Info Box ── */
           .info-box {
             border: 1px solid #cbd5e1;
-            border-radius: 3px;
-            margin-bottom: 8px;
+            border-radius: 4px;
+            margin-bottom: 9px;
             overflow: hidden;
+            background: #ffffff;
           }
           .info-table {
             width: 100%;
             border-collapse: collapse;
           }
           .info-table td {
-            padding: 4px 6px;
+            padding: 5px 8px;
             border: 1px solid #e2e8f0;
             font-size: 9px;
             vertical-align: middle;
           }
           .info-lbl {
-            background-color: #f8fafc;
-            color: #475569;
+            background-color: #f1f5f9;
+            color: #334155;
             font-weight: 700;
-            width: 16%;
+            width: 17%;
+            text-transform: uppercase;
+            font-size: 8px;
+            letter-spacing: 0.3px;
           }
           .info-val {
             color: #0f172a;
             font-weight: 600;
+            font-size: 9px;
+          }
+          .status-pill {
+            display: inline-block;
+            padding: 1.5px 7px;
+            border-radius: 3px;
+            font-weight: 800;
+            font-size: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+          }
+          .status-pill.status-closed {
+            background-color: #dcfce7;
+            color: #15803d;
+          }
+          .status-pill.status-in_progress, .status-pill.status-open {
+            background-color: #e0f2fe;
+            color: #0369a1;
           }
 
-          /* ── Summary KPI Bar ── */
+          /* ── Summary KPI Bar (Balanced 4-Chip Layout) ── */
           .kpi-bar {
             display: flex;
-            gap: 6px;
-            margin-bottom: 8px;
+            gap: 8px;
+            margin-bottom: 9px;
           }
           .kpi-chip {
             flex: 1;
-            padding: 4px 6px;
-            border-radius: 3px;
+            padding: 6px 10px;
+            border-radius: 4px;
             border: 1px solid #cbd5e1;
             background: #f8fafc;
             text-align: center;
           }
+          .kpi-chip.kpi-green {
+            border-color: #bbf7d0;
+            background: #f0fdf4;
+          }
+          .kpi-chip.kpi-green .kpi-num {
+            color: #16a34a;
+          }
+          .kpi-chip.kpi-yellow {
+            border-color: #fef08a;
+            background: #fefce8;
+          }
+          .kpi-chip.kpi-yellow .kpi-num {
+            color: #d97706;
+          }
+          .kpi-chip.kpi-red {
+            border-color: #fecaca;
+            background: #fef2f2;
+          }
+          .kpi-chip.kpi-red .kpi-num {
+            color: #dc2626;
+          }
+          .kpi-chip.kpi-na {
+            border-color: #e2e8f0;
+            background: #f8fafc;
+          }
+          .kpi-chip.kpi-na .kpi-num {
+            color: #64748b;
+          }
           .kpi-num {
-            font-size: 12px;
+            font-size: 15px;
             font-weight: 800;
             display: block;
             line-height: 1.1;
           }
           .kpi-lbl {
-            font-size: 7.5px;
-            color: #64748b;
+            font-size: 8px;
+            color: #475569;
             text-transform: uppercase;
             font-weight: 700;
+            margin-top: 2px;
+            letter-spacing: 0.3px;
           }
 
           /* ── Section Divider ── */
           .section-heading {
-            font-size: 10px;
+            font-size: 9.5px;
             font-weight: 800;
             color: #ffffff;
-            background: #111c38;
-            padding: 4px 8px;
-            margin: 6px 0 6px 0;
-            border-radius: 2px;
+            background: #002868;
+            padding: 5px 10px;
+            margin: 7px 0 7px 0;
+            border-radius: 3px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            letter-spacing: 0.3px;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+          }
+          .heading-sub {
+            font-size: 8px;
+            font-weight: 600;
+            color: #93c5fd;
+            text-transform: none;
+            letter-spacing: normal;
           }
 
           /* ── Checklist Items ── */
+          .checklist-items-wrap {
+            margin-bottom: 6px;
+          }
           .checklist-item-card {
-            border: 1px solid #cbd5e1;
-            border-radius: 3px;
-            padding: 5px 7px;
-            margin-bottom: 4.5px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 7px 10px;
+            margin-bottom: 6px;
             background: #ffffff;
             page-break-inside: avoid;
             break-inside: avoid;
@@ -610,20 +854,21 @@ export class SafetyInspectionPdfService {
             color: #0f172a;
           }
           .item-badge {
-            font-size: 7.5px;
+            font-size: 8px;
             font-weight: 800;
             color: #ffffff;
-            padding: 1.5px 6px;
-            border-radius: 2px;
+            padding: 2px 7px;
+            border-radius: 3px;
             text-transform: uppercase;
-            letter-spacing: 0.3px;
+            letter-spacing: 0.4px;
           }
           .item-comment-box {
             background: #f8fafc;
-            border: 1px dashed #cbd5e1;
-            padding: 3px 6px;
-            border-radius: 2px;
-            margin-top: 3px;
+            border: 1px solid #e2e8f0;
+            border-left: 2.5px solid #94a3b8;
+            padding: 5px 8px;
+            border-radius: 3px;
+            margin-top: 5px;
           }
           .comment-text {
             font-size: 8.5px;
@@ -633,45 +878,46 @@ export class SafetyInspectionPdfService {
           .comment-author {
             font-size: 7.5px;
             color: #64748b;
-            margin-top: 1px;
+            margin-top: 2px;
             text-align: right;
           }
 
           /* ── Photos Grid ── */
           .item-photos-wrap {
-            margin-top: 4px;
+            margin-top: 5px;
           }
           .photos-label {
-            font-size: 8px;
+            font-size: 7.5px;
             font-weight: 700;
             color: #64748b;
             text-transform: uppercase;
-            margin-bottom: 2px;
+            margin-bottom: 3px;
+            letter-spacing: 0.3px;
           }
           .photos-grid {
             display: flex;
             flex-wrap: wrap;
-            gap: 4px;
+            gap: 6px;
           }
           .item-photo {
-            width: 55px;
-            height: 40px;
+            width: 58px;
+            height: 42px;
             object-fit: cover;
-            border-radius: 2px;
+            border-radius: 3px;
             border: 1px solid #cbd5e1;
           }
 
           /* ── Attached Safety Observation Callout ── */
           .item-observations-container {
-            margin-top: 4px;
+            margin-top: 5px;
           }
           .obs-callout-card {
             background: #fffbeb;
             border: 1px solid #fde68a;
-            border-left: 3px solid #d97706;
-            border-radius: 3px;
-            padding: 5px 7px;
-            margin-top: 3px;
+            border-left: 3.5px solid #d97706;
+            border-radius: 4px;
+            padding: 6px 9px;
+            margin-top: 4px;
             page-break-inside: avoid;
             break-inside: avoid;
           }
@@ -680,8 +926,8 @@ export class SafetyInspectionPdfService {
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid #fef3c7;
-            padding-bottom: 3px;
-            margin-bottom: 3px;
+            padding-bottom: 4px;
+            margin-bottom: 4px;
           }
           .obs-ref-badge {
             font-size: 8.5px;
@@ -702,12 +948,12 @@ export class SafetyInspectionPdfService {
 
           .obs-badges {
             display: flex;
-            gap: 3px;
+            gap: 4px;
           }
           .obs-pill {
             font-size: 7px;
             font-weight: 700;
-            padding: 1px 4px;
+            padding: 1.5px 5px;
             border-radius: 2px;
             text-transform: uppercase;
           }
@@ -717,16 +963,16 @@ export class SafetyInspectionPdfService {
           .obs-pill.status { background: #e0f2fe; color: #0369a1; }
 
           .obs-body {
-            font-size: 8px;
+            font-size: 8.5px;
             color: #334155;
           }
           .obs-row {
-            margin-bottom: 2px;
+            margin-bottom: 2.5px;
           }
           .obs-row-split {
             display: flex;
-            gap: 8px;
-            margin-top: 2px;
+            gap: 12px;
+            margin-top: 3px;
           }
           .obs-col {
             flex: 1;
@@ -734,7 +980,7 @@ export class SafetyInspectionPdfService {
           .obs-lbl {
             font-weight: 700;
             color: #78350f;
-            margin-right: 3px;
+            margin-right: 4px;
           }
           .obs-val {
             color: #1e293b;
@@ -743,164 +989,83 @@ export class SafetyInspectionPdfService {
           .text-blue { color: #0284c7; font-weight: 600; }
           .obs-photos-grid {
             display: flex;
-            gap: 4px;
-            margin-top: 4px;
+            gap: 5px;
+            margin-top: 5px;
           }
           .obs-photo {
-            width: 46px;
-            height: 34px;
+            width: 50px;
+            height: 38px;
             object-fit: cover;
-            border-radius: 2px;
+            border-radius: 3px;
             border: 1px solid #fde68a;
           }
 
           /* ── Verification Footer ── */
           .verification-box {
-            border: 1px solid #cbd5e1;
-            border-radius: 3px;
-            padding: 6px 8px;
-            margin-top: 6px;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 8px 12px;
+            margin-top: 8px;
             background: #f8fafc;
             page-break-inside: avoid;
             break-inside: avoid;
           }
           .verif-title {
-            font-size: 9px;
+            font-size: 9.5px;
             font-weight: 800;
-            color: #111c38;
+            color: #002868;
             text-transform: uppercase;
-            margin-bottom: 3px;
+            margin-bottom: 6px;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 4px;
+            letter-spacing: 0.4px;
           }
           .verif-grid {
             display: flex;
             justify-content: space-between;
-            font-size: 8px;
-            color: #475569;
+            font-size: 8.5px;
+            color: #334155;
+          }
+          .verif-col {
+            flex: 1;
+          }
+          .verif-line {
+            margin-bottom: 3px;
+          }
+          .verif-badge {
+            display: inline-block;
+            background: #dcfce7;
+            color: #15803d;
+            font-weight: 800;
+            padding: 1px 6px;
+            border-radius: 2px;
+            font-size: 7.5px;
+          }
+          .signature-line-wrap {
+            margin-top: 6px;
+          }
+          .signature-label {
+            font-size: 7.5px;
+            color: #64748b;
+            display: block;
+          }
+          .signature-line {
+            border-bottom: 1px dashed #94a3b8;
+            width: 140px;
+            height: 14px;
           }
           .page-footer-note {
             text-align: center;
             font-size: 7.5px;
             color: #94a3b8;
-            margin-top: 6px;
+            margin-top: 8px;
             border-top: 1px solid #e2e8f0;
-            padding-top: 3px;
+            padding-top: 4px;
           }
         </style>
       </head>
       <body>
-
-        <!-- ==========================================
-             PAGE 1: METADATA, KPI, & CHECKPOINTS 1 – 10
-        =========================================== -->
-        <div class="pdf-page">
-          ${renderHeader(1, 'Site Safety Inspection Report')}
-
-          <!-- General Info Table -->
-          <div class="info-box">
-            <table class="info-table">
-              <tr>
-                <td class="info-lbl">Inspection Ref:</td>
-                <td class="info-val" style="color: #0284c7;">${inspectionRef}</td>
-                <td class="info-lbl">Audit Date:</td>
-                <td class="info-val">${dateFormatted}</td>
-              </tr>
-              <tr>
-                <td class="info-lbl">Project Name:</td>
-                <td class="info-val">${inspection.projectName || 'M3SOUTH'}</td>
-                <td class="info-lbl">Project No:</td>
-                <td class="info-val">${inspection.projectNo || '063205-010'}</td>
-              </tr>
-              <tr>
-                <td class="info-lbl">Building:</td>
-                <td class="info-val">${inspection.buildingName || 'Main Building'}</td>
-                <td class="info-lbl">Floor / Level:</td>
-                <td class="info-val">${inspection.floorLevel || '-'}</td>
-              </tr>
-              <tr>
-                <td class="info-lbl">Location Details:</td>
-                <td class="info-val" colspan="3">
-                  ${inspection.specificLocation || (Array.isArray(inspection.selectedRooms) ? inspection.selectedRooms.join(', ') : 'Site Wide')}
-                </td>
-              </tr>
-              <tr>
-                <td class="info-lbl">Lead Auditor:</td>
-                <td class="info-val">${inspection.createdByUserName || 'Superadmin'} (${inspection.createdByRole || 'Admin'})</td>
-                <td class="info-lbl">Audit Status:</td>
-                <td class="info-val" style="color: ${inspection.status === 'CLOSED' ? '#16a34a' : '#0284c7'}; font-weight: 800;">
-                  ${inspection.status || 'IN_PROGRESS'}
-                </td>
-              </tr>
-            </table>
-          </div>
-
-          <!-- KPI Metrics Summary Bar -->
-          <div class="kpi-bar">
-            <div class="kpi-chip">
-              <span class="kpi-num" style="color: #16a34a;">${greenCount}</span>
-              <span class="kpi-lbl">Passed (Green)</span>
-            </div>
-            <div class="kpi-chip">
-              <span class="kpi-num" style="color: #d97706;">${yellowCount}</span>
-              <span class="kpi-lbl">Warnings (Yellow)</span>
-            </div>
-            <div class="kpi-chip">
-              <span class="kpi-num" style="color: #dc2626;">${redCount}</span>
-              <span class="kpi-lbl">Critical (Red)</span>
-            </div>
-            <div class="kpi-chip">
-              <span class="kpi-num" style="color: #64748b;">${naCount}</span>
-              <span class="kpi-lbl">Not Applicable</span>
-            </div>
-            <div class="kpi-chip" style="background: #eff6ff; border-color: #bfdbfe;">
-              <span class="kpi-num" style="color: #0284c7;">${passedScore}</span>
-              <span class="kpi-lbl">Compliance Score</span>
-            </div>
-          </div>
-
-          <!-- Section Title -->
-          <div class="section-heading">
-            <span>PART 1 | INSPECTION CHECKPOINTS (1 TO 10)</span>
-            <span style="font-size: 8px; font-weight: 600; color: #cbd5e1;">Categories 1 – 10</span>
-          </div>
-
-          <!-- Checkpoints 1 - 10 -->
-          ${page1ItemsHtml}
-
-          <div class="page-footer-note">
-            Novo Nordisk &bull; Site HSE Management System &bull; Safety Inspection Record ${inspectionRef} &bull; Page 1 of 2
-          </div>
-        </div>
-
-        <!-- ==========================================
-             PAGE 2: CHECKPOINTS 11 – 20 & SIGN-OFF
-        =========================================== -->
-        <div class="pdf-page">
-          ${renderHeader(2, 'Site Safety Inspection Report (Part 2)')}
-
-          <!-- Section Title -->
-          <div class="section-heading">
-            <span>PART 2 | INSPECTION CHECKPOINTS (11 TO 20) & OBSERVATIONS</span>
-            <span style="font-size: 8px; font-weight: 600; color: #cbd5e1;">Categories 11 – 20</span>
-          </div>
-
-          <!-- Checkpoints 11 - 20 -->
-          ${page2ItemsHtml}
-
-          <!-- Verification Sign-off Box -->
-          <div class="verification-box">
-            <div class="verif-title">Audit Verification & Sign-Off</div>
-            <div class="verif-grid">
-              <div><b>Lead Auditor:</b> ${inspection.createdByUserName || 'Safety Officer'} (NNE)</div>
-              <div><b>Record Generation Time:</b> ${new Date().toLocaleString('en-GB')}</div>
-              <div><b>Status:</b> ${inspection.status === 'CLOSED' ? 'CLOSED & VERIFIED' : 'INSPECTION RECORD'}</div>
-            </div>
-          </div>
-
-          <div class="page-footer-note">
-            Novo Nordisk &bull; Site HSE Management System &bull; Safety Inspection Record ${inspectionRef} &bull; Page 2 of 2
-          </div>
-        </div>
-
+        ${pagesHtml}
       </body>
       </html>
     `;

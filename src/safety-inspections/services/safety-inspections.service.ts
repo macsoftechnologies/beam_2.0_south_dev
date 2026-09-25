@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, Between } from 'typeorm';
 import { SafetyInspection, SafetyInspectionStatus } from '../entities/safety-inspection.entity';
 import { SafetyInspectionItem, SafetyCheckItemStatus } from '../entities/safety-inspection-item.entity';
+import { Observation } from '../../observations/entities/observation.entity';
 import { CreateSafetyInspectionDto } from '../dtos/create-safety-inspection.dto';
 import { UpdateSafetyInspectionDto } from '../dtos/update-safety-inspection.dto';
 
@@ -38,6 +39,8 @@ export class SafetyInspectionsService implements OnModuleInit {
     private readonly inspectionRepo: Repository<SafetyInspection>,
     @InjectRepository(SafetyInspectionItem)
     private readonly itemRepo: Repository<SafetyInspectionItem>,
+    @InjectRepository(Observation)
+    private readonly obsRepo: Repository<Observation>,
   ) {}
 
   /**
@@ -99,8 +102,102 @@ export class SafetyInspectionsService implements OnModuleInit {
       `);
 
       this.logger.log('✅ Safety Inspections tables auto-initialization check completed successfully.');
+      await this.syncAllPendingInspections();
     } catch (err: any) {
       this.logger.warn(`⚠️ Safety Inspections tables auto-initialization note: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Checks attached observations for inspections that are not marked closed.
+   * If all linked observations are CLOSED, auto-updates the inspection status to CLOSED in DB and in memory.
+   */
+  async syncInspectionStatusWithObservations(inspections: SafetyInspection[]): Promise<void> {
+    if (!inspections || inspections.length === 0) return;
+
+    for (const insp of inspections) {
+      if (insp.status === SafetyInspectionStatus.CLOSED || (insp.status as any) === 'COMPLETED' || insp.isCompleted) {
+        continue;
+      }
+
+      const allIssues: any[] = [];
+      for (const item of (insp.items || [])) {
+        let rawIssues: any[] = [];
+        if (Array.isArray(item.issues)) {
+          rawIssues = item.issues;
+        } else if (typeof item.issues === 'string') {
+          try {
+            const parsed = JSON.parse(item.issues);
+            rawIssues = Array.isArray(parsed) ? parsed : [item.issues];
+          } catch {
+            rawIssues = [];
+          }
+        }
+        allIssues.push(...rawIssues);
+      }
+
+      if (allIssues.length === 0) {
+        continue;
+      }
+
+      const obsIds: number[] = [];
+      const obsNumbers: string[] = [];
+
+      for (const iss of allIssues) {
+        if (!iss) continue;
+        const oId = iss.observationId || (typeof iss.id === 'number' ? iss.id : (!isNaN(Number(iss.id)) ? Number(iss.id) : null));
+        if (oId) obsIds.push(Number(oId));
+        const oNum = iss.observationNumber || (typeof iss.id === 'string' && iss.id.startsWith('SO-') ? iss.id : null);
+        if (oNum) obsNumbers.push(String(oNum).trim());
+      }
+
+      if (obsIds.length === 0 && obsNumbers.length === 0) {
+        continue;
+      }
+
+      try {
+        const whereConditions: any[] = [];
+        if (obsIds.length > 0) whereConditions.push({ id: In(obsIds) });
+        if (obsNumbers.length > 0) whereConditions.push({ observationNumber: In(obsNumbers) });
+
+        const foundObs = await this.obsRepo.find({
+          where: whereConditions,
+          select: { id: true, observationNumber: true, status: true },
+        });
+
+        if (foundObs.length > 0) {
+          const allClosed = foundObs.every((o) => String(o.status).toUpperCase() === 'CLOSED');
+          if (allClosed) {
+            insp.status = SafetyInspectionStatus.CLOSED;
+            insp.isCompleted = true;
+            await this.inspectionRepo.update(insp.id, {
+              status: SafetyInspectionStatus.CLOSED,
+              isCompleted: true,
+            });
+            this.logger.log(`Auto-synced Safety Inspection ${insp.inspectionNumber || insp.id} to CLOSED (all observations closed)`);
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to sync observation statuses for inspection ${insp.id}: ${err?.message || err}`);
+      }
+    }
+  }
+
+  async syncAllPendingInspections(): Promise<void> {
+    try {
+      const openInspections = await this.inspectionRepo.find({
+        where: [
+          { status: SafetyInspectionStatus.IN_PROGRESS },
+          { status: SafetyInspectionStatus.DRAFT },
+        ],
+        relations: { items: true },
+      });
+
+      if (openInspections.length > 0) {
+        await this.syncInspectionStatusWithObservations(openInspections);
+      }
+    } catch (err: any) {
+      this.logger.warn(`syncAllPendingInspections note: ${err?.message || err}`);
     }
   }
 
@@ -306,7 +403,14 @@ export class SafetyInspectionsService implements OnModuleInit {
       qb.andWhere('si.inspectionDate <= :dateTo', { dateTo: query.dateTo });
     }
 
+    if (query.status) {
+      await this.syncAllPendingInspections();
+    }
+
     const [inspections, total] = await qb.skip(skip).take(limit).getManyAndCount();
+
+    // Auto-sync inspection statuses based on linked observation statuses
+    await this.syncInspectionStatusWithObservations(inspections);
 
     // Ensure items in each inspection are ordered by itemIndex
     inspections.forEach((insp) => {
@@ -356,6 +460,8 @@ export class SafetyInspectionsService implements OnModuleInit {
     if (inspection.items) {
       inspection.items.sort((a, b) => a.itemIndex - b.itemIndex);
     }
+
+    await this.syncInspectionStatusWithObservations([inspection]);
 
     return inspection;
   }

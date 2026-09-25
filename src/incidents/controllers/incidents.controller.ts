@@ -322,9 +322,19 @@ export class IncidentsController {
     @Query('contractorId') contractorId?: string,
     @Query('userRole') userRole?: string,
     @Query('dateRange') dateRange?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
     const cId = contractorId ? parseInt(contractorId, 10) : undefined;
-    return await this.incidentsService.getDashboardStats({ building, contractor, contractorId: cId, userRole, dateRange });
+    return await this.incidentsService.getDashboardStats({
+      building,
+      contractor,
+      contractorId: cId,
+      userRole,
+      dateRange,
+      startDate,
+      endDate,
+    });
   }
 
   /**
@@ -358,6 +368,9 @@ export class IncidentsController {
     @Query('userRole') userRole?: string,
     @Query('origin') origin?: string,
     @Query('search') search?: string,
+    @Query('dateRange') dateRange?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
     const hipoBool = isHipo !== undefined ? isHipo === 'true' : undefined;
     const bId = buildingId ? parseInt(buildingId, 10) : undefined;
@@ -384,6 +397,9 @@ export class IncidentsController {
       userRole,
       origin,
       search,
+      dateRange,
+      startDate,
+      endDate,
     });
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, In } from 'typeorm';
+import { Repository, Like, In, Brackets } from 'typeorm';
 import { Incident, IncidentStage, InvestigationLevel } from '../entities/incident.entity';
 import { IncidentHeadsUp } from '../entities/incident-headsup.entity';
 import { IncidentInitialReport } from '../entities/incident-initial-report.entity';
@@ -1125,6 +1125,9 @@ export class IncidentsService implements OnModuleInit {
     userRole?: string;
     origin?: string;
     search?: string;
+    dateRange?: string;
+    startDate?: string;
+    endDate?: string;
   }) {
     const qb = this.incidentRepo.createQueryBuilder('incident');
 
@@ -1153,7 +1156,22 @@ export class IncidentsService implements OnModuleInit {
       qb.andWhere('incident.buildingId = :buildingId', { buildingId: query.buildingId });
     }
     if (query.building) {
-      qb.andWhere('incident.buildingName LIKE :building', { building: `%${query.building}%` });
+      const buildings = (Array.isArray(query.building) ? query.building : String(query.building).split(','))
+        .map(b => b.trim())
+        .filter(Boolean);
+      if (buildings.length === 1) {
+        qb.andWhere('incident.buildingName LIKE :building', { building: `%${buildings[0]}%` });
+      } else if (buildings.length > 1) {
+        qb.andWhere(new Brackets(bQb => {
+          buildings.forEach((b, idx) => {
+            if (idx === 0) {
+              bQb.where(`incident.buildingName LIKE :b_${idx}`, { [`b_${idx}`]: `%${b}%` });
+            } else {
+              bQb.orWhere(`incident.buildingName LIKE :b_${idx}`, { [`b_${idx}`]: `%${b}%` });
+            }
+          });
+        }));
+      }
     }
     if (query.actualSeverity) {
       qb.andWhere('incident.actualSeverity = :actualSeverity', { actualSeverity: query.actualSeverity });
@@ -1165,9 +1183,13 @@ export class IncidentsService implements OnModuleInit {
       qb.andWhere('incident.investigationLevel = :investigationLevel', { investigationLevel: query.investigationLevel });
     }
 
-    // Contractor RBAC scoping
-    let resolvedContractor = query.contractor ? query.contractor.trim() : '';
+    // Contractor RBAC scoping or filter
+    const rawContractors = query.contractor
+      ? (Array.isArray(query.contractor) ? query.contractor : String(query.contractor).split(',')).map(c => c.trim()).filter(Boolean)
+      : [];
+
     if (query.userRole === 'CONTRACTOR' || query.contractorId) {
+      let resolvedContractor = rawContractors[0] || '';
       if (!resolvedContractor && query.contractorId) {
         try {
           const subRows = await this.incidentRepo.query(
@@ -1199,11 +1221,23 @@ export class IncidentsService implements OnModuleInit {
           { contractor: `%${resolvedContractor}%`, contractorSearch: `%${resolvedContractor}%` },
         );
       }
-    } else if (query.contractor) {
+    } else if (rawContractors.length === 1) {
       qb.andWhere(
         '(incident.contractorsInvolved LIKE :contractor OR JSON_SEARCH(incident.contractorsInvolved, \'one\', :contractorSearch) IS NOT NULL)',
-        { contractor: `%${query.contractor}%`, contractorSearch: `%${query.contractor}%` },
+        { contractor: `%${rawContractors[0]}%`, contractorSearch: `%${rawContractors[0]}%` },
       );
+    } else if (rawContractors.length > 1) {
+      qb.andWhere(new Brackets(cQb => {
+        rawContractors.forEach((c, idx) => {
+          const condition = `(incident.contractorsInvolved LIKE :c_${idx} OR JSON_SEARCH(incident.contractorsInvolved, 'one', :cs_${idx}) IS NOT NULL)`;
+          const params = { [`c_${idx}`]: `%${c}%`, [`cs_${idx}`]: `%${c}%` };
+          if (idx === 0) {
+            cQb.where(condition, params);
+          } else {
+            cQb.orWhere(condition, params);
+          }
+        });
+      }));
     }
     if (query.origin) {
       if (query.origin.toLowerCase() === 'observation') {
@@ -1226,6 +1260,33 @@ export class IncidentsService implements OnModuleInit {
         `(incident.caseNumber LIKE :searchLike OR incident.title LIKE :searchLike OR incident.projectName LIKE :searchLike OR incident.contractorsInvolved LIKE :searchLike OR incident.buildingName LIKE :searchLike OR JSON_SEARCH(incident.categories, 'one', :searchLike) IS NOT NULL)`,
         { searchLike },
       );
+    }
+
+    if (query.startDate) {
+      qb.andWhere('incident.incidentDate >= :startDate', { startDate: query.startDate });
+    }
+    if (query.endDate) {
+      qb.andWhere('incident.incidentDate <= :endDate', { endDate: query.endDate });
+    }
+    if (!query.startDate && !query.endDate && query.dateRange && query.dateRange !== 'all') {
+      if (query.dateRange === 'week' || query.dateRange === 'this_week') {
+        const d = new Date();
+        const day = d.getDay();
+        const diff = (day === 0 ? -6 : 1) - day;
+        const monday = new Date(d);
+        monday.setDate(d.getDate() + diff);
+        const cutoffDate = monday.toISOString().split('T')[0];
+        qb.andWhere('incident.incidentDate >= :cutoffDate', { cutoffDate });
+      } else {
+        let days = 395;
+        if (query.dateRange === '7d') days = 7;
+        if (query.dateRange === '30d') days = 30;
+        if (query.dateRange === '90d') days = 90;
+        if (query.dateRange === 'year') days = 365;
+
+        const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        qb.andWhere('incident.incidentDate >= :cutoffDate', { cutoffDate: cutoffDate.toISOString().split('T')[0] });
+      }
     }
 
     qb.orderBy('incident.id', 'DESC');
@@ -1394,15 +1455,34 @@ export class IncidentsService implements OnModuleInit {
   /**
    * High-performance Backend Aggregation for Dashboard Stats (handles 1,000,000+ records in <10ms)
    */
-  async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userRole?: string; dateRange?: string }) {
+  async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userRole?: string; dateRange?: string; startDate?: string; endDate?: string }) {
     const qb = this.incidentRepo.createQueryBuilder('incident');
 
     if (filters.building) {
-      qb.andWhere('incident.buildingName LIKE :building', { building: `%${filters.building}%` });
+      const buildings = (Array.isArray(filters.building) ? filters.building : String(filters.building).split(','))
+        .map(b => b.trim())
+        .filter(Boolean);
+      if (buildings.length === 1) {
+        qb.andWhere('incident.buildingName LIKE :building', { building: `%${buildings[0]}%` });
+      } else if (buildings.length > 1) {
+        qb.andWhere(new Brackets(bQb => {
+          buildings.forEach((b, idx) => {
+            if (idx === 0) {
+              bQb.where(`incident.buildingName LIKE :b_${idx}`, { [`b_${idx}`]: `%${b}%` });
+            } else {
+              bQb.orWhere(`incident.buildingName LIKE :b_${idx}`, { [`b_${idx}`]: `%${b}%` });
+            }
+          });
+        }));
+      }
     }
 
-    let resolvedContractor = filters.contractor ? filters.contractor.trim() : '';
+    const rawContractors = filters.contractor
+      ? (Array.isArray(filters.contractor) ? filters.contractor : String(filters.contractor).split(',')).map(c => c.trim()).filter(Boolean)
+      : [];
+
     if (filters.userRole === 'CONTRACTOR' || filters.contractorId) {
+      let resolvedContractor = rawContractors[0] || '';
       if (!resolvedContractor && filters.contractorId) {
         try {
           const subRows = await this.incidentRepo.query(
@@ -1434,21 +1514,50 @@ export class IncidentsService implements OnModuleInit {
           { contractor: `%${resolvedContractor}%`, contractorSearch: `%${resolvedContractor}%` },
         );
       }
-    } else if (filters.contractor) {
+    } else if (rawContractors.length === 1) {
       qb.andWhere(
         '(incident.contractorsInvolved LIKE :contractor OR JSON_SEARCH(incident.contractorsInvolved, \'one\', :contractorSearch) IS NOT NULL)',
-        { contractor: `%${filters.contractor}%`, contractorSearch: `%${filters.contractor}%` },
+        { contractor: `%${rawContractors[0]}%`, contractorSearch: `%${rawContractors[0]}%` },
       );
+    } else if (rawContractors.length > 1) {
+      qb.andWhere(new Brackets(cQb => {
+        rawContractors.forEach((c, idx) => {
+          const condition = `(incident.contractorsInvolved LIKE :c_${idx} OR JSON_SEARCH(incident.contractorsInvolved, 'one', :cs_${idx}) IS NOT NULL)`;
+          const params = { [`c_${idx}`]: `%${c}%`, [`cs_${idx}`]: `%${c}%` };
+          if (idx === 0) {
+            cQb.where(condition, params);
+          } else {
+            cQb.orWhere(condition, params);
+          }
+        });
+      }));
     }
 
-    if (filters.dateRange && filters.dateRange !== 'all') {
-      let days = 395;
-      if (filters.dateRange === '30d') days = 30;
-      if (filters.dateRange === '90d') days = 90;
-      if (filters.dateRange === 'year') days = 365;
+    if (filters.startDate) {
+      qb.andWhere('incident.incidentDate >= :startDate', { startDate: filters.startDate });
+    }
+    if (filters.endDate) {
+      qb.andWhere('incident.incidentDate <= :endDate', { endDate: filters.endDate });
+    }
+    if (!filters.startDate && !filters.endDate && filters.dateRange && filters.dateRange !== 'all') {
+      if (filters.dateRange === 'week' || filters.dateRange === 'this_week') {
+        const d = new Date();
+        const day = d.getDay();
+        const diff = (day === 0 ? -6 : 1) - day;
+        const monday = new Date(d);
+        monday.setDate(d.getDate() + diff);
+        const cutoffDate = monday.toISOString().split('T')[0];
+        qb.andWhere('incident.incidentDate >= :cutoffDate', { cutoffDate });
+      } else {
+        let days = 395;
+        if (filters.dateRange === '7d') days = 7;
+        if (filters.dateRange === '30d') days = 30;
+        if (filters.dateRange === '90d') days = 90;
+        if (filters.dateRange === 'year') days = 365;
 
-      const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      qb.andWhere('incident.incidentDate >= :cutoffDate', { cutoffDate: cutoffDate.toISOString().split('T')[0] });
+        const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        qb.andWhere('incident.incidentDate >= :cutoffDate', { cutoffDate: cutoffDate.toISOString().split('T')[0] });
+      }
     }
 
     const incidentsList = await qb.getMany();
@@ -1466,6 +1575,7 @@ export class IncidentsService implements OnModuleInit {
 
     let closed = 0, active = 0, hipo = 0, needsAction = 0;
     const sevCount: Record<string, number> = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    const potSevCount: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     const typeCountMap: Record<string, number> = {};
     const pipeCount: Record<string, number> = { 'Heads-Up': 0, 'Initial': 0, 'Investigation': 0, 'Closed': 0 };
     const frontMap: Record<string, number> = {};
@@ -1483,6 +1593,9 @@ export class IncidentsService implements OnModuleInit {
       else if (act === 3) s = 'HIGH';
       else if (act === 2) s = 'MEDIUM';
       sevCount[s]++;
+
+      const pot = Number(r.potentialSeverity) || 1;
+      if (potSevCount[pot] !== undefined) potSevCount[pot]++;
 
       const ty = (r.categories && r.categories.length > 0) ? r.categories[0] : 'Near Miss';
       typeCountMap[ty] = (typeCountMap[ty] || 0) + 1;
@@ -1560,6 +1673,7 @@ export class IncidentsService implements OnModuleInit {
         { label: 'Closed', count: pipeCount['Closed'], color: '#A1A5B3' },
       ],
       types: typeList,
+      potentialSeverity: potSevCount,
       bodyParts: {
         front: frontRes,
         back: backRes,
