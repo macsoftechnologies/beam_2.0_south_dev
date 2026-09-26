@@ -316,10 +316,9 @@ export class SpotCheckPdfService {
 
         <div class="title-banner">
           <div class="banner-text">
-            <h1 class="banner-title">Site HSE Spot Check</h1>
+            <h1 class="banner-title">Spot Check</h1>
             <div class="banner-subtitle">Permit, controls and toolbox talk verification</div>
           </div>
-          <div class="banner-badge">Controlled paper form</div>
         </div>
       </div>
     `;
@@ -329,7 +328,7 @@ export class SpotCheckPdfService {
       <html>
       <head>
         <meta charset="utf-8" />
-        <title>${refNo} - Site HSE Spot Check</title>
+        <title>${refNo} - Spot Check</title>
         <style>
           * { box-sizing: border-box; }
           body {

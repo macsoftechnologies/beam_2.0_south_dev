@@ -82,7 +82,7 @@ export class ObservationPdfService {
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
-        margin: { top: '8mm', bottom: '8mm', left: '8mm', right: '8mm' },
+        margin: { top: '10mm', bottom: '10mm', left: '14mm', right: '14mm' },
       });
       return Buffer.from(pdfBytes);
     } catch (err) {
@@ -238,221 +238,386 @@ export class ObservationPdfService {
   <meta charset="UTF-8" />
   <title>Safety Observation - ${obs.observationNumber}</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    body { font-size: 11px; color: #1e293b; background: #fff; line-height: 1.4; padding: 4px; }
-    .header-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; border-bottom: 2px solid #0f172a; padding-bottom: 8px; }
-    .header-table td { vertical-align: middle; }
-    .title-block { text-align: center; }
-    .title-main { font-size: 17px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
-    .title-sub { font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px; }
-    .meta-box { border: 1px solid #cbd5e1; background: #f8fafc; padding: 6px 10px; border-radius: 4px; font-size: 10.5px; }
-    .meta-box b { color: #0f172a; }
-    
-    .section-card { border: 1px solid #cbd5e1; border-radius: 4px; margin-bottom: 12px; overflow: hidden; page-break-inside: avoid; }
-    .section-header { background: #1e293b; color: #fff; padding: 5px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-    .section-body { padding: 8px 10px; }
-    
-    .data-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-    .data-table th, .data-table td { padding: 5px 8px; border: 1px solid #e2e8f0; text-align: left; }
-    .data-table td.label { width: 22%; background: #f8fafc; font-weight: 600; color: #475569; }
-    .data-table td.val { width: 28%; color: #0f172a; }
-    
-    .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
-    .badge-green { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-    .badge-red { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-    .badge-orange { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
-    .badge-blue { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
-    
-    .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-    .photo-thumb { width: 110px; height: 85px; object-fit: cover; border-radius: 4px; border: 1px solid #cbd5e1; }
-    
-    .history-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 4px; }
-    .history-table th { background: #f1f5f9; padding: 5px 8px; border: 1px solid #cbd5e1; font-weight: 700; color: #334155; text-align: left; }
-    .history-table td { padding: 4px 8px; border: 1px solid #e2e8f0; color: #334155; }
-    
-    .footer-note { text-align: center; font-size: 9.5px; color: #64748b; margin-top: 14px; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 9px;
+      color: #0f172a;
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      line-height: 1.35;
+    }
+
+    /* ── Header & Logos (Spot Check Standard) ── */
+    .header-container {
+      margin-bottom: 8px;
+    }
+    .logo-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 6px;
+      margin-bottom: 8px;
+    }
+    .logo-left {
+      display: flex;
+      align-items: center;
+    }
+    .logo-right {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .title-banner {
+      background: #111c38;
+      color: #ffffff;
+      padding: 10px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .banner-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      font-family: Georgia, 'Times New Roman', serif;
+      letter-spacing: 0.5px;
+    }
+    .banner-subtitle {
+      font-size: 9px;
+      color: #e2e8f0;
+      margin-top: 3px;
+    }
+    .banner-badge {
+      font-size: 8.5px;
+      font-weight: 700;
+      color: #93c5fd;
+      border: 1px solid #3b82f6;
+      padding: 2.5px 8px;
+      border-radius: 2px;
+      background: rgba(59, 130, 246, 0.15);
+    }
+
+    /* ── Section Headings & Dividers ── */
+    .section-hdr {
+      background: #111c38;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 4.5px 8px;
+      margin-top: 8px;
+      margin-bottom: 0px;
+      letter-spacing: 0.5px;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    .instructions-text {
+      font-size: 7.5px;
+      color: #475569;
+      font-style: italic;
+      margin: 3px 0 5px 0;
+    }
+
+    /* ── Spot Check Standard Grid Tables ── */
+    table.sc-grid {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9px;
+      margin-bottom: 6px;
+    }
+    table.sc-grid th, table.sc-grid td {
+      border: 1px solid #cbd5e1;
+      padding: 4.5px 7px;
+      vertical-align: middle;
+    }
+    table.sc-grid tr {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .lbl {
+      background: #f8fafc;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .val {
+      color: #0f172a;
+    }
+
+    /* ── Checkpoints / Table Header ── */
+    .chk-table-hdr th {
+      background: #111c38;
+      color: #ffffff;
+      font-size: 8.5px;
+      font-weight: 700;
+      padding: 5px 7px;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Status Badges ── */
+    .chk-status-badge {
+      display: inline-block;
+      font-size: 7.5px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .chk-status-badge.green {
+      background: #dcfce7;
+      color: #15803d;
+      border: 1px solid #86efac;
+    }
+    .chk-status-badge.yellow {
+      background: #fef3c7;
+      color: #b45309;
+      border: 1px solid #fde68a;
+    }
+    .chk-status-badge.red {
+      background: #fee2e2;
+      color: #b91c1c;
+      border: 1px solid #fca5a5;
+    }
+    .chk-status-badge.blue {
+      background: #e0f2fe;
+      color: #0369a1;
+      border: 1px solid #7dd3fc;
+    }
+
+    /* ── Visual Evidence ── */
+    .photos-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .item-photo {
+      width: 70px;
+      height: 50px;
+      object-fit: cover;
+      border-radius: 2px;
+      border: 1px solid #cbd5e1;
+    }
+
+    /* ── Footer ── */
+    .page-footer-note {
+      text-align: center;
+      font-size: 7.5px;
+      font-style: italic;
+      color: #64748b;
+      margin-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 4px;
+    }
   </style>
 </head>
 <body>
   <!-- Header -->
-  <table class="header-table">
-    <tr>
-      <td style="width: 25%;">
-        ${nneLogoBase64 ? `<img src="${nneLogoBase64}" style="height: 38px; object-fit: contain;" alt="NNE Logo" />` : '<b style="font-size: 18px; color: #0f172a;">NNE</b>'}
-      </td>
-      <td style="width: 50%;" class="title-block">
-        <div class="title-main">Safety Observation Report</div>
-        <div class="title-sub">Official Closed Record &amp; Verification Sign-off</div>
-      </td>
-      <td style="width: 25%; text-align: right;">
-        ${projectLogoBase64 ? `<img src="${projectLogoBase64}" style="height: 38px; object-fit: contain;" alt="Project Logo" />` : ''}
-      </td>
-    </tr>
-  </table>
-
-  <!-- Meta Header Bar -->
-  <table style="width: 100%; margin-bottom: 12px; font-size: 10.5px;">
-    <tr>
-      <td style="width: 50%;">
-        <div class="meta-box">
-          <b>Observation Ref:</b> <span style="font-family: monospace; font-size: 12px; font-weight: 700; color: #0284c7;">${obs.observationNumber}</span><br />
-          <b>Project Name:</b> ${obs.projectName || 'M3SOUTH'}<br />
-          <b>Date of Observation:</b> ${this.formatDate(obs.observationDate || obs.createdTime)} ${obs.observationTime ? `(${obs.observationTime})` : ''}
-        </div>
-      </td>
-      <td style="width: 50%;">
-        <div class="meta-box">
-          <b>Status:</b> <span class="badge ${isClosed ? 'badge-green' : 'badge-orange'}">${obs.status}</span><br />
-          <b>Observation Type:</b> <span class="badge ${isPositive ? 'badge-green' : 'badge-red'}">${isPositive ? 'Positive' : 'Needs Attention'}</span><br />
-          <b>Risk Level:</b> <span style="font-weight: 700;">${obs.riskLevel || 'MEDIUM'}</span>
-        </div>
-      </td>
-    </tr>
-  </table>
-
-  <!-- General & Classification Details -->
-  <div class="section-card">
-    <div class="section-header">Observation Classification &amp; Location</div>
-    <table class="data-table">
-      <tr>
-        <td class="label">Subject / Title</td>
-        <td class="val" colspan="3"><b>${obs.subject || '-'}</b></td>
-      </tr>
-      <tr>
-        <td class="label">Nature of Finding</td>
-        <td class="val">${obs.natureOfFinding || '-'}</td>
-        <td class="label">Safety Category</td>
-        <td class="val">${obs.safetyCategory || '-'}</td>
-      </tr>
-      <tr>
-        <td class="label">Subcategory</td>
-        <td class="val">${obs.subcategory || 'N/A'}</td>
-        <td class="label">Target Deadline</td>
-        <td class="val">${this.formatDate(obs.deadline)}</td>
-      </tr>
-      <tr>
-        <td class="label">Building / Area</td>
-        <td class="val">${obs.buildingName || '-'}</td>
-        <td class="label">Floor Level</td>
-        <td class="val">${obs.floorLevel || '-'}</td>
-      </tr>
-      <tr>
-        <td class="label">Specific Location</td>
-        <td class="val" colspan="3">${obs.specificLocation || '-'}</td>
-      </tr>
-      <tr>
-        <td class="label">Assigned Contractor</td>
-        <td class="val"><b>${obs.assignedContractorName || 'N/A'}</b></td>
-        <td class="label">Reported By</td>
-        <td class="val">${obs.createdByUserName || 'Safety Inspector'} (${obs.createdByRole || 'DEPARTMENT'})</td>
-      </tr>
-    </table>
-  </div>
-
-  <!-- Observation Description & Initial Finding -->
-  <div class="section-card">
-    <div class="section-header">Finding Description &amp; Immediate Action</div>
-    <div class="section-body">
-      <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Detailed Description / Observations:</div>
-      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 7px 10px; font-size: 10.5px; white-space: pre-wrap; margin-bottom: 8px;">
-        ${obs.description || 'No detailed description recorded.'}
+  <div class="header-container">
+    <div class="logo-row">
+      <div class="logo-left">
+        ${projectLogoBase64 ? `<img src="${projectLogoBase64}" style="height: 38px; object-fit: contain;" alt="Novo Nordisk" />` : '<div style="font-weight: 800; font-size: 15px; color: #0f172a;">Novo Nordisk</div>'}
       </div>
+      <div class="logo-right">
+        ${nneLogoBase64 ? `<img src="${nneLogoBase64}" style="height: 32px; object-fit: contain;" alt="NNE" />` : '<div style="font-size: 22px; font-weight: 900; color: #111c38;">nne&reg;</div>'}
+      </div>
+    </div>
 
-      ${obs.immediateActionTaken ? `
-      <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Immediate Action Taken on Site:</div>
-      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 7px 10px; font-size: 10.5px; white-space: pre-wrap; margin-bottom: 8px;">
-        ${obs.immediateActionTaken}
-      </div>` : ''}
-
-      ${resolvedPhotos && resolvedPhotos.length > 0 ? `
-      <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Initial Evidence Photographs (${resolvedPhotos.length}):</div>
-      <div class="photo-grid">
-        ${resolvedPhotos.map((p) => `<img class="photo-thumb" src="${p}" alt="Finding Photo" />`).join('')}
-      </div>` : ''}
+    <div class="title-banner">
+      <div class="banner-text">
+        <h1 class="banner-title">Safety Observation Report</h1>
+        <div class="banner-subtitle">Official HSE Record &bull; Ref: <b>${obs.observationNumber}</b> &bull; Date: <b>${this.formatDate(obs.observationDate || obs.createdTime)}</b></div>
+      </div>
+      <div class="banner-badge">Controlled Safety Record</div>
     </div>
   </div>
 
-  <!-- Contractor Resolution Details (if available) -->
+  <!-- General Info & Classification Metrics -->
+  <div class="section-hdr">GENERAL INFORMATION &amp; METRICS</div>
+  <table class="sc-grid">
+    <tr>
+      <td class="lbl" style="width: 18%;">Observation Ref:</td>
+      <td class="val" style="width: 32%; font-weight: 700; color: #0284c7;">${obs.observationNumber}</td>
+      <td class="lbl" style="width: 18%;">Observation Date:</td>
+      <td class="val" style="width: 32%;">${this.formatDate(obs.observationDate || obs.createdTime)} ${obs.observationTime ? `(${obs.observationTime})` : ''}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Project Name:</td>
+      <td class="val">${obs.projectName || 'M3SOUTH'}</td>
+      <td class="lbl">Status:</td>
+      <td class="val">
+        <span class="chk-status-badge ${isClosed ? 'green' : 'yellow'}">${obs.status}</span>
+      </td>
+    </tr>
+    <tr>
+      <td class="lbl">Observation Type:</td>
+      <td class="val">
+        <span class="chk-status-badge ${isPositive ? 'green' : 'red'}">${isPositive ? 'Positive Observation' : 'Needs Attention'}</span>
+      </td>
+      <td class="lbl">Risk Level:</td>
+      <td class="val">
+        <span class="chk-status-badge ${String(obs.riskLevel || '').toUpperCase() === 'HIGH' ? 'red' : String(obs.riskLevel || '').toUpperCase() === 'LOW' ? 'green' : 'yellow'}">${obs.riskLevel || 'MEDIUM'}</span>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Location & Assignment -->
+  <div class="section-hdr">OBSERVATION CLASSIFICATION &amp; LOCATION</div>
+  <table class="sc-grid">
+    <tr>
+      <td class="lbl" style="width: 18%;">Subject / Title:</td>
+      <td class="val" colspan="3" style="font-weight: 700;">${obs.subject || '-'}</td>
+    </tr>
+    <tr>
+      <td class="lbl" style="width: 18%;">Nature of Finding:</td>
+      <td class="val" style="width: 32%;">${obs.natureOfFinding || '-'}</td>
+      <td class="lbl" style="width: 18%;">Safety Category:</td>
+      <td class="val" style="width: 32%;">${obs.safetyCategory || '-'}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Subcategory:</td>
+      <td class="val">${obs.subcategory || 'N/A'}</td>
+      <td class="lbl">Target Deadline:</td>
+      <td class="val">${this.formatDate(obs.deadline)}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Building / Area:</td>
+      <td class="val">${obs.buildingName || '-'}</td>
+      <td class="lbl">Floor Level:</td>
+      <td class="val">${obs.floorLevel || '-'}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Specific Location:</td>
+      <td class="val" colspan="3">${obs.specificLocation || '-'}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Assigned Contractor:</td>
+      <td class="val" style="font-weight: 700; color: #0284c7;">${obs.assignedContractorName || 'N/A'}</td>
+      <td class="lbl">Reported By:</td>
+      <td class="val">${obs.createdByUserName || 'Safety Inspector'} (${obs.createdByRole || 'DEPARTMENT'})</td>
+    </tr>
+  </table>
+
+  <!-- Findings & Immediate Action -->
+  <div class="section-hdr">FINDING DESCRIPTION &amp; IMMEDIATE ACTION</div>
+  <table class="sc-grid">
+    <tr>
+      <td class="lbl" style="width: 18%; vertical-align: top;">Detailed Description:</td>
+      <td class="val" colspan="3" style="background: #fdfdfd; white-space: pre-wrap; line-height: 1.4;">${obs.description || 'No detailed description recorded.'}</td>
+    </tr>
+    ${obs.immediateActionTaken ? `
+    <tr>
+      <td class="lbl" style="vertical-align: top;">Immediate Action:</td>
+      <td class="val" colspan="3" style="background: #fdfdfd; white-space: pre-wrap; line-height: 1.4;">${obs.immediateActionTaken}</td>
+    </tr>
+    ` : ''}
+    ${resolvedPhotos && resolvedPhotos.length > 0 ? `
+    <tr>
+      <td class="lbl" style="vertical-align: top;">Initial Evidence (${resolvedPhotos.length}):</td>
+      <td class="val" colspan="3">
+        <div class="photos-grid">
+          ${resolvedPhotos.map((p) => `<img class="item-photo" src="${p}" alt="Finding Photo" />`).join('')}
+        </div>
+      </td>
+    </tr>
+    ` : ''}
+  </table>
+
+  <!-- Contractor Corrective Action & Resolution (if available) -->
   ${(obs.resolutionNotes || (resolvedResolutionPhotos && resolvedResolutionPhotos.length > 0)) ? `
-  <div class="section-card">
-    <div class="section-header">Contractor Corrective Action &amp; Resolution</div>
-    <div class="section-body">
-      <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Resolution Notes &amp; Actions Implemented:</div>
-      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 7px 10px; font-size: 10.5px; white-space: pre-wrap; margin-bottom: 8px;">
-        ${obs.resolutionNotes || 'Corrective action implemented as per HSE requirements.'}
-      </div>
+  <div class="section-hdr">CONTRACTOR CORRECTIVE ACTION &amp; RESOLUTION</div>
+  <table class="sc-grid">
+    <tr>
+      <td class="lbl" style="width: 18%; vertical-align: top;">Resolution Notes:</td>
+      <td class="val" colspan="3" style="background: #f0fdf4; white-space: pre-wrap; line-height: 1.4;">${obs.resolutionNotes || 'Corrective action implemented as per HSE requirements.'}</td>
+    </tr>
+    ${resolvedResolutionPhotos && resolvedResolutionPhotos.length > 0 ? `
+    <tr>
+      <td class="lbl" style="vertical-align: top;">Resolution Evidence (${resolvedResolutionPhotos.length}):</td>
+      <td class="val" colspan="3">
+        <div class="photos-grid">
+          ${resolvedResolutionPhotos.map((p) => `<img class="item-photo" src="${p}" alt="Resolution Photo" />`).join('')}
+        </div>
+      </td>
+    </tr>
+    ` : ''}
+  </table>
+  ` : ''}
 
-      ${resolvedResolutionPhotos && resolvedResolutionPhotos.length > 0 ? `
-      <div style="font-weight: 700; color: #475569; margin-bottom: 3px;">Resolution Evidence Photographs (${resolvedResolutionPhotos.length}):</div>
-      <div class="photo-grid">
-        ${resolvedResolutionPhotos.map((p) => `<img class="photo-thumb" src="${p}" alt="Resolution Photo" />`).join('')}
-      </div>` : ''}
-    </div>
-  </div>` : ''}
-
-  <!-- Sign-off & Closure Verification -->
-  <div class="section-card">
-    <div class="section-header">HSE Department Sign-off &amp; Final Closure</div>
-    <table class="data-table">
-      <tr>
-        <td class="label">Closed By</td>
-        <td class="val"><b>${obs.closedBy || 'HSE Lead / Site Manager'}</b></td>
-        <td class="label">Closure Date &amp; Time</td>
-        <td class="val"><b>${this.formatDateTime(obs.closedTime || obs.updatedTime)}</b></td>
-      </tr>
-      <tr>
-        <td class="label">Closure Verification Comments</td>
-        <td class="val" colspan="3">${obs.closureComments || 'Observation verified, documented, and closed in accordance with applicable project HSE requirements.'}</td>
-      </tr>
-      ${closureSigBase64 ? `
-      <tr>
-        <td class="label" style="vertical-align: middle;">Digital Signature</td>
-        <td class="val" colspan="3">
-          <img src="${closureSigBase64}" style="max-height: 48px; object-fit: contain;" alt="Closure Signature" />
-        </td>
-      </tr>` : ''}
-    </table>
-  </div>
+  <!-- HSE Sign-off & Closure Verification -->
+  <div class="section-hdr">HSE VERIFICATION &amp; FINAL CLOSURE</div>
+  <table class="sc-grid">
+    <tr>
+      <td class="lbl" style="width: 18%;">Closed By:</td>
+      <td class="val" style="width: 32%; font-weight: 700;">${obs.closedBy || 'HSE Lead / Site Manager'}</td>
+      <td class="lbl" style="width: 18%;">Closure Date &amp; Time:</td>
+      <td class="val" style="width: 32%; font-weight: 700;">${this.formatDateTime(obs.closedTime || obs.updatedTime)}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Closure Comments:</td>
+      <td class="val" colspan="3">${obs.closureComments || 'Observation verified, documented, and closed in accordance with applicable project HSE requirements.'}</td>
+    </tr>
+    <tr>
+      <td class="lbl">Auditor Verification:</td>
+      <td class="val" colspan="3" style="height: 52px; vertical-align: bottom;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; padding-top: 10px;">
+          <div style="font-family: 'Brush Script MT', cursive, sans-serif; font-size: 18px; color: #111c38; font-weight: 700;">
+            ${closureSigBase64 ? `<img src="${closureSigBase64}" style="max-height: 44px; object-fit: contain;" alt="Closure Signature" />` : (obs.closedBy || 'HSE Lead / Site Manager')}
+          </div>
+          <div style="border-top: 1px dashed #94a3b8; width: 220px; text-align: center; font-size: 8px; color: #64748b; padding-top: 3px;">
+            Authorized HSE Sign-Off &amp; Stamp
+          </div>
+        </div>
+      </td>
+    </tr>
+  </table>
 
   <!-- Complete Audit Trail History -->
   ${resolvedHistory && resolvedHistory.length > 0 ? `
-  <div class="section-card">
-    <div class="section-header">Action History &amp; Audit Trail</div>
-    <table class="history-table">
-      <thead>
-        <tr>
-          <th style="width: 17%;">Action</th>
-          <th style="width: 20%;">Performed By</th>
-          <th style="width: 18%;">Date &amp; Time</th>
-          <th style="width: 45%;">Remarks / Details &amp; Attachments</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${resolvedHistory.map((log) => `
-        <tr>
-          <td style="vertical-align: top;"><b>${log.actionType}</b></td>
-          <td style="vertical-align: top;">${log.performedByUserName || 'System'}<br /><span style="color: #64748b; font-size: 9.5px;">(${log.performedByUserRole || '-'})</span></td>
-          <td style="vertical-align: top;">${this.formatDateTime(log.timestamp)}</td>
-          <td style="vertical-align: top;">
-            ${log.previousContractor && log.newContractor ? `<div style="color: #6366f1; font-weight: 600; font-size: 10px; margin-bottom: 3px;">Contractor: ${log.previousContractor} &rarr; ${log.newContractor}</div>` : ''}
-            ${log.remarks ? `<div>${log.remarks}</div>` : '<span style="color: #94a3b8; font-style: italic;">No remarks</span>'}
-            ${log.resolvedLogPhotos && log.resolvedLogPhotos.length > 0 ? `
-            <div style="margin-top: 6px; padding-top: 5px; border-top: 1px dashed #cbd5e1;">
-              <div style="font-size: 9.5px; font-weight: 700; color: #475569; margin-bottom: 3px;">Attached Photos (${log.resolvedLogPhotos.length}):</div>
-              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                ${log.resolvedLogPhotos.map((src) => `
-                  <img src="${src}" style="width: 65px; height: 65px; object-fit: cover; border-radius: 4px; border: 1px solid #cbd5e1;" alt="Log Attachment" />
-                `).join('')}
-              </div>
-            </div>` : ''}
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
-  </div>` : ''}
+  <div class="section-hdr">ACTION HISTORY &amp; AUDIT TRAIL</div>
+  <table class="sc-grid">
+    <thead>
+      <tr class="chk-table-hdr">
+        <th style="width: 15%;">Action</th>
+        <th style="width: 22%;">Performed By</th>
+        <th style="width: 18%;">Date &amp; Time</th>
+        <th style="width: 45%;">Remarks / Details &amp; Attachments</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${resolvedHistory.map((log) => `
+      <tr>
+        <td style="vertical-align: top; font-weight: 700;">${log.actionType}</td>
+        <td style="vertical-align: top;">
+          <b>${log.performedByUserName || 'System'}</b><br />
+          <span style="color: #64748b; font-size: 8px;">(${log.performedByUserRole || '-'})</span>
+        </td>
+        <td style="vertical-align: top; color: #475569;">${this.formatDateTime(log.timestamp)}</td>
+        <td style="vertical-align: top;">
+          ${log.previousContractor && log.newContractor ? `<div style="color: #0284c7; font-weight: 600; font-size: 9px; margin-bottom: 2px;">Contractor: ${log.previousContractor} &rarr; ${log.newContractor}</div>` : ''}
+          ${log.remarks ? `<div>${log.remarks}</div>` : '<span style="color: #94a3b8; font-style: italic;">No remarks</span>'}
+          ${log.resolvedLogPhotos && log.resolvedLogPhotos.length > 0 ? `
+          <div style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed #cbd5e1;">
+            <div style="font-size: 7.5px; font-weight: 700; color: #64748b; margin-bottom: 2px;">ATTACHED PHOTOS (${log.resolvedLogPhotos.length}):</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+              ${log.resolvedLogPhotos.map((src) => `
+                <img src="${src}" style="width: 54px; height: 38px; object-fit: cover; border-radius: 2px; border: 1px solid #cbd5e1;" alt="Log Attachment" />
+              `).join('')}
+            </div>
+          </div>` : ''}
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>` : ''}
 
-  <div class="footer-note">
-    Confidential document generated by BEAM Safety Management System. Retain this record in accordance with the project HSE compliance filing process.
+  <div class="page-footer-note">
+    Novo Nordisk &bull; Site HSE Management System &bull; Safety Observation Record ${obs.observationNumber}
   </div>
 </body>
 </html>`;

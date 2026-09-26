@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, Between } from 'typeorm';
 import { SafetyInspection, SafetyInspectionStatus } from '../entities/safety-inspection.entity';
 import { SafetyInspectionItem, SafetyCheckItemStatus } from '../entities/safety-inspection-item.entity';
+import { SafetyInspectionActionLog, InspectionActionType } from '../entities/safety-inspection-action-log.entity';
 import { Observation } from '../../observations/entities/observation.entity';
 import { CreateSafetyInspectionDto } from '../dtos/create-safety-inspection.dto';
 import { UpdateSafetyInspectionDto } from '../dtos/update-safety-inspection.dto';
@@ -39,6 +40,8 @@ export class SafetyInspectionsService implements OnModuleInit {
     private readonly inspectionRepo: Repository<SafetyInspection>,
     @InjectRepository(SafetyInspectionItem)
     private readonly itemRepo: Repository<SafetyInspectionItem>,
+    @InjectRepository(SafetyInspectionActionLog)
+    private readonly actionLogRepo: Repository<SafetyInspectionActionLog>,
     @InjectRepository(Observation)
     private readonly obsRepo: Repository<Observation>,
   ) {}
@@ -101,6 +104,20 @@ export class SafetyInspectionsService implements OnModuleInit {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
 
+      await this.inspectionRepo.query(`
+        CREATE TABLE IF NOT EXISTS \`safety_inspection_action_logs\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`inspection_id\` INT NOT NULL,
+          \`action_type\` VARCHAR(50) NOT NULL,
+          \`performed_by_user_id\` INT NULL,
+          \`performed_by_user_name\` VARCHAR(255) NOT NULL,
+          \`performed_by_user_role\` VARCHAR(100) NULL,
+          \`remarks\` TEXT NULL,
+          \`timestamp\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT \`fk_si_action_log_inspection\` FOREIGN KEY (\`inspection_id\`) REFERENCES \`safety_inspections\` (\`id\`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+
       this.logger.log('✅ Safety Inspections tables auto-initialization check completed successfully.');
       await this.syncAllPendingInspections();
     } catch (err: any) {
@@ -137,6 +154,30 @@ export class SafetyInspectionsService implements OnModuleInit {
       }
 
       if (allIssues.length === 0) {
+        insp.status = SafetyInspectionStatus.CLOSED;
+        insp.isCompleted = true;
+        await this.inspectionRepo.update(insp.id, {
+          status: SafetyInspectionStatus.CLOSED,
+          isCompleted: true,
+        });
+
+        const lastLog = await this.actionLogRepo.findOne({
+          where: { inspectionId: insp.id },
+          order: { id: 'DESC' },
+        });
+        if (!lastLog || lastLog.actionType !== InspectionActionType.CLOSED) {
+          const closeLog = this.actionLogRepo.create({
+            inspectionId: insp.id,
+            actionType: InspectionActionType.CLOSED,
+            performedByUserId: insp.createdByUserId || undefined,
+            performedByUserName: insp.createdByUserName || 'Safety Inspector',
+            performedByUserRole: insp.createdByRole || 'DEPARTMENT',
+            remarks: 'Inspection automatically closed (no attached observations)',
+          });
+          await this.actionLogRepo.save(closeLog);
+        }
+
+        this.logger.log(`Auto-synced Safety Inspection ${insp.inspectionNumber || insp.id} to CLOSED (no attached observations)`);
         continue;
       }
 
@@ -174,6 +215,23 @@ export class SafetyInspectionsService implements OnModuleInit {
               status: SafetyInspectionStatus.CLOSED,
               isCompleted: true,
             });
+
+            const lastLog = await this.actionLogRepo.findOne({
+              where: { inspectionId: insp.id },
+              order: { id: 'DESC' },
+            });
+            if (!lastLog || lastLog.actionType !== InspectionActionType.CLOSED) {
+              const closeLog = this.actionLogRepo.create({
+                inspectionId: insp.id,
+                actionType: InspectionActionType.CLOSED,
+                performedByUserId: insp.createdByUserId || undefined,
+                performedByUserName: 'System Auto-sync',
+                performedByUserRole: 'SYSTEM',
+                remarks: 'Inspection automatically closed (all attached observations resolved & closed)',
+              });
+              await this.actionLogRepo.save(closeLog);
+            }
+
             this.logger.log(`Auto-synced Safety Inspection ${insp.inspectionNumber || insp.id} to CLOSED (all observations closed)`);
           }
         }
@@ -198,6 +256,123 @@ export class SafetyInspectionsService implements OnModuleInit {
       }
     } catch (err: any) {
       this.logger.warn(`syncAllPendingInspections note: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Called when an observation is closed in ObservationsService.
+   * Finds any open safety inspections that have this observation attached.
+   * If all attached observations for that inspection are now closed,
+   * marks the inspection as CLOSED and stores a CLOSED audit log.
+   */
+  async onObservationClosed(
+    obsId: number,
+    obsNumber?: string,
+    user?: { id?: number; name?: string; role?: string; remarks?: string },
+  ): Promise<void> {
+    try {
+      const openInspections = await this.inspectionRepo.find({
+        where: [
+          { status: SafetyInspectionStatus.IN_PROGRESS },
+          { status: SafetyInspectionStatus.DRAFT },
+        ],
+        relations: { items: true },
+      });
+
+      if (!openInspections || openInspections.length === 0) return;
+
+      for (const insp of openInspections) {
+        let isLinked = false;
+        const allIssues: any[] = [];
+
+        for (const item of (insp.items || [])) {
+          let rawIssues: any[] = [];
+          if (Array.isArray(item.issues)) {
+            rawIssues = item.issues;
+          } else if (typeof item.issues === 'string') {
+            try {
+              const parsed = JSON.parse(item.issues);
+              rawIssues = Array.isArray(parsed) ? parsed : [item.issues];
+            } catch {
+              rawIssues = [];
+            }
+          }
+
+          for (const iss of rawIssues) {
+            if (!iss) continue;
+            allIssues.push(iss);
+            const issId = iss.observationId || (typeof iss.id === 'number' ? iss.id : (!isNaN(Number(iss.id)) ? Number(iss.id) : null));
+            const issNum = iss.observationNumber || (typeof iss.id === 'string' && iss.id.startsWith('SO-') ? iss.id : null);
+            if ((issId && Number(issId) === Number(obsId)) || (obsNumber && issNum && String(issNum).trim() === String(obsNumber).trim())) {
+              isLinked = true;
+            }
+          }
+        }
+
+        if (!isLinked) continue;
+
+        const obsIds: number[] = [];
+        const obsNumbers: string[] = [];
+        for (const iss of allIssues) {
+          const oId = iss.observationId || (typeof iss.id === 'number' ? iss.id : (!isNaN(Number(iss.id)) ? Number(iss.id) : null));
+          if (oId) obsIds.push(Number(oId));
+          const oNum = iss.observationNumber || (typeof iss.id === 'string' && iss.id.startsWith('SO-') ? iss.id : null);
+          if (oNum) obsNumbers.push(String(oNum).trim());
+        }
+
+        if (obsIds.length === 0 && obsNumbers.length === 0) {
+          continue;
+        }
+
+        const whereConds: any[] = [];
+        if (obsIds.length > 0) whereConds.push({ id: In(obsIds) });
+        if (obsNumbers.length > 0) whereConds.push({ observationNumber: In(obsNumbers) });
+
+        const foundObs = await this.obsRepo.find({
+          where: whereConds,
+          select: { id: true, observationNumber: true, status: true },
+        });
+
+        // The observation `obsId` was just closed in this operation
+        const allClosed = foundObs.length > 0 && foundObs.every((o) => {
+          if (Number(o.id) === Number(obsId) || (obsNumber && o.observationNumber === obsNumber)) {
+            return true;
+          }
+          return String(o.status).toUpperCase() === 'CLOSED';
+        });
+
+        if (allClosed) {
+          insp.status = SafetyInspectionStatus.CLOSED;
+          insp.isCompleted = true;
+          await this.inspectionRepo.update(insp.id, {
+            status: SafetyInspectionStatus.CLOSED,
+            isCompleted: true,
+          });
+
+          const lastLog = await this.actionLogRepo.findOne({
+            where: { inspectionId: insp.id },
+            order: { id: 'DESC' },
+          });
+
+          if (!lastLog || lastLog.actionType !== InspectionActionType.CLOSED) {
+            const closeLog = this.actionLogRepo.create({
+              inspectionId: insp.id,
+              actionType: InspectionActionType.CLOSED,
+              performedByUserId: user?.id || undefined,
+              performedByUserName: user?.name || 'Department / HSE',
+              performedByUserRole: user?.role || 'DEPARTMENT',
+              remarks: user?.remarks
+                ? `Inspection closed (Observation ${obsNumber || ('#' + obsId)} closed: ${user.remarks})`
+                : `Inspection closed automatically (all attached observations resolved and closed)`,
+            });
+            await this.actionLogRepo.save(closeLog);
+          }
+
+          this.logger.log(`Safety Inspection ${insp.inspectionNumber || insp.id} marked as CLOSED after closing observation ${obsNumber || obsId}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed in onObservationClosed for obs ${obsId}: ${err?.message || err}`);
     }
   }
 
@@ -291,7 +466,25 @@ export class SafetyInspectionsService implements OnModuleInit {
       score = calculated;
     }
 
-    const isClosed = dto.isCompleted === true || dto.isCompleted === 'true' || dto.isCompleted === 1 || dto.status === 'COMPLETED' || dto.status === 'CLOSED';
+    let totalAttachedSOs = 0;
+    for (const item of itemsToInsert) {
+      let rawIssues: any[] = [];
+      if (Array.isArray(item.issues)) {
+        rawIssues = item.issues;
+      } else if (typeof item.issues === 'string') {
+        try {
+          const parsed = JSON.parse(item.issues);
+          rawIssues = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          rawIssues = [];
+        }
+      }
+      const validSOs = rawIssues.filter((iss: any) => iss && (iss.observationId || iss.observationNumber || iss.id));
+      totalAttachedSOs += validSOs.length;
+    }
+
+    // Rule: if no SO attached to inspection -> CLOSED; if SO attached -> IN_PROGRESS
+    const isClosed = totalAttachedSOs === 0;
 
     const inspection = this.inspectionRepo.create({
       inspectionNumber,
@@ -327,6 +520,32 @@ export class SafetyInspectionsService implements OnModuleInit {
       }),
     );
     savedInspection.items = await this.itemRepo.save(itemEntities);
+
+    try {
+      const actionLog = this.actionLogRepo.create({
+        inspectionId: savedInspection.id,
+        actionType: InspectionActionType.CREATED,
+        performedByUserId: user?.id || dto.createdByUserId,
+        performedByUserName: user?.name || dto.createdByUserName || 'Safety Inspector',
+        performedByUserRole: user?.role || dto.createdByRole || 'DEPARTMENT',
+        remarks: dto.remarks || 'Safety inspection record created',
+      });
+      await this.actionLogRepo.save(actionLog);
+
+      if (isClosed) {
+        const closedLog = this.actionLogRepo.create({
+          inspectionId: savedInspection.id,
+          actionType: InspectionActionType.CLOSED,
+          performedByUserId: user?.id || dto.createdByUserId,
+          performedByUserName: user?.name || dto.createdByUserName || 'Safety Inspector',
+          performedByUserRole: user?.role || dto.createdByRole || 'DEPARTMENT',
+          remarks: 'Inspection closed upon creation (no observations required)',
+        });
+        await this.actionLogRepo.save(closedLog);
+      }
+    } catch (logErr: any) {
+      this.logger.warn(`Failed to log creation for inspection ${savedInspection.id}: ${logErr?.message}`);
+    }
 
     this.logger.log(`Created Safety Inspection ${savedInspection.inspectionNumber} (ID: ${savedInspection.id})`);
     return savedInspection;
@@ -463,6 +682,43 @@ export class SafetyInspectionsService implements OnModuleInit {
 
     await this.syncInspectionStatusWithObservations([inspection]);
 
+    let history = await this.actionLogRepo.find({
+      where: { inspectionId: inspection.id },
+      order: { id: 'ASC' },
+    });
+
+    if (history.length === 0 && inspection.createdTime) {
+      const initialLog = this.actionLogRepo.create({
+        inspectionId: inspection.id,
+        actionType: InspectionActionType.CREATED,
+        performedByUserId: inspection.createdByUserId,
+        performedByUserName: inspection.createdByUserName || 'Safety Inspector',
+        performedByUserRole: inspection.createdByRole || 'DEPARTMENT',
+        remarks: 'Safety inspection record created',
+        timestamp: inspection.createdTime,
+      });
+      await this.actionLogRepo.save(initialLog);
+      history.push(initialLog);
+    }
+
+    const isCurrentlyClosed = inspection.status === SafetyInspectionStatus.CLOSED || (inspection.status as any) === 'COMPLETED' || inspection.isCompleted;
+    const hasClosedLog = history.some((l) => l.actionType === InspectionActionType.CLOSED);
+    if (isCurrentlyClosed && !hasClosedLog) {
+      const closeLog = this.actionLogRepo.create({
+        inspectionId: inspection.id,
+        actionType: InspectionActionType.CLOSED,
+        performedByUserId: inspection.createdByUserId || undefined,
+        performedByUserName: inspection.modifiedByUserName || inspection.createdByUserName || 'Safety Inspector',
+        performedByUserRole: inspection.createdByRole || 'DEPARTMENT',
+        remarks: 'Safety inspection closed',
+        timestamp: inspection.updatedTime || new Date(),
+      });
+      await this.actionLogRepo.save(closeLog);
+      history.push(closeLog);
+    }
+
+    inspection.history = history;
+
     return inspection;
   }
 
@@ -471,6 +727,7 @@ export class SafetyInspectionsService implements OnModuleInit {
    */
   async update(id: number, dto: UpdateSafetyInspectionDto, user?: any): Promise<SafetyInspection> {
     const inspection = await this.findOne(id);
+    const wasClosed = inspection.isCompleted || inspection.status === SafetyInspectionStatus.CLOSED;
 
     if (dto.projectName !== undefined) inspection.projectName = dto.projectName;
     if (dto.projectNo !== undefined) inspection.projectNo = dto.projectNo;
@@ -562,7 +819,140 @@ export class SafetyInspectionsService implements OnModuleInit {
       }
     }
 
+    const reqStatusUpper = String(dto.status || '').toUpperCase();
+    const isExplicitClose =
+      dto.actionType === InspectionActionType.CLOSED ||
+      reqStatusUpper === 'CLOSED' ||
+      reqStatusUpper === 'COMPLETED' ||
+      dto.isCompleted === true ||
+      dto.isCompleted === 'true' ||
+      dto.isCompleted === 1;
+
+    const isExplicitReopen =
+      dto.actionType === InspectionActionType.REOPENED ||
+      reqStatusUpper === 'IN_PROGRESS' ||
+      dto.isCompleted === false ||
+      dto.isCompleted === 'false' ||
+      dto.isCompleted === 0;
+
+    if (isExplicitClose) {
+      inspection.status = SafetyInspectionStatus.CLOSED;
+      inspection.isCompleted = true;
+    } else if (isExplicitReopen) {
+      inspection.status = SafetyInspectionStatus.IN_PROGRESS;
+      inspection.isCompleted = false;
+    } else if (dto.checklistItems !== undefined) {
+      let totalAttachedSOs = 0;
+      const allItems = await this.itemRepo.find({ where: { inspectionId: inspection.id } });
+      const obsIds: number[] = [];
+      const obsNumbers: string[] = [];
+
+      for (const itm of allItems) {
+        let rawIssues: any[] = [];
+        if (Array.isArray(itm.issues)) {
+          rawIssues = itm.issues;
+        } else if (typeof itm.issues === 'string') {
+          try {
+            const parsed = JSON.parse(itm.issues);
+            rawIssues = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            rawIssues = [];
+          }
+        }
+        const validSOs = rawIssues.filter((iss: any) => iss && (iss.observationId || iss.observationNumber || iss.id));
+        totalAttachedSOs += validSOs.length;
+        for (const iss of validSOs) {
+          const oId = iss.observationId || (typeof iss.id === 'number' ? iss.id : (!isNaN(Number(iss.id)) ? Number(iss.id) : null));
+          if (oId) obsIds.push(Number(oId));
+          const oNum = iss.observationNumber || (typeof iss.id === 'string' && iss.id.startsWith('SO-') ? iss.id : null);
+          if (oNum) obsNumbers.push(String(oNum).trim());
+        }
+      }
+
+      if (totalAttachedSOs === 0) {
+        inspection.status = SafetyInspectionStatus.CLOSED;
+        inspection.isCompleted = true;
+      } else {
+        let hasOpenSO = true;
+        try {
+          const whereConds: any[] = [];
+          if (obsIds.length > 0) whereConds.push({ id: In(obsIds) });
+          if (obsNumbers.length > 0) whereConds.push({ observationNumber: In(obsNumbers) });
+          if (whereConds.length > 0) {
+            const foundObs = await this.obsRepo.find({
+              where: whereConds,
+              select: { id: true, observationNumber: true, status: true },
+            });
+            if (foundObs.length > 0 && foundObs.every((o) => String(o.status).toUpperCase() === 'CLOSED')) {
+              hasOpenSO = false;
+            }
+          }
+        } catch {}
+
+        if (hasOpenSO) {
+          inspection.status = SafetyInspectionStatus.IN_PROGRESS;
+          inspection.isCompleted = false;
+        } else {
+          inspection.status = SafetyInspectionStatus.CLOSED;
+          inspection.isCompleted = true;
+        }
+      }
+    }
+
     await this.inspectionRepo.save(inspection);
+
+    try {
+      let actionType = dto.actionType;
+      const lastLog = await this.actionLogRepo.findOne({
+        where: { inspectionId: inspection.id },
+        order: { id: 'DESC' },
+      });
+      const lastAction = lastLog?.actionType;
+
+      if (!actionType) {
+        if (inspection.status === SafetyInspectionStatus.CLOSED || inspection.isCompleted) {
+          if (lastAction !== InspectionActionType.CLOSED) {
+            actionType = InspectionActionType.CLOSED;
+          } else {
+            actionType = InspectionActionType.UPDATED;
+          }
+        } else if (inspection.status === SafetyInspectionStatus.IN_PROGRESS || !inspection.isCompleted) {
+          if (lastAction === InspectionActionType.CLOSED) {
+            actionType = InspectionActionType.REOPENED;
+          } else {
+            actionType = InspectionActionType.UPDATED;
+          }
+        } else {
+          actionType = InspectionActionType.UPDATED;
+        }
+      }
+
+      const shouldLog =
+        actionType === InspectionActionType.CLOSED
+          ? (lastAction !== InspectionActionType.CLOSED || dto.actionType === InspectionActionType.CLOSED)
+          : true;
+
+      if (shouldLog) {
+        const log = this.actionLogRepo.create({
+          inspectionId: inspection.id,
+          actionType: actionType as any,
+          performedByUserId: user?.id || dto.modifiedByUserId || dto.createdByUserId,
+          performedByUserName: user?.name || dto.modifiedByUserName || dto.createdByUserName || 'Safety Inspector',
+          performedByUserRole: user?.role || dto.modifiedByUserRole || dto.createdByRole || 'DEPARTMENT',
+          remarks: dto.remarks || (
+            actionType === InspectionActionType.REOPENED
+              ? 'Safety inspection reopened'
+              : actionType === InspectionActionType.CLOSED
+              ? 'Safety inspection marked as closed'
+              : 'Safety inspection details updated'
+          ),
+        });
+        await this.actionLogRepo.save(log);
+      }
+    } catch (logErr: any) {
+      this.logger.warn(`Failed to log action for inspection ${inspection.id}: ${logErr?.message}`);
+    }
+
     return await this.findOne(id);
   }
 

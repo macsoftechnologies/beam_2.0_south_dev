@@ -51,6 +51,9 @@ export class Employee {
   @Column({ nullable: true })
   access: string;
 
+  @Column({ name: 'module_access', nullable: true })
+  moduleAccess: string;
+
   @Column({ nullable: true })
   username: string;
 

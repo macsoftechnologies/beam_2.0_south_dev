@@ -9,6 +9,7 @@ import { ContractorReviewDto, ContractorAction, ReassignObservationDto, ResolveO
 import { IncidentsService } from '../../incidents/services/incidents.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { saveBase64Signature } from '../../incidents/utils/signature-storage.util';
+import { SafetyInspectionsService } from '../../safety-inspections/services/safety-inspections.service';
 
 @Injectable()
 export class ObservationsService implements OnModuleInit {
@@ -21,6 +22,8 @@ export class ObservationsService implements OnModuleInit {
     private readonly logRepo: Repository<ObservationActionLog>,
     @Inject(forwardRef(() => IncidentsService))
     private readonly incidentsService: IncidentsService,
+    @Inject(forwardRef(() => SafetyInspectionsService))
+    private readonly safetyInspectionsService: SafetyInspectionsService,
     private readonly notificationsService: NotificationsService,
   ) {}
 
@@ -484,6 +487,20 @@ export class ObservationsService implements OnModuleInit {
       'DEPARTMENT',
       dto.closureComments,
     ).catch((err) => this.logger.error('Observation notification error on close:', err));
+
+    // Auto-close any linked safety inspection if all its attached observations are now closed
+    try {
+      if (this.safetyInspectionsService) {
+        await this.safetyInspectionsService.onObservationClosed(id, savedObs.observationNumber, {
+          id: dto.closedByUserId,
+          name: dto.closedBy,
+          role: 'DEPARTMENT',
+          remarks: dto.closureComments,
+        });
+      }
+    } catch (siErr: any) {
+      this.logger.warn(`Failed to sync safety inspection on observation close: ${siErr?.message || siErr}`);
+    }
 
     const history = await this.logRepo.find({ where: { observationId: id }, order: { id: 'ASC' } });
 

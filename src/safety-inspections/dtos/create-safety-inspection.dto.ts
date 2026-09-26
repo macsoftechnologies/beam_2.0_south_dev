@@ -104,5 +104,21 @@ export class CreateSafetyInspectionDto {
   modifiedByUserName?: string;
 
   @IsOptional()
+  @IsNumber()
+  modifiedByUserId?: number;
+
+  @IsOptional()
+  @IsString()
+  modifiedByUserRole?: string;
+
+  @IsOptional()
+  @IsString()
+  actionType?: string;
+
+  @IsOptional()
+  @IsString()
+  remarks?: string;
+
+  @IsOptional()
   checklistItems?: any;
 }

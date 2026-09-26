@@ -93,6 +93,10 @@ export class AuthService {
       ? phoneNumber.replace(/\D/g, '').slice(-4).padStart(phoneNumber.replace(/\D/g, '').length, '*')
       : '';
 
+    const allModules = 'permit-to-work,incident-management,safety-observations,safety-inspection,spot-checks';
+    const isUserAdmin = ['admin', 'superadmin'].includes(String(user.userType || '').toLowerCase());
+    const moduleAccess = isUserAdmin ? allModules : (employee?.moduleAccess || 'permit-to-work');
+
     return {
       statusCode: HttpStatus.OK,
       message: 'Login successful.',
@@ -103,6 +107,7 @@ export class AuthService {
       empId: user.empId,
       phonenumber: phoneNumber,
       maskedPhone,
+      moduleAccess,
       auth_token: authToken,
       access_token,
       sms_sent: false,
@@ -124,6 +129,14 @@ export class AuthService {
     // Clear OTP after successful verification
     await this.usersService.clearOtp(user.id);
 
+    // Fetch employee for moduleAccess
+    const employee = (user.empId !== null && user.empId !== undefined)
+      ? await this.employeeRepo.findOne({ where: { id: user.empId } })
+      : null;
+    const allModules = 'permit-to-work,incident-management,safety-observations,safety-inspection,spot-checks';
+    const isUserAdmin = ['admin', 'superadmin'].includes(String(user.userType || '').toLowerCase());
+    const moduleAccess = isUserAdmin ? allModules : (employee?.moduleAccess || 'permit-to-work');
+
     // Generate JWT token
     const payload = { sub: user.id, username: user.username };
     const access_token = this.jwtService.sign(payload);
@@ -136,6 +149,7 @@ export class AuthService {
       userType: user.userType,
       typeId: user.typeId,
       empId: user.empId,
+      moduleAccess,
       access_token,
     };
   }
@@ -436,6 +450,7 @@ export class AuthService {
       },
       token: access_token,
       access_token: access_token,
+      moduleAccess: 'permit-to-work,incident-management,safety-observations,safety-inspection,spot-checks',
     };
   }
 }

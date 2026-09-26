@@ -89,4 +89,7 @@ export class SafetyInspection {
 
   @OneToMany(() => SafetyInspectionItem, (item) => item.inspection, { cascade: true, eager: true })
   items: SafetyInspectionItem[];
+
+  history?: any[];
 }
+

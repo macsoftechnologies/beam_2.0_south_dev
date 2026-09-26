@@ -68,6 +68,7 @@ import { ObservationActionLog } from './observations/entities/observation-action
 import { ObservationsModule } from './observations/observations.module';
 import { SafetyInspection } from './safety-inspections/entities/safety-inspection.entity';
 import { SafetyInspectionItem } from './safety-inspections/entities/safety-inspection-item.entity';
+import { SafetyInspectionActionLog } from './safety-inspections/entities/safety-inspection-action-log.entity';
 import { SafetyInspectionsModule } from './safety-inspections/safety-inspections.module';
 import { SpotCheck } from './spot-checks/entities/spot-check.entity';
 import { SpotChecksModule } from './spot-checks/spot-checks.module';
@@ -85,6 +86,7 @@ import { SpotChecksModule } from './spot-checks/spot-checks.module';
       username: process.env.DB_USER,
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
+      timezone: 'Z',
       entities: [
         User,
         Department,
@@ -131,6 +133,7 @@ import { SpotChecksModule } from './spot-checks/spot-checks.module';
         ObservationActionLog,
         SafetyInspection,
         SafetyInspectionItem,
+        SafetyInspectionActionLog,
         SpotCheck,
       ],
       synchronize: false,

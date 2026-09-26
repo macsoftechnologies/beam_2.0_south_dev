@@ -1567,7 +1567,7 @@ export class IncidentsService implements OnModuleInit {
     if (incidentIds.length > 0) {
       initialReports = await this.initialReportRepo.find({
         where: { incidentId: In(incidentIds) },
-        select: { incidentId: true, bodyPartsInjured: true },
+        select: { id: true, incidentId: true, bodyPartsInjured: true },
       });
     }
 
@@ -1606,35 +1606,105 @@ export class IncidentsService implements OnModuleInit {
       else if (r.stage === IncidentStage.CLOSED) pk = 'Closed';
       pipeCount[pk] = (pipeCount[pk] || 0) + 1;
 
-      const bpObj: any = initialMap.get(r.id);
+      let bpObj: any = initialMap.get(r.id);
       if (bpObj) {
+        if (typeof bpObj === 'string') {
+          try {
+            bpObj = JSON.parse(bpObj);
+          } catch (e) {
+            // ignore
+          }
+        }
         let partsList: any[] = [];
-        if (Array.isArray(bpObj.selections)) partsList = bpObj.selections;
+        if (bpObj && Array.isArray(bpObj.selections)) partsList = bpObj.selections;
         else if (Array.isArray(bpObj)) partsList = bpObj as any;
 
         partsList.forEach((item: any) => {
-          const partStr = typeof item === 'string' ? item : `${item.part || ''} ${item.side ? `(${item.side})` : ''}`;
-          const str = partStr.toLowerCase();
+          const partName = typeof item === 'string' ? item : (item.part || item.name || '');
+          const side = typeof item === 'object' ? (item.side || item.hand || '') : '';
+          const full = (partName + ' ' + (side ? `(${side})` : '')).trim();
+          const str = full.toLowerCase();
 
-          if (str.includes('head') || str.includes('eye') || str.includes('face')) frontMap['Head'] = (frontMap['Head'] || 0) + 1;
-          if (str.includes('neck')) backMap['Neck'] = (backMap['Neck'] || 0) + 1;
-          if (str.includes('chest') || str.includes('ribs')) frontMap['Chest'] = (frontMap['Chest'] || 0) + 1;
-          if (str.includes('back') || str.includes('spine')) {
-            if (str.includes('lower')) backMap['Lower Back'] = (backMap['Lower Back'] || 0) + 1;
-            else backMap['Upper Back'] = (backMap['Upper Back'] || 0) + 1;
+          // Front-mapped parts
+          if (str.includes('head') || str.includes('cranium')) {
+            frontMap['Head'] = (frontMap['Head'] || 0) + 1;
           }
-          if (str.includes('pelvis') || str.includes('abdomen')) frontMap['Lower Abdomen'] = (frontMap['Lower Abdomen'] || 0) + 1;
+          if (str.includes('facial') || str.includes('face') || str.includes('eye') || str.includes('teeth')) {
+            frontMap['Facial area'] = (frontMap['Facial area'] || 0) + 1;
+          }
+          if (str.includes('neck')) {
+            frontMap['Neck'] = (frontMap['Neck'] || 0) + 1;
+            backMap['Neck'] = (backMap['Neck'] || 0) + 1;
+          }
+          if (str.includes('chest') || str.includes('ribs') || str.includes('torso')) {
+            frontMap['Chest'] = (frontMap['Chest'] || 0) + 1;
+          }
+          if (str.includes('pelvis') || str.includes('abdomen')) {
+            frontMap['Lower Abdomen'] = (frontMap['Lower Abdomen'] || 0) + 1;
+          }
+          if (str.includes('shoulder')) {
+            if (str.includes('(r)') || str.includes('right')) {
+              frontMap['R. Shoulder'] = (frontMap['R. Shoulder'] || 0) + 1;
+              backMap['R. Shoulder'] = (backMap['R. Shoulder'] || 0) + 1;
+            } else {
+              frontMap['L. Shoulder'] = (frontMap['L. Shoulder'] || 0) + 1;
+              backMap['L. Shoulder'] = (backMap['L. Shoulder'] || 0) + 1;
+            }
+          }
+          if (str.includes('arm') || str.includes('elbow')) {
+            if (str.includes('(r)') || str.includes('right')) {
+              frontMap['R. Forearm'] = (frontMap['R. Forearm'] || 0) + 1;
+              backMap['R. Forearm'] = (backMap['R. Forearm'] || 0) + 1;
+            } else {
+              frontMap['L. Forearm'] = (frontMap['L. Forearm'] || 0) + 1;
+              backMap['L. Forearm'] = (backMap['L. Forearm'] || 0) + 1;
+            }
+          }
           if (str.includes('hand') || str.includes('finger') || str.includes('wrist')) {
-            if (str.includes('(l)') || str.includes('left')) frontMap['L. Hand'] = (frontMap['L. Hand'] || 0) + 1;
-            else frontMap['R. Hand'] = (frontMap['R. Hand'] || 0) + 1;
+            if (str.includes('(r)') || str.includes('right')) {
+              frontMap['R. Hand'] = (frontMap['R. Hand'] || 0) + 1;
+              backMap['R. Hand'] = (backMap['R. Hand'] || 0) + 1;
+            } else {
+              frontMap['L. Hand'] = (frontMap['L. Hand'] || 0) + 1;
+              backMap['L. Hand'] = (backMap['L. Hand'] || 0) + 1;
+            }
           }
-          if (str.includes('arm') || str.includes('elbow') || str.includes('shoulder')) {
-            if (str.includes('(l)') || str.includes('left')) frontMap['L. Forearm'] = (frontMap['L. Forearm'] || 0) + 1;
-            else frontMap['R. Forearm'] = (frontMap['R. Forearm'] || 0) + 1;
+          if (str.includes('leg') || str.includes('knee') || str.includes('thigh') || str.includes('calf')) {
+            if (str.includes('(r)') || str.includes('right')) {
+              frontMap['R. Leg'] = (frontMap['R. Leg'] || 0) + 1;
+              backMap['R. Leg'] = (backMap['R. Leg'] || 0) + 1;
+            } else {
+              frontMap['L. Leg'] = (frontMap['L. Leg'] || 0) + 1;
+              backMap['L. Leg'] = (backMap['L. Leg'] || 0) + 1;
+            }
           }
-          if (str.includes('foot') || str.includes('toe') || str.includes('ankle') || str.includes('leg')) {
-            if (str.includes('(l)') || str.includes('left')) frontMap['L. Foot'] = (frontMap['L. Foot'] || 0) + 1;
-            else frontMap['R. Foot'] = (frontMap['R. Foot'] || 0) + 1;
+          if (str.includes('foot') || str.includes('toe') || str.includes('ankle')) {
+            if (str.includes('(r)') || str.includes('right')) {
+              frontMap['R. Foot'] = (frontMap['R. Foot'] || 0) + 1;
+              backMap['R. Foot'] = (backMap['R. Foot'] || 0) + 1;
+            } else {
+              frontMap['L. Foot'] = (frontMap['L. Foot'] || 0) + 1;
+              backMap['L. Foot'] = (backMap['L. Foot'] || 0) + 1;
+            }
+          }
+
+          // Back-mapped parts
+          if (str.includes('back') || str.includes('spine')) {
+            if (str.includes('lower')) {
+              backMap['Lower Back'] = (backMap['Lower Back'] || 0) + 1;
+            } else if (str.includes('upper')) {
+              backMap['Upper Back'] = (backMap['Upper Back'] || 0) + 1;
+            } else {
+              backMap['Upper Back'] = (backMap['Upper Back'] || 0) + 1;
+              backMap['Lower Back'] = (backMap['Lower Back'] || 0) + 1;
+            }
+          }
+          if (str.includes('ear')) {
+            if (str.includes('(r)') || str.includes('right')) {
+              backMap['R. Ear'] = (backMap['R. Ear'] || 0) + 1;
+            } else {
+              backMap['L. Ear'] = (backMap['L. Ear'] || 0) + 1;
+            }
           }
         });
       }

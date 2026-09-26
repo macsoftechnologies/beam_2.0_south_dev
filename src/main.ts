@@ -18,12 +18,16 @@ async function bootstrap() {
   app.use('/subcontractors', express.static(join(process.cwd(), './uploads/subcontractors'), { redirect: false }));
   app.use('/signatures', express.static(join(process.cwd(), './uploads/signatures'), { redirect: false }));
   app.use('/incidents', express.static(join(process.cwd(), './uploads/incidents'), { redirect: false }));
+  app.use('/observations', express.static(join(process.cwd(), './uploads/observations'), { redirect: false }));
+  app.use('/safety-inspections', express.static(join(process.cwd(), './uploads/safety-inspections'), { redirect: false }));
   app.use('/uploads', express.static(join(process.cwd(), './uploads'), { redirect: false }));
 
   // Also support requests routed with /development/m3south prefix
   app.use('/development/m3south/subcontractors', express.static(join(process.cwd(), './uploads/subcontractors'), { redirect: false }));
   app.use('/development/m3south/signatures', express.static(join(process.cwd(), './uploads/signatures'), { redirect: false }));
   app.use('/development/m3south/incidents', express.static(join(process.cwd(), './uploads/incidents'), { redirect: false }));
+  app.use('/development/m3south/observations', express.static(join(process.cwd(), './uploads/observations'), { redirect: false }));
+  app.use('/development/m3south/safety-inspections', express.static(join(process.cwd(), './uploads/safety-inspections'), { redirect: false }));
   app.use('/development/m3south/uploads', express.static(join(process.cwd(), './uploads'), { redirect: false }));
   app.use(bodyParser.json({ limit: '100mb' }));
   app.use(bodyParser.urlencoded({ limit: '500mb', extended: true }));

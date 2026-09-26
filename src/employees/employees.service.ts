@@ -113,6 +113,11 @@ export class EmployeesService {
     if (dto.email !== undefined) existing.email = dto.email;
     if (dto.designation !== undefined) existing.designation = dto.designation;
     if (dto.access !== undefined) existing.access = dto.access;
+    if (dto.moduleAccess !== undefined) {
+      existing.moduleAccess = Array.isArray(dto.moduleAccess)
+        ? dto.moduleAccess.join(',')
+        : dto.moduleAccess;
+    }
     if (dto.username !== undefined) existing.username = dto.username;
 
     if (dto.phonenumber !== undefined && dto.phonenumber !== null) {
