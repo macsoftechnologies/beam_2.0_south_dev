@@ -138,16 +138,14 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    // Allow static dev OTP bypass via environment variable
-    const staticOtp = process.env.DEV_STATIC_OTP;
-    const isStaticOtpMatch = staticOtp && otp === staticOtp;
-
-    // Validate OTP against stored value
-    if (!isStaticOtpMatch) {
-      if (!user.otp || user.otp !== otp) {
-        throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
-      }
-    }
+    // OTP validation bypassed for development - allows any random OTP to log in
+    // const staticOtp = process.env.DEV_STATIC_OTP;
+    // const isStaticOtpMatch = staticOtp && otp === staticOtp;
+    // if (!isStaticOtpMatch) {
+    //   if (!user.otp || user.otp !== otp) {
+    //     throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
+    //   }
+    // }
 
     // Clear OTP after successful verification
     await this.usersService.clearOtp(user.id);
@@ -242,16 +240,14 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    // Allow static dev OTP bypass
-    const staticOtp = process.env.DEV_STATIC_OTP;
-    const isStaticOtpMatch = staticOtp && otp === staticOtp;
-
-    // Validate OTP
-    if (!isStaticOtpMatch) {
-      if (!user.otp || user.otp !== otp) {
-        throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
-      }
-    }
+    // OTP validation bypassed for development - allows any random OTP
+    // const staticOtp = process.env.DEV_STATIC_OTP;
+    // const isStaticOtpMatch = staticOtp && otp === staticOtp;
+    // if (!isStaticOtpMatch) {
+    //   if (!user.otp || user.otp !== otp) {
+    //     throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
+    //   }
+    // }
 
     // Clear OTP
     await this.usersService.clearOtp(user.id);
@@ -328,16 +324,14 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    // Allow static dev OTP bypass
-    const staticOtp = process.env.DEV_STATIC_OTP;
-    const isStaticOtpMatch = staticOtp && otp === staticOtp;
-
-    // Validate OTP
-    if (!isStaticOtpMatch) {
-      if (!user.otp || user.otp !== otp) {
-        throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
-      }
-    }
+    // OTP validation bypassed for development - allows any random OTP
+    // const staticOtp = process.env.DEV_STATIC_OTP;
+    // const isStaticOtpMatch = staticOtp && otp === staticOtp;
+    // if (!isStaticOtpMatch) {
+    //   if (!user.otp || user.otp !== otp) {
+    //     throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
+    //   }
+    // }
 
     // Clear OTP after successful verification
     await this.usersService.clearOtp(user.id);
