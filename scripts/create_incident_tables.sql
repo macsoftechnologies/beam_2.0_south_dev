@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS `incident_initial_reports` (
   `treatment_provided` JSON NULL,
   `accident_categories` JSON NULL,
   `injury_types` JSON NULL,
+  `injury_other_text` TEXT NULL,
   `body_parts_injured` JSON NULL,
   `submitted_by` VARCHAR(255) NULL,
   `signature` TEXT NULL,
