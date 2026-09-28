@@ -110,6 +110,10 @@ export class AuthService {
     const isUserAdmin = ['admin', 'superadmin'].includes(String(user.userType || '').toLowerCase());
     const moduleAccess = isUserAdmin ? allModules : (employee?.moduleAccess || 'permit-to-work');
 
+    // Generate JWT token directly (for development and fallback support)
+    const payload = { sub: user.id, username: user.username };
+    const access_token = this.jwtService.sign(payload);
+
     return {
       statusCode: HttpStatus.OK,
       message: 'Login successful. OTP sent to your registered phone number.',
@@ -122,6 +126,7 @@ export class AuthService {
       maskedPhone,
       moduleAccess,
       auth_token: authToken,
+      access_token,
       sms_sent: smsSent,
     };
   }
