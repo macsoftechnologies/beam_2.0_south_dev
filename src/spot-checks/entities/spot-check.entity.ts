@@ -46,6 +46,9 @@ export class SpotCheck {
   @Column({ name: 'selected_zones', type: 'json', nullable: true })
   selectedZones?: any;
 
+  @Column({ name: 'location_map_image', type: 'text', nullable: true })
+  locationMapImage?: string;
+
   @Column({ name: 'weather', type: 'varchar', length: 255, nullable: true })
   weather?: string;
 

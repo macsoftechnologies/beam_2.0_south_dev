@@ -288,13 +288,16 @@ export function generatePermitHtml(data: any): string {
     { id: 'cq_safety_signs', text: 'C&Q Safety signs are in place?' }
   ];
 
-  const renderCheckRow = (question: string, val: any) => {
+  const renderCheckRow = (question: string, val: any, extraHtml?: string) => {
     const isYes = val !== undefined && val !== null && Number(val) === 1;
     const isNo = val !== undefined && val !== null && Number(val) === 0;
     const isNa = val !== undefined && val !== null && Number(val) === 2;
     return `
       <tr>
-        <td>${question}</td>
+        <td>
+          <div>${question}</div>
+          ${extraHtml || ''}
+        </td>
         <td class="check-cell">${isYes ? '<span class="check-indicator check-yes">✓</span>' : '-'}</td>
         <td class="check-cell">${isNo ? '<span class="check-indicator check-no">✓</span>' : '-'}</td>
         <td class="check-cell">${isNa ? '<span class="check-indicator check-na">✓</span>' : '-'}</td>
@@ -2479,7 +2482,8 @@ export function generatePermitHtml(data: any): string {
 
       <!-- Pressure Testing of Equipment -->
       ${(() => {
-      if (data.permit_type !== 'Commissioning') return '';
+      const pType = String(data.permit_type || '').toLowerCase().trim();
+      if (pType !== 'commissioning' && Number(data.pressure_testing_of_equipment) !== 1) return '';
       const isPressureActive = Number(data.pressure_testing_of_equipment) === 1;
       if (!isPressureActive) {
         return `
@@ -2513,7 +2517,35 @@ export function generatePermitHtml(data: any): string {
               </tr>
             </thead>
             <tbody>
-              ${pressureQuestions.map(q => renderCheckRow(q.text, data[q.id])).join('')}
+              ${pressureQuestions.map(q => {
+                const val = data[q.id] !== undefined
+                  ? data[q.id]
+                  : (q.id === 'pneumatic_hydrostatic'
+                      ? (data.pnematic_hydrostatic !== undefined ? data.pnematic_hydrostatic : (data.pneumaticHydrostatic !== undefined ? data.pneumaticHydrostatic : data.pnematicHydrostatic))
+                      : (q.id === 'pressure_of_the_test'
+                          ? (data.pressureOfTheTest !== undefined ? data.pressureOfTheTest : undefined)
+                          : undefined));
+                const isYes = val !== undefined && val !== null && Number(val) === 1;
+                let extraHtml = '';
+                if (q.id === 'pneumatic_hydrostatic' && isYes) {
+                  const pneumaticPressure = data.pressure_pneumatic || data.pressurePneumatic || '';
+                  extraHtml = `
+                    <div style="margin-top: 6px; font-size: 12px; color: #475569;">
+                      <span style="font-weight: 700; color: #334155; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">PRESSURE OF PNEUMATIC TEST (IN BARG):</span>
+                      <span style="display: inline-block; margin-left: 6px; padding: 2px 8px; background-color: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 4px; font-weight: 600; color: #0f172a; word-break: break-all;">${pneumaticPressure || '-'}</span>
+                    </div>
+                  `;
+                } else if (q.id === 'pressure_of_the_test' && isYes) {
+                  const hydroPressure = data.pressure_hydrostatic || data.pressureHydrostatic || (data.pressure_of_the_test && isNaN(Number(data.pressure_of_the_test)) ? data.pressure_of_the_test : '');
+                  extraHtml = `
+                    <div style="margin-top: 6px; font-size: 12px; color: #475569;">
+                      <span style="font-weight: 700; color: #334155; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">PRESSURE OF HYDROSTATIC TEST (IN BARG):</span>
+                      <span style="display: inline-block; margin-left: 6px; padding: 2px 8px; background-color: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 4px; font-weight: 600; color: #0f172a; word-break: break-all;">${hydroPressure || '-'}</span>
+                    </div>
+                  `;
+                }
+                return renderCheckRow(q.text, val, extraHtml);
+              }).join('')}
             </tbody>
           </table>
         </div>

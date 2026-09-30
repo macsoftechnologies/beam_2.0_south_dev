@@ -77,6 +77,10 @@ export class UpdateObservationDto {
   @IsOptional()
   specificLocation?: string;
 
+  @IsString()
+  @IsOptional()
+  locationMapImage?: string;
+
   @IsOptional()
   @Transform(({ value }) => (value === '' || value === null || value === undefined ? undefined : Number(value)))
   assignedContractorId?: number;

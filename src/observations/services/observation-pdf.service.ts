@@ -142,6 +142,7 @@ export class ObservationPdfService {
 
     // 1. Check local file paths on disk
     const localCandidates = [
+      join(process.cwd(), 'uploads', 'location-maps', filename),
       join(process.cwd(), 'uploads', 'observations', filename),
       join(process.cwd(), 'uploads', filename),
       join(process.cwd(), src.replace(/^\/+/, '')),
@@ -218,6 +219,12 @@ export class ObservationPdfService {
     let closureSigBase64 = '';
     if (obs.closureSignature) {
       closureSigBase64 = await this.resolveImageAsBase64(obs.closureSignature);
+    }
+
+    // Resolve location floor map snapshot to Base64 if available
+    let locationMapBase64 = '';
+    if (obs.locationMapImage) {
+      locationMapBase64 = await this.resolveImageAsBase64(obs.locationMapImage);
     }
 
     // Resolve all photos inside Action Logs history
@@ -503,6 +510,21 @@ export class ObservationPdfService {
       <td class="val">${obs.createdByUserName || 'Safety Inspector'} (${obs.createdByRole || 'DEPARTMENT'})</td>
     </tr>
   </table>
+
+  ${locationMapBase64 ? `
+  <div style="margin-top: 5px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid;">
+    <div style="font-size: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+      <span style="display: flex; align-items: center; gap: 4px;">
+        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #16a34a;"></span>
+        Location Floor Map &bull; ${obs.buildingName || 'Building'} ${obs.floorLevel ? `(${obs.floorLevel})` : ''}
+      </span>
+      <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Zone / Specific Work Area</span>
+    </div>
+    <div style="text-align: center; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 3px; padding: 2px; overflow: hidden;">
+      <img src="${locationMapBase64}" style="max-height: 260px; width: 100%; object-fit: contain; display: block; margin: 0 auto;" alt="Location Map" />
+    </div>
+  </div>
+  ` : ''}
 
   <!-- Findings & Immediate Action -->
   <div class="section-hdr">FINDING DESCRIPTION &amp; IMMEDIATE ACTION</div>

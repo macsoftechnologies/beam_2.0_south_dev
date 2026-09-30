@@ -6242,6 +6242,24 @@ export class RequestsService implements OnModuleInit {
     if (flatObj.pneumatic_hydrostatic !== undefined) {
       flatObj.pnematic_hydrostatic = flatObj.pneumatic_hydrostatic;
     }
+    if (flatObj.pressure_pneumatic !== undefined) {
+      flatObj.pressurePneumatic = flatObj.pressure_pneumatic;
+    }
+    if (flatObj.pressurePneumatic !== undefined) {
+      flatObj.pressure_pneumatic = flatObj.pressurePneumatic;
+    }
+    if (flatObj.pressure_hydrostatic !== undefined) {
+      flatObj.pressureHydrostatic = flatObj.pressure_hydrostatic;
+    }
+    if (flatObj.pressureHydrostatic !== undefined) {
+      flatObj.pressure_hydrostatic = flatObj.pressureHydrostatic;
+    }
+    if (flatObj.pressure_of_the_test !== undefined) {
+      flatObj.pressureOfTheTest = flatObj.pressure_of_the_test;
+    }
+    if (flatObj.pressureOfTheTest !== undefined) {
+      flatObj.pressure_of_the_test = flatObj.pressureOfTheTest;
+    }
     if (flatObj.specific_risks_based_on_task !== undefined) {
       flatObj.spesific_risks_based_on_task = flatObj.specific_risks_based_on_task;
     }

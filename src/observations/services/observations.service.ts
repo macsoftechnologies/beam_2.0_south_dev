@@ -9,6 +9,7 @@ import { ContractorReviewDto, ContractorAction, ReassignObservationDto, ResolveO
 import { IncidentsService } from '../../incidents/services/incidents.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { saveBase64Signature } from '../../incidents/utils/signature-storage.util';
+import { saveBase64LocationMap } from '../../incidents/utils/location-map-storage.util';
 import { SafetyInspectionsService } from '../../safety-inspections/services/safety-inspections.service';
 
 @Injectable()
@@ -85,6 +86,9 @@ export class ObservationsService implements OnModuleInit {
       } catch {}
       try {
         await this.obsRepo.query(`ALTER TABLE \`observations\` ADD COLUMN \`deadline\` DATE NULL;`);
+      } catch {}
+      try {
+        await this.obsRepo.query(`ALTER TABLE \`observations\` ADD COLUMN \`location_map_image\` TEXT NULL;`);
       } catch {}
 
       await this.logRepo.query(`
@@ -171,6 +175,7 @@ export class ObservationsService implements OnModuleInit {
       buildingName: dto.buildingName,
       floorLevel: dto.floorLevel,
       specificLocation: dto.specificLocation,
+      locationMapImage: dto.locationMapImage ? saveBase64LocationMap(dto.locationMapImage, `obs_map_${observationNumber}`) : undefined,
       assignedContractorId: dto.assignedContractorId,
       assignedContractorName: dto.assignedContractorName,
       photos: dto.photos || [],
@@ -285,6 +290,9 @@ export class ObservationsService implements OnModuleInit {
     if (dto.buildingName !== undefined) observation.buildingName = dto.buildingName;
     if (dto.floorLevel !== undefined) observation.floorLevel = dto.floorLevel;
     if (dto.specificLocation !== undefined) observation.specificLocation = dto.specificLocation;
+    if (dto.locationMapImage !== undefined) {
+      observation.locationMapImage = dto.locationMapImage ? saveBase64LocationMap(dto.locationMapImage, `obs_map_${observation.observationNumber || id}`) : observation.locationMapImage;
+    }
     if (dto.assignedContractorId !== undefined) observation.assignedContractorId = dto.assignedContractorId;
     if (dto.assignedContractorName !== undefined) observation.assignedContractorName = dto.assignedContractorName;
     observation.photos = updatedPhotos;
@@ -322,6 +330,30 @@ export class ObservationsService implements OnModuleInit {
 
     if (obs.status === ObservationStatus.CLOSED || obs.status === ObservationStatus.ESCALATED) {
       throw new BadRequestException(`Cannot review Observation ${obs.observationNumber} as it is already ${obs.status}`);
+    }
+
+    // Ensure only the currently assigned contractor can accept or reject
+    if (obs.assignedContractorId && dto.contractorId && Number(obs.assignedContractorId) !== Number(dto.contractorId)) {
+      let isAssigned = false;
+      try {
+        const userRows = await this.obsRepo.query(
+          `SELECT u.typeId, s.id as subId FROM users u 
+           LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+           WHERE u.id = ? LIMIT 1`,
+          [dto.contractorId],
+        );
+        if (userRows && userRows.length > 0) {
+          const mappedId = userRows[0].subId || userRows[0].typeId;
+          if (mappedId && Number(obs.assignedContractorId) === Number(mappedId)) {
+            isAssigned = true;
+          }
+        }
+      } catch {}
+      if (!isAssigned) {
+        throw new BadRequestException(
+          `Only the currently assigned contractor (${obs.assignedContractorName || 'assigned contractor'}) can accept or reject this observation.`,
+        );
+      }
     }
 
     const isAccept = dto.action === ContractorAction.ACCEPT;
@@ -412,6 +444,28 @@ export class ObservationsService implements OnModuleInit {
     const obs = await this.obsRepo.findOne({ where: { id } });
     if (!obs) {
       throw new NotFoundException(`Observation with ID ${id} not found`);
+    }
+
+    // Ensure only the currently assigned contractor can resolve this observation
+    if (obs.assignedContractorId && dto.resolvedByUserId) {
+      try {
+        const userRows = await this.obsRepo.query(
+          `SELECT u.typeId, s.id as subId FROM users u 
+           LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+           WHERE u.id = ? LIMIT 1`,
+          [dto.resolvedByUserId],
+        );
+        if (userRows && userRows.length > 0) {
+          const mappedId = userRows[0].subId || userRows[0].typeId;
+          if (mappedId && Number(obs.assignedContractorId) !== Number(mappedId)) {
+            throw new BadRequestException(
+              `Only the currently assigned contractor (${obs.assignedContractorName || 'assigned contractor'}) can resolve this observation.`,
+            );
+          }
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+      }
     }
 
     obs.status = ObservationStatus.RESOLVED;
@@ -617,6 +671,7 @@ export class ObservationsService implements OnModuleInit {
     building?: string;
     contractor?: string;
     contractorId?: number;
+    userId?: number;
     userRole?: string;
     search?: string;
     page?: number;
@@ -624,10 +679,11 @@ export class ObservationsService implements OnModuleInit {
   }) {
     const qb = this.obsRepo.createQueryBuilder('obs');
 
-    // Role-Based Access Control (RBAC) Scoping
-    if (query.userRole === 'CONTRACTOR' || query.contractorId) {
+    // Role-Based Access Control (RBAC) Scoping for Contractors
+    if (query.userRole === 'CONTRACTOR' || query.contractorId || (query.userId && query.userRole !== 'ADMIN' && query.userRole !== 'SUPERADMIN' && query.userRole !== 'DEPARTMENT')) {
       let resolvedContractorName = query.contractor ? query.contractor.trim() : '';
       let resolvedSubcontractorId = query.contractorId;
+      let resolvedUserId = query.userId;
 
       if (query.contractorId) {
         try {
@@ -648,9 +704,10 @@ export class ObservationsService implements OnModuleInit {
                WHERE u.id = ? LIMIT 1`,
               [query.contractorId],
             );
-            if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
+            if (userRows && userRows.length > 0) {
               resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId || query.contractorId;
-              if (!resolvedContractorName) {
+              if (!resolvedUserId) resolvedUserId = userRows[0].id;
+              if (!resolvedContractorName && userRows[0].subContractorName) {
                 resolvedContractorName = userRows[0].subContractorName;
               }
             }
@@ -660,22 +717,74 @@ export class ObservationsService implements OnModuleInit {
         }
       }
 
-      if (resolvedContractorName && (resolvedSubcontractorId || query.contractorId)) {
-        qb.andWhere(
-          '(obs.assignedContractorId = :subId OR obs.assignedContractorId = :contractorId OR obs.createdByContractorId = :contractorId OR obs.createdByUserId = :contractorId OR obs.assignedContractorName LIKE :contractorName)',
-          { 
-            subId: resolvedSubcontractorId || query.contractorId, 
-            contractorId: query.contractorId, 
-            contractorName: `%${resolvedContractorName}%` 
-          },
+      if (resolvedUserId && (!resolvedContractorName || !resolvedSubcontractorId)) {
+        try {
+          const userRows = await this.obsRepo.query(
+            `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+             FROM users u 
+             LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+             WHERE u.id = ? LIMIT 1`,
+            [resolvedUserId],
+          );
+          if (userRows && userRows.length > 0) {
+            if (!resolvedSubcontractorId) resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId;
+            if (!resolvedContractorName && userRows[0].subContractorName) {
+              resolvedContractorName = userRows[0].subContractorName;
+            }
+          }
+        } catch (e) {
+          this.logger.warn(`Could not resolve user ID ${resolvedUserId}: ${e.message}`);
+        }
+      }
+
+      const orConditions: string[] = [];
+      const filterParams: any = {};
+
+      if (resolvedSubcontractorId || query.contractorId) {
+        filterParams.subId = resolvedSubcontractorId || query.contractorId;
+        filterParams.contractorId = query.contractorId || resolvedSubcontractorId;
+        orConditions.push(
+          'obs.assignedContractorId = :subId',
+          'obs.assignedContractorId = :contractorId',
+          'obs.createdByContractorId = :subId',
+          'obs.createdByContractorId = :contractorId',
         );
-      } else if (resolvedContractorName) {
-        qb.andWhere('obs.assignedContractorName LIKE :contractorName', { contractorName: `%${resolvedContractorName}%` });
-      } else if (query.contractorId || resolvedSubcontractorId) {
-        qb.andWhere(
-          '(obs.assignedContractorId = :subId OR obs.assignedContractorId = :contractorId OR obs.createdByContractorId = :contractorId OR obs.createdByUserId = :contractorId)',
-          { subId: resolvedSubcontractorId || query.contractorId, contractorId: query.contractorId },
+      }
+
+      if (resolvedUserId || query.contractorId) {
+        filterParams.userId = resolvedUserId || query.contractorId;
+        orConditions.push('obs.createdByUserId = :userId');
+      }
+
+      if (resolvedContractorName) {
+        filterParams.contractorName = `%${resolvedContractorName}%`;
+        orConditions.push('obs.assignedContractorName LIKE :contractorName');
+      }
+
+      // Check involvement in any action log (creator, rejected, previous contractor in reassignments, or reviewer)
+      const logOrs: string[] = [];
+      if (filterParams.userId) {
+        logOrs.push('al.performed_by_user_id = :userId');
+      }
+      if (filterParams.contractorId && filterParams.contractorId !== filterParams.userId) {
+        logOrs.push('al.performed_by_user_id = :contractorId');
+      }
+      if (resolvedContractorName) {
+        logOrs.push(
+          'al.previous_contractor LIKE :contractorName',
+          'al.new_contractor LIKE :contractorName',
+          'al.performed_by_user_name LIKE :contractorName',
         );
+      }
+
+      if (logOrs.length > 0) {
+        orConditions.push(
+          `EXISTS (SELECT 1 FROM observation_action_logs al WHERE al.observation_id = obs.id AND (${logOrs.join(' OR ')}))`,
+        );
+      }
+
+      if (orConditions.length > 0) {
+        qb.andWhere(`(${orConditions.join(' OR ')})`, filterParams);
       }
     } else if (query.contractor) {
       const cList = query.contractor.split(',').map((c: string) => c.trim()).filter(Boolean);
@@ -799,12 +908,13 @@ export class ObservationsService implements OnModuleInit {
   /**
    * High-performance SQL Aggregation for Safety Observations Dashboard (handles 1,000,000+ records in <10ms)
    */
-  async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userRole?: string; range?: string }) {
+  async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userId?: number; userRole?: string; range?: string }) {
     const qb = this.obsRepo.createQueryBuilder('obs');
 
-    if (filters.userRole === 'CONTRACTOR' || filters.contractorId) {
+    if (filters.userRole === 'CONTRACTOR' || filters.contractorId || (filters.userId && filters.userRole !== 'ADMIN' && filters.userRole !== 'SUPERADMIN' && filters.userRole !== 'DEPARTMENT')) {
       let resolvedContractorName = filters.contractor ? filters.contractor.trim() : '';
       let resolvedSubcontractorId = filters.contractorId;
+      let resolvedUserId = filters.userId;
 
       if (filters.contractorId) {
         try {
@@ -825,9 +935,10 @@ export class ObservationsService implements OnModuleInit {
                WHERE u.id = ? LIMIT 1`,
               [filters.contractorId],
             );
-            if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
+            if (userRows && userRows.length > 0) {
               resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId || filters.contractorId;
-              if (!resolvedContractorName) {
+              if (!resolvedUserId) resolvedUserId = userRows[0].id;
+              if (!resolvedContractorName && userRows[0].subContractorName) {
                 resolvedContractorName = userRows[0].subContractorName;
               }
             }
@@ -837,22 +948,74 @@ export class ObservationsService implements OnModuleInit {
         }
       }
 
-      if (resolvedContractorName && (resolvedSubcontractorId || filters.contractorId)) {
-        qb.andWhere(
-          '(obs.assignedContractorId = :subId OR obs.assignedContractorId = :contractorId OR obs.createdByContractorId = :contractorId OR obs.createdByUserId = :contractorId OR obs.assignedContractorName LIKE :contractorName)',
-          { 
-            subId: resolvedSubcontractorId || filters.contractorId, 
-            contractorId: filters.contractorId, 
-            contractorName: `%${resolvedContractorName}%` 
-          },
+      if (resolvedUserId && (!resolvedContractorName || !resolvedSubcontractorId)) {
+        try {
+          const userRows = await this.obsRepo.query(
+            `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+             FROM users u 
+             LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+             WHERE u.id = ? LIMIT 1`,
+            [resolvedUserId],
+          );
+          if (userRows && userRows.length > 0) {
+            if (!resolvedSubcontractorId) resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId;
+            if (!resolvedContractorName && userRows[0].subContractorName) {
+              resolvedContractorName = userRows[0].subContractorName;
+            }
+          }
+        } catch (e) {
+          this.logger.warn(`Could not resolve user ID in stats ${resolvedUserId}: ${e.message}`);
+        }
+      }
+
+      const orConditions: string[] = [];
+      const filterParams: any = {};
+
+      if (resolvedSubcontractorId || filters.contractorId) {
+        filterParams.subId = resolvedSubcontractorId || filters.contractorId;
+        filterParams.contractorId = filters.contractorId || resolvedSubcontractorId;
+        orConditions.push(
+          'obs.assignedContractorId = :subId',
+          'obs.assignedContractorId = :contractorId',
+          'obs.createdByContractorId = :subId',
+          'obs.createdByContractorId = :contractorId',
         );
-      } else if (resolvedContractorName) {
-        qb.andWhere('obs.assignedContractorName LIKE :contractorName', { contractorName: `%${resolvedContractorName}%` });
-      } else if (filters.contractorId || resolvedSubcontractorId) {
-        qb.andWhere(
-          '(obs.assignedContractorId = :subId OR obs.assignedContractorId = :contractorId OR obs.createdByContractorId = :contractorId OR obs.createdByUserId = :contractorId)',
-          { subId: resolvedSubcontractorId || filters.contractorId, contractorId: filters.contractorId },
+      }
+
+      if (resolvedUserId || filters.contractorId) {
+        filterParams.userId = resolvedUserId || filters.contractorId;
+        orConditions.push('obs.createdByUserId = :userId');
+      }
+
+      if (resolvedContractorName) {
+        filterParams.contractorName = `%${resolvedContractorName}%`;
+        orConditions.push('obs.assignedContractorName LIKE :contractorName');
+      }
+
+      // Check involvement in any action log
+      const logOrs: string[] = [];
+      if (filterParams.userId) {
+        logOrs.push('al.performed_by_user_id = :userId');
+      }
+      if (filterParams.contractorId && filterParams.contractorId !== filterParams.userId) {
+        logOrs.push('al.performed_by_user_id = :contractorId');
+      }
+      if (resolvedContractorName) {
+        logOrs.push(
+          'al.previous_contractor LIKE :contractorName',
+          'al.new_contractor LIKE :contractorName',
+          'al.performed_by_user_name LIKE :contractorName',
         );
+      }
+
+      if (logOrs.length > 0) {
+        orConditions.push(
+          `EXISTS (SELECT 1 FROM observation_action_logs al WHERE al.observation_id = obs.id AND (${logOrs.join(' OR ')}))`,
+        );
+      }
+
+      if (orConditions.length > 0) {
+        qb.andWhere(`(${orConditions.join(' OR ')})`, filterParams);
       }
     } else if (filters.contractor) {
       const cList = filters.contractor.split(',').map((c: string) => c.trim()).filter(Boolean);

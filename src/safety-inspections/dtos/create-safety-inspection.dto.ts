@@ -65,6 +65,10 @@ export class CreateSafetyInspectionDto {
 
   @IsOptional()
   @IsString()
+  locationMapImage?: string;
+
+  @IsOptional()
+  @IsString()
   inspectionDate?: string;
 
   @IsOptional()

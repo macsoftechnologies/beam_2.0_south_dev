@@ -12,6 +12,7 @@ import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
 import { CreateActionItemDto, UpdateActionItemDto } from '../dtos/action-item.dto';
 
 import { saveBase64Signature, saveBase64IncidentPhoto } from '../utils/signature-storage.util';
+import { saveBase64LocationMap } from '../utils/location-map-storage.util';
 import { NotificationsService } from '../../notifications/notifications.service';
 
 @Injectable()
@@ -202,6 +203,7 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incident_action_items\` ADD COLUMN \`file_type\` VARCHAR(100) NULL`,
         `ALTER TABLE \`incident_action_items\` ADD COLUMN \`attachments\` JSON NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`location_map_image\` TEXT NULL`,
         `ALTER TABLE \`incident_headsup\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
       ];
@@ -350,6 +352,10 @@ export class IncidentsService implements OnModuleInit {
       slaInvestigationDue,
     });
 
+    if (dto.locationMapImage) {
+      incident.locationMapImage = saveBase64LocationMap(dto.locationMapImage, `inc_map_${caseNumber}`);
+    }
+
     const savedIncident = await this.incidentRepo.save(incident);
 
     const headsUp = this.headsUpRepo.create({
@@ -430,6 +436,9 @@ export class IncidentsService implements OnModuleInit {
     if (dto.buildingName !== undefined) incident.buildingName = dto.buildingName;
     if (dto.floorLevel !== undefined) incident.floorLevel = dto.floorLevel;
     if (dto.specificLocation !== undefined) incident.specificLocation = dto.specificLocation;
+    if (dto.locationMapImage !== undefined) {
+      incident.locationMapImage = dto.locationMapImage ? saveBase64LocationMap(dto.locationMapImage, `inc_map_${incidentId}`) : incident.locationMapImage;
+    }
     if (dto.contractorsInvolved !== undefined) incident.contractorsInvolved = dto.contractorsInvolved;
     if (dto.categories !== undefined) incident.categories = Array.isArray(dto.categories) ? dto.categories : [dto.categories];
     if (dto.actualSeverity !== undefined) incident.actualSeverity = dto.actualSeverity ? Number(dto.actualSeverity) : undefined;

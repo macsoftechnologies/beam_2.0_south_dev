@@ -219,11 +219,13 @@ export class ObservationsController {
     @Query('building') building?: string,
     @Query('contractor') contractor?: string,
     @Query('contractorId') contractorId?: string,
+    @Query('userId') userId?: string,
     @Query('userRole') userRole?: string,
     @Query('range') range?: string,
   ) {
     const cId = contractorId ? parseInt(contractorId, 10) : undefined;
-    return await this.obsService.getDashboardStats({ building, contractor, contractorId: cId, userRole, range });
+    const uId = userId ? parseInt(userId, 10) : undefined;
+    return await this.obsService.getDashboardStats({ building, contractor, contractorId: cId, userId: uId, userRole, range });
   }
 
   /**
@@ -248,12 +250,14 @@ export class ObservationsController {
     @Query('building') building?: string,
     @Query('contractor') contractor?: string,
     @Query('contractorId') contractorId?: string,
+    @Query('userId') userId?: string,
     @Query('userRole') userRole?: string,
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     const cId = contractorId ? parseInt(contractorId, 10) : undefined;
+    const uId = userId ? parseInt(userId, 10) : undefined;
     const pageNum = page ? parseInt(page, 10) : undefined;
     const limitNum = limit ? parseInt(limit, 10) : undefined;
     return await this.obsService.findAll({
@@ -264,6 +268,7 @@ export class ObservationsController {
       building,
       contractor,
       contractorId: cId,
+      userId: uId,
       userRole,
       search,
       page: pageNum,

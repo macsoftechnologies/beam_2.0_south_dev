@@ -44,6 +44,10 @@ export class CreateSpotCheckDto {
 
   @IsOptional()
   @IsString()
+  locationMapImage?: string;
+
+  @IsOptional()
+  @IsString()
   weather?: string;
 
   @IsOptional()

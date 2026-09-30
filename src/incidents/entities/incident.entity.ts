@@ -54,6 +54,9 @@ export class Incident {
   @Column({ name: 'specific_location', type: 'text', nullable: true })
   specificLocation?: string;
 
+  @Column({ name: 'location_map_image', type: 'text', nullable: true })
+  locationMapImage?: string;
+
   @Column({ name: 'contractors_involved', type: 'text', nullable: true })
   contractorsInvolved?: string;
 

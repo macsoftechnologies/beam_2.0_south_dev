@@ -66,6 +66,10 @@ export class CreateHeadsUpDto {
 
   @IsString()
   @IsOptional()
+  locationMapImage?: string;
+
+  @IsString()
+  @IsOptional()
   contractorsInvolved?: string;
 
   @IsArray()

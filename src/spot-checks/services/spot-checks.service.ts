@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { SpotCheck, SpotCheckStatus } from '../entities/spot-check.entity';
 import { CreateSpotCheckDto } from '../dtos/create-spot-check.dto';
 import { UpdateSpotCheckDto } from '../dtos/update-spot-check.dto';
+import { saveBase64LocationMap } from '../../incidents/utils/location-map-storage.util';
 
 @Injectable()
 export class SpotChecksService implements OnModuleInit {
@@ -78,6 +79,10 @@ export class SpotChecksService implements OnModuleInit {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
 
+      try {
+        await this.spotCheckRepo.query(`ALTER TABLE \`spot_checks\` ADD COLUMN \`location_map_image\` TEXT NULL;`);
+      } catch {}
+
       this.logger.log('✅ Spot Checks table auto-initialization check completed successfully.');
     } catch (err: any) {
       this.logger.warn(`⚠️ Spot Checks tables auto-initialization note: ${err?.message || err}`);
@@ -143,6 +148,7 @@ export class SpotChecksService implements OnModuleInit {
       location: this.sanitizeString(dto.location),
       selectedRooms,
       selectedZones,
+      locationMapImage: dto.locationMapImage ? saveBase64LocationMap(dto.locationMapImage, `sc_map_${spotCheckRef}`) : undefined,
       weather: this.sanitizeString(dto.weather),
       activityName: this.sanitizeString(dto.activityName),
       companyInvolved: this.sanitizeString(dto.companyInvolved),
@@ -303,6 +309,9 @@ export class SpotChecksService implements OnModuleInit {
     }
     if (dto.attachments !== undefined) {
       existing.attachments = this.parseJsonField<any[]>(dto.attachments, []);
+    }
+    if (dto.locationMapImage !== undefined) {
+      existing.locationMapImage = dto.locationMapImage ? saveBase64LocationMap(dto.locationMapImage, `sc_map_${existing.spotCheckRef || id}`) : existing.locationMapImage;
     }
 
     Object.assign(existing, {
