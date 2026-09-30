@@ -894,7 +894,7 @@ export class RequestsService implements OnModuleInit {
     });
 
     // 1. Validate zone status and set permit_under dynamically
-    await this.checkZoneStatusAndAssignPermitUnder(dto, existing.zoneId);
+    await this.checkZoneStatusAndAssignPermitUnder(dto, existing.zoneId, existing.buildingId);
 
     // 2. Validate mandatory fields (non-draft)
     this.validateMandatoryFields(dto, existing, {
@@ -2408,16 +2408,25 @@ export class RequestsService implements OnModuleInit {
   // Helper to resolve room names from ID string
   private async resolveRoomNames(roomNos?: string): Promise<string> {
     if (!roomNos) return '';
-    const ids = roomNos.split(',').map((s) => s.trim());
-    const allNumeric = ids.every((id) => /^\d+$/.test(id));
-    if (allNumeric && ids.length > 0) {
-      const roomIds = ids.map((id) => Number(id));
-      const rooms = await this.roomRepo.find({
-        where: { room_id: In(roomIds) },
-      });
-      return rooms.map((r) => r.room_name).join(', ');
+    const tokens = roomNos.split(',').map((s) => s.trim()).filter(Boolean);
+    if (tokens.length === 0) return '';
+
+    // Separate numeric IDs from string room names
+    const numericIds = tokens.filter((t) => /^\d+$/.test(t)).map(Number);
+    let roomMap = new Map<string, string>();
+
+    if (numericIds.length > 0) {
+      try {
+        const rooms = await this.roomRepo.find({
+          where: { room_id: In(numericIds) },
+        });
+        roomMap = new Map(rooms.map((r) => [String(r.room_id), r.room_name]));
+      } catch (err) {
+        // Fallback to empty map on error
+      }
     }
-    return roomNos; // Return raw value if not numeric
+
+    return tokens.map((t) => roomMap.get(t) || t).join(', ');
   }
 
   private async resolveLevelFilters(
@@ -3254,7 +3263,7 @@ export class RequestsService implements OnModuleInit {
         const [rawRequests, totalCount] = await qb.getManyAndCount();
 
         // Build zone lookup for all zone IDs present in the search results
-        const zoneLookupMap = new Map<number, string>();
+        const zoneLookupMap = new Map<number, { zone: string; building_id?: number }>();
         const allZoneIdsSet = new Set<number>();
         rawRequests.forEach((req) => {
           if (req.zoneId) {
@@ -3266,7 +3275,7 @@ export class RequestsService implements OnModuleInit {
         });
         if (allZoneIdsSet.size > 0) {
           const zoneEntities = await this.zoneRepo.findBy({ id: In([...allZoneIdsSet]) });
-          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, z.zone));
+          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, { zone: z.zone, building_id: z.building_id }));
         }
 
         // Fetch Opened & Closed logs for all requests in batch
@@ -3317,7 +3326,14 @@ export class RequestsService implements OnModuleInit {
           if (req.zoneId) {
             const names = String(req.zoneId)
               .split(',')
-              .map((id) => zoneLookupMap.get(Number(id.trim())))
+              .map((id) => {
+                const item = zoneLookupMap.get(Number(id.trim()));
+                if (!item) return null;
+                if (req.buildingId && item.building_id && Number(item.building_id) !== Number(req.buildingId)) {
+                  return null;
+                }
+                return item.zone;
+              })
               .filter(Boolean);
             if (names.length > 0) {
               resolvedZoneNames = names.join(', ');
@@ -3864,7 +3880,7 @@ export class RequestsService implements OnModuleInit {
         const [rawRequests, totalCount] = await qb.getManyAndCount();
 
         // Build zone lookup for all zone IDs present in the search results
-        const zoneLookupMap = new Map<number, string>();
+        const zoneLookupMap = new Map<number, { zone: string; building_id?: number }>();
         const allZoneIdsSet = new Set<number>();
         rawRequests.forEach((req) => {
           if (req.zoneId) {
@@ -3876,7 +3892,7 @@ export class RequestsService implements OnModuleInit {
         });
         if (allZoneIdsSet.size > 0) {
           const zoneEntities = await this.zoneRepo.findBy({ id: In([...allZoneIdsSet]) });
-          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, z.zone));
+          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, { zone: z.zone, building_id: z.building_id }));
         }
 
         // Fetch Opened & Closed logs for all requests in batch
@@ -3926,7 +3942,14 @@ export class RequestsService implements OnModuleInit {
           if (req.zoneId) {
             const names = String(req.zoneId)
               .split(',')
-              .map((id) => zoneLookupMap.get(Number(id.trim())))
+              .map((id) => {
+                const item = zoneLookupMap.get(Number(id.trim()));
+                if (!item) return null;
+                if (req.buildingId && item.building_id && Number(item.building_id) !== Number(req.buildingId)) {
+                  return null;
+                }
+                return item.zone;
+              })
               .filter(Boolean);
             if (names.length > 0) {
               resolvedZoneNames = names.join(', ');
@@ -4856,6 +4879,7 @@ export class RequestsService implements OnModuleInit {
   private async checkZoneStatusAndAssignPermitUnder(
     dto: CreateRequestDto | UpdateRequestDto,
     existingZoneId?: any,
+    existingBuildingId?: any,
   ) {
     let zoneIds: number[] = [];
     const zoneIdVal = dto.Zone_Id !== undefined ? dto.Zone_Id : existingZoneId;
@@ -4875,12 +4899,71 @@ export class RequestsService implements OnModuleInit {
     }
 
     if (zoneIds.length > 0) {
-      const zones = await this.zoneRepo.find({
+      let zones = await this.zoneRepo.find({
         where: { id: In(zoneIds) },
       });
       if (zones.length === 0) {
         throw new BadRequestException('Selected zones not found');
       }
+
+      // Filter by building if Building_Id is provided or exists on record
+      const targetBuildingId = dto.Building_Id !== undefined && dto.Building_Id !== null
+        ? Number(dto.Building_Id)
+        : (existingBuildingId !== undefined && existingBuildingId !== null ? Number(existingBuildingId) : null);
+
+      if (targetBuildingId && !isNaN(targetBuildingId)) {
+        const filteredByBuilding = zones.filter((z) => Number(z.building_id) === targetBuildingId);
+        if (filteredByBuilding.length > 0) {
+          zones = filteredByBuilding;
+          zoneIds = zones.map((z) => z.id);
+        }
+      }
+
+      // Filter by floor if Floor_Id is provided
+      const targetFloorIdVal = dto.Floor_Id;
+      if (targetFloorIdVal !== undefined && targetFloorIdVal !== null && String(targetFloorIdVal).trim() !== '') {
+        const allowedFloorIds = new Set(
+          String(targetFloorIdVal)
+            .split(',')
+            .map((f) => Number(f.trim()))
+            .filter((n) => !isNaN(n) && n > 0),
+        );
+        if (allowedFloorIds.size > 0) {
+          const filteredByFloor = zones.filter((z) => z.floor_id && allowedFloorIds.has(Number(z.floor_id)));
+          if (filteredByFloor.length > 0) {
+            zones = filteredByFloor;
+            zoneIds = zones.map((z) => z.id);
+          }
+        }
+      }
+
+      // Filter by room if Room_Nos is provided
+      if (dto.Room_Nos !== undefined && dto.Room_Nos !== null && String(dto.Room_Nos).trim() !== '') {
+        const roomTokens = String(dto.Room_Nos).split(',').map((s) => s.trim()).filter(Boolean);
+        if (roomTokens.length > 0) {
+          const numericRoomIds = roomTokens.map((t) => Number(t)).filter((n) => !isNaN(n) && n > 0);
+          let matchedRooms: Room[] = [];
+          if (numericRoomIds.length > 0) {
+            matchedRooms = await this.roomRepo.find({ where: { room_id: In(numericRoomIds) } });
+          }
+          if (matchedRooms.length === 0) {
+            matchedRooms = await this.roomRepo.find({ where: { room_name: In(roomTokens) } });
+          }
+          if (targetBuildingId && !isNaN(targetBuildingId)) {
+            const bRooms = matchedRooms.filter((r) => Number(r.building_id) === targetBuildingId);
+            if (bRooms.length > 0) matchedRooms = bRooms;
+          }
+          const roomZoneIds = new Set(matchedRooms.map((r) => Number(r.zone_id)).filter((id) => !isNaN(id) && id > 0));
+          if (roomZoneIds.size > 0) {
+            const filteredByRoom = zones.filter((z) => roomZoneIds.has(z.id));
+            if (filteredByRoom.length > 0) {
+              zones = filteredByRoom;
+              zoneIds = zones.map((z) => z.id);
+            }
+          }
+        }
+      }
+
       const statuses = zones.map((z) => (z.status || '').toUpperCase().trim());
       if (statuses.includes('HO')) {
         throw new BadRequestException(
@@ -4900,6 +4983,26 @@ export class RequestsService implements OnModuleInit {
         dto.permit_under = 'Commissioning';
       }
       dto.Zone_Id = zoneIds.join(',');
+
+      // Also synchronize dto.zone if provided
+      if (dto.zone !== undefined && dto.zone !== null) {
+        const validZoneNames = zones.map((z) => z.zone).filter(Boolean);
+        const validNamesSet = new Set(validZoneNames.map((n) => n.trim().toLowerCase()));
+        const rawZone: any = dto.zone;
+        if (typeof rawZone === 'string') {
+          const matchedNames = rawZone
+            .split(',')
+            .map((s: string) => s.trim())
+            .filter((s: string) => validNamesSet.has(s.toLowerCase()));
+          dto.zone = matchedNames.length > 0 ? matchedNames.join(',') : validZoneNames.join(',');
+        } else if (Array.isArray(rawZone)) {
+          const filteredItems = rawZone.filter((item: any) => {
+            const zName = typeof item === 'object' ? (item.zone || item.zone_name) : String(item);
+            return zName && validNamesSet.has(String(zName).trim().toLowerCase());
+          });
+          (dto as any).zone = filteredItems.length > 0 ? filteredItems : validZoneNames.join(',');
+        }
+      }
     }
   }
 
@@ -5638,9 +5741,21 @@ export class RequestsService implements OnModuleInit {
     }
 
     // 3. Validate zones exist and have consistent status (lookup by IDs)
-    const zoneEntities = await this.zoneRepo.findBy({ id: In(zoneIds) });
+    const targetBuildingId = dto.Building_Id !== undefined && dto.Building_Id !== null
+      ? Number(dto.Building_Id)
+      : (originalRequest.buildingId ? Number(originalRequest.buildingId) : null);
+
+    let zoneEntities = await this.zoneRepo.findBy({ id: In(zoneIds) });
     if (!zoneEntities || zoneEntities.length === 0) {
       throw new BadRequestException('Zone not found');
+    }
+
+    if (targetBuildingId && !isNaN(targetBuildingId)) {
+      const filteredByBuilding = zoneEntities.filter((z) => Number(z.building_id) === targetBuildingId);
+      if (filteredByBuilding.length > 0) {
+        zoneEntities = filteredByBuilding;
+        zoneIds = zoneEntities.map((z) => z.id);
+      }
     }
 
     const statuses = [...new Set(zoneEntities.map((z) => (z.status || '').toUpperCase().trim()))];
@@ -5711,7 +5826,9 @@ export class RequestsService implements OnModuleInit {
     // 7. Resolve zone and zoneId safely truncated to max 250 characters
     const resolvedZoneId = zoneIds.join(',').substring(0, 250);
     const fetchedZoneNames = zoneEntities.map((z) => z.zone).filter(Boolean);
-    const combinedZoneNames = zoneNamesFromDto.length > 0 ? zoneNamesFromDto.join(',') : fetchedZoneNames.join(',');
+    const allowedZoneNames = new Set(fetchedZoneNames.map((n) => n.trim().toLowerCase()));
+    const validZoneNamesFromDto = zoneNamesFromDto.filter((n) => allowedZoneNames.has(n.trim().toLowerCase()));
+    const combinedZoneNames = validZoneNamesFromDto.length > 0 ? validZoneNamesFromDto.join(',') : fetchedZoneNames.join(',');
     const resolvedZone = (combinedZoneNames || originalRequest.zone || '').substring(0, 250);
 
     const createdIds: number[] = [];
@@ -5768,7 +5885,7 @@ export class RequestsService implements OnModuleInit {
         createdTime,
         siteId: dto.Site_Id ?? originalRequest.siteId ?? 5,
         permitType: originalRequest.permitType,
-        permitUnder: originalRequest.permitUnder || 'Construction',
+        permitUnder: zoneStatus === 'C' ? 'Commissioning' : (zoneStatus === 'UC' ? 'Construction' : (originalRequest.permitUnder || 'Construction')),
         newDate: resolvedNewDate,
         newEndTime: dto.New_End_Time ?? originalRequest.newEndTime,
         nightShift: isNightShift ? '1' : '0',
@@ -5989,7 +6106,11 @@ export class RequestsService implements OnModuleInit {
         try {
           const zoneEntities = await this.zoneRepo.findBy({ id: In(ids) });
           if (zoneEntities && zoneEntities.length > 0) {
-            resolvedZoneNames = zoneEntities.map((z) => z.zone).filter(Boolean).join(', ');
+            const matchingZones = req.buildingId
+              ? zoneEntities.filter((z) => Number(z.building_id) === Number(req.buildingId))
+              : zoneEntities;
+            const validZones = matchingZones.length > 0 ? matchingZones : zoneEntities;
+            resolvedZoneNames = validZones.map((z) => z.zone).filter(Boolean).join(', ');
           }
         } catch (e) {
           // ignore lookup error
@@ -5997,7 +6118,18 @@ export class RequestsService implements OnModuleInit {
       }
     }
     if (!resolvedZoneNames && typeof req.zone === 'string') {
-      resolvedZoneNames = req.zone;
+      if (req.buildingId) {
+        try {
+          const bZones = await this.zoneRepo.findBy({ building_id: Number(req.buildingId) });
+          const bZoneNames = new Set(bZones.map((z) => (z.zone || '').trim().toLowerCase()));
+          const filtered = req.zone.split(',').map((s) => s.trim()).filter((s) => bZoneNames.has(s.toLowerCase()));
+          resolvedZoneNames = filtered.length > 0 ? filtered.join(', ') : req.zone;
+        } catch (e) {
+          resolvedZoneNames = req.zone;
+        }
+      } else {
+        resolvedZoneNames = req.zone;
+      }
     }
     if (!resolvedZoneNames && (req as any).zone?.zone) {
       resolvedZoneNames = (req as any).zone.zone;
