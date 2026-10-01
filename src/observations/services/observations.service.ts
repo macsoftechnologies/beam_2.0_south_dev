@@ -180,6 +180,9 @@ export class ObservationsService implements OnModuleInit {
       assignedContractorName: dto.assignedContractorName,
       photos: dto.photos || [],
       status: initialStatus,
+      closedBy: obsType === ObservationType.POSITIVE ? (dto.createdByUserName || 'Safety Officer') : undefined,
+      closedTime: obsType === ObservationType.POSITIVE ? new Date() : undefined,
+      closureComments: obsType === ObservationType.POSITIVE ? 'Observation verified, documented, and closed in accordance with applicable project HSE requirements.' : undefined,
       createdByUserId: dto.createdByUserId,
       createdByUserName: dto.createdByUserName || 'Safety Officer',
       createdByContractorId: dto.createdByContractorId,
@@ -223,6 +226,19 @@ export class ObservationsService implements OnModuleInit {
         dto.createdByUserName,
         dto.createdByRole,
       ).catch((err) => this.logger.error('Observation notification error on create:', err));
+    }
+
+    // If positive observation, write CLOSED action log with creator user details
+    if (obsType === ObservationType.POSITIVE) {
+      const closeLog = this.logRepo.create({
+        observationId: savedObservation.id,
+        actionType: ObservationActionType.CLOSED,
+        performedByUserId: dto.createdByUserId,
+        performedByUserName: dto.createdByUserName || 'Safety Officer',
+        performedByUserRole: dto.createdByRole || 'DEPARTMENT',
+        remarks: 'Observation verified, documented, and closed in accordance with applicable project HSE requirements.',
+      });
+      await this.logRepo.save(closeLog);
     }
 
     const history = await this.logRepo.find({ where: { observationId: savedObservation.id }, order: { id: 'ASC' } });

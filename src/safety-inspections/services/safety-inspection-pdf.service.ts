@@ -589,16 +589,16 @@ export class SafetyInspectionPdfService {
             </table>
 
             ${inspection.locationMapImage ? `
-            <div style="margin-top: 5px; margin-bottom: 6px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid;">
-              <div style="font-size: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+            <div style="margin-top: 5px; margin-bottom: 6px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid;">
+              <div style="font-size: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; padding: 0 2px;">
                 <span style="display: flex; align-items: center; gap: 4px;">
                   <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #16a34a;"></span>
                   Location Floor Map &bull; ${inspection.buildingName || 'Building'} ${inspection.floorLevel ? `(${inspection.floorLevel})` : ''}
                 </span>
                 <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Zone &amp; Work Area</span>
               </div>
-              <div style="text-align: center; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 3px; padding: 2px; overflow: hidden;">
-                <img src="${this.resolveImageSrc(inspection.locationMapImage)}" style="max-height: 260px; width: 100%; object-fit: contain; display: block; margin: 0 auto;" alt="Location Map" />
+              <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; overflow: hidden; width: 100%;">
+                <img src="${this.resolveImageSrc(inspection.locationMapImage)}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
               </div>
             </div>
             ` : ''}

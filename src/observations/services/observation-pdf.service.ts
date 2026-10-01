@@ -3,7 +3,7 @@ import puppeteer from 'puppeteer';
 import { readFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
 import { Observation, ObservationType, ObservationStatus } from '../entities/observation.entity';
-import { ObservationActionLog } from '../entities/observation-action-log.entity';
+import { ObservationActionLog, ObservationActionType } from '../entities/observation-action-log.entity';
 
 @Injectable()
 export class ObservationPdfService {
@@ -227,9 +227,43 @@ export class ObservationPdfService {
       locationMapBase64 = await this.resolveImageAsBase64(obs.locationMapImage);
     }
 
+    // Closed By value: show actual user name who closed or created it, never generic 'HSE Lead / Site Manager'
+    let closedByName = obs.closedBy;
+    if (!closedByName || closedByName.trim() === 'HSE Lead / Site Manager' || closedByName.trim() === 'HSE Department') {
+      closedByName = obs.createdByUserName || 'Safety Inspector';
+    }
+
+    const finalClosureTime = obs.closedTime || obs.createdTime || obs.updatedTime;
+    const finalClosureComments = obs.closureComments || 'Observation verified, documented, and closed in accordance with applicable project HSE requirements.';
+
+    // Prepare complete history list including POSITIVE closure log if not already recorded
+    const rawHistory = [...(history || [])];
+    if (isPositive) {
+      const existingClosedLog = rawHistory.find((l) => String(l.actionType).toUpperCase() === 'CLOSED');
+      if (existingClosedLog) {
+        existingClosedLog.timestamp = finalClosureTime;
+        existingClosedLog.remarks = finalClosureComments;
+        if (!existingClosedLog.performedByUserName || existingClosedLog.performedByUserName === 'System') {
+          existingClosedLog.performedByUserName = closedByName;
+        }
+      } else {
+        rawHistory.push({
+          id: -1,
+          observationId: obs.id,
+          actionType: ObservationActionType.CLOSED,
+          performedByUserId: obs.createdByUserId,
+          performedByUserName: closedByName,
+          performedByUserRole: obs.createdByRole || 'DEPARTMENT',
+          timestamp: finalClosureTime,
+          remarks: finalClosureComments,
+          photos: [],
+        } as any);
+      }
+    }
+
     // Resolve all photos inside Action Logs history
     const resolvedHistory = await Promise.all(
-      history.map(async (log) => {
+      rawHistory.map(async (log) => {
         const logPhotos = this.parseJsonArray(log.photos);
         const resolvedLogPhotos = (await Promise.all(logPhotos.map((p) => this.resolveImageAsBase64(p)))).filter((b) => !!b);
         return {
@@ -512,22 +546,22 @@ export class ObservationPdfService {
   </table>
 
   ${locationMapBase64 ? `
-  <div style="margin-top: 5px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 6px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid;">
-    <div style="font-size: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+  <div style="margin-top: 5px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; background: #f8fafc; page-break-inside: avoid; break-inside: avoid;">
+    <div style="font-size: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; padding: 0 2px;">
       <span style="display: flex; align-items: center; gap: 4px;">
         <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #16a34a;"></span>
         Location Floor Map &bull; ${obs.buildingName || 'Building'} ${obs.floorLevel ? `(${obs.floorLevel})` : ''}
       </span>
       <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Zone / Specific Work Area</span>
     </div>
-    <div style="text-align: center; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 3px; padding: 2px; overflow: hidden;">
-      <img src="${locationMapBase64}" style="max-height: 260px; width: 100%; object-fit: contain; display: block; margin: 0 auto;" alt="Location Map" />
+    <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; overflow: hidden; width: 100%;">
+      <img src="${locationMapBase64}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
     </div>
   </div>
   ` : ''}
 
-  <!-- Findings & Immediate Action -->
-  <div class="section-hdr">FINDING DESCRIPTION &amp; IMMEDIATE ACTION</div>
+  <!-- Findings -->
+  <div class="section-hdr">FINDING DESCRIPTION</div>
   <table class="sc-grid">
     <tr>
       <td class="lbl" style="width: 18%; vertical-align: top;">Detailed Description:</td>
@@ -572,31 +606,18 @@ export class ObservationPdfService {
   </table>
   ` : ''}
 
-  <!-- HSE Sign-off & Closure Verification -->
-  <div class="section-hdr">HSE VERIFICATION &amp; FINAL CLOSURE</div>
+  <!-- Verification & Final Closure -->
+  <div class="section-hdr">VERIFICATION &amp; FINAL CLOSURE</div>
   <table class="sc-grid">
     <tr>
       <td class="lbl" style="width: 18%;">Closed By:</td>
-      <td class="val" style="width: 32%; font-weight: 700;">${obs.closedBy || 'HSE Lead / Site Manager'}</td>
+      <td class="val" style="width: 32%; font-weight: 700;">${closedByName}</td>
       <td class="lbl" style="width: 18%;">Closure Date &amp; Time:</td>
-      <td class="val" style="width: 32%; font-weight: 700;">${this.formatDateTime(obs.closedTime || obs.updatedTime)}</td>
+      <td class="val" style="width: 32%; font-weight: 700;">${this.formatDateTime(finalClosureTime)}</td>
     </tr>
     <tr>
       <td class="lbl">Closure Comments:</td>
-      <td class="val" colspan="3">${obs.closureComments || 'Observation verified, documented, and closed in accordance with applicable project HSE requirements.'}</td>
-    </tr>
-    <tr>
-      <td class="lbl">Auditor Verification:</td>
-      <td class="val" colspan="3" style="height: 52px; vertical-align: bottom;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-end; padding-top: 10px;">
-          <div style="font-family: 'Brush Script MT', cursive, sans-serif; font-size: 18px; color: #111c38; font-weight: 700;">
-            ${closureSigBase64 ? `<img src="${closureSigBase64}" style="max-height: 44px; object-fit: contain;" alt="Closure Signature" />` : (obs.closedBy || 'HSE Lead / Site Manager')}
-          </div>
-          <div style="border-top: 1px dashed #94a3b8; width: 220px; text-align: center; font-size: 8px; color: #64748b; padding-top: 3px;">
-            Authorized HSE Sign-Off &amp; Stamp
-          </div>
-        </div>
-      </td>
+      <td class="val" colspan="3">${finalClosureComments}</td>
     </tr>
   </table>
 
