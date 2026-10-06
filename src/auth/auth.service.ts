@@ -107,58 +107,61 @@ export class AuthService {
       : null;
     const phoneNumber = employee?.phonenumber ?? '';
     const email = employee?.email ?? '';
-    const otpNotificationType = String(employee?.otpNotificationType || 'SMS').toUpperCase();
+    const rawOtpType = String(employee?.otpNotificationType || 'SMS').toUpperCase();
+    const shouldSendEmail = rawOtpType === 'EMAIL' || rawOtpType === 'BOTH' || (rawOtpType.includes('EMAIL') && rawOtpType.includes('SMS'));
+    const shouldSendSms = rawOtpType === 'SMS' || rawOtpType === 'BOTH' || (rawOtpType.includes('EMAIL') && rawOtpType.includes('SMS'));
 
-    let notificationSent = false;
+    let emailSent = false;
+    let smsSent = false;
     let maskedPhone = '';
     let maskedEmail = '';
 
-    if (otpNotificationType === 'EMAIL') {
-      if (email) {
-        maskedEmail = this.maskEmail(email);
-        const html = `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-            <div style="text-align: center; margin-bottom: 24px;">
-              <h2 style="color: #0f172a; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">BEAM Platform</h2>
-              <p style="color: #64748b; margin-top: 6px; font-size: 14px;">Secure Login Verification</p>
-            </div>
-            <p style="color: #334155; font-size: 15px; margin-bottom: 12px;">Hello <strong>${employee?.employeeName || user.username}</strong>,</p>
-            <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Please use the one-time security code below to complete your login to the BEAM Portal:</p>
-            <div style="text-align: center; margin: 28px 0;">
-              <div style="display: inline-block; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca; background: #eef2ff; padding: 14px 28px; border-radius: 8px; border: 1.5px dashed #6366f1;">
-                ${otp}
-              </div>
-            </div>
-            <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>5 minutes</strong>. If you did not request this login code, please contact your system administrator immediately.</p>
-            <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
-            <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">SafeSiteWorks - BEAM System</p>
-          </div>
-        `;
-        notificationSent = await this.emailService.sendEmail({
-          to: email,
-          subject: 'BEAM - Login Security Code',
-          text: `Your BEAM login verification code is: ${otp}. It expires in 5 minutes.`,
-          html,
-        });
-      }
+    if (phoneNumber) {
+      maskedPhone = this.maskPhone(phoneNumber);
+    }
+    if (email) {
+      maskedEmail = this.maskEmail(email);
+    }
 
-      if (!notificationSent) {
+    if (shouldSendEmail && email) {
+      const html = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #0f172a; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">BEAM Platform</h2>
+            <p style="color: #64748b; margin-top: 6px; font-size: 14px;">Secure Login Verification</p>
+          </div>
+          <p style="color: #334155; font-size: 15px; margin-bottom: 12px;">Hello <strong>${employee?.employeeName || user.username}</strong>,</p>
+          <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Please use the one-time security code below to complete your login to the BEAM Portal:</p>
+          <div style="text-align: center; margin: 28px 0;">
+            <div style="display: inline-block; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca; background: #eef2ff; padding: 14px 28px; border-radius: 8px; border: 1.5px dashed #6366f1;">
+              ${otp}
+            </div>
+          </div>
+          <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>5 minutes</strong>. If you did not request this login code, please contact your system administrator immediately.</p>
+          <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+          <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">SafeSiteWorks - BEAM System</p>
+        </div>
+      `;
+      emailSent = await this.emailService.sendEmail({
+        to: email,
+        subject: 'BEAM - Login Security Code',
+        text: `Your BEAM login verification code is: ${otp}. It expires in 5 minutes.`,
+        html,
+      });
+      if (!emailSent) {
         console.log(`[OTP - LOGIN VIA EMAIL] User: ${username} | OTP: ${otp} | Email: ${email || 'N/A'}`);
       }
-    } else {
-      // Send OTP via SMS
-      if (phoneNumber) {
-        maskedPhone = this.maskPhone(phoneNumber);
-        notificationSent = await this.smsService.sendSms(
-          phoneNumber,
-          `Your BEAM login verification code is: ${otp}. Valid for 5 minutes.`,
-        );
-        if (!notificationSent) {
-          notificationSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
-        }
-      }
+    }
 
-      if (!notificationSent) {
+    if (shouldSendSms && phoneNumber) {
+      smsSent = await this.smsService.sendSms(
+        phoneNumber,
+        `Your BEAM login verification code is: ${otp}. Valid for 5 minutes.`,
+      );
+      if (!smsSent) {
+        smsSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
+      }
+      if (!smsSent) {
         console.log(`[OTP - LOGIN VIA SMS] User: ${username} | OTP: ${otp} | Phone: ${phoneNumber || 'N/A'}`);
       }
     }
@@ -185,13 +188,22 @@ export class AuthService {
     const payload = { sub: user.id, username: user.username };
     const access_token = this.jwtService.sign(payload);
 
-    const isEmail = otpNotificationType === 'EMAIL';
+    const isBoth = shouldSendEmail && shouldSendSms;
+    const isEmail = shouldSendEmail && !shouldSendSms;
+    const resolvedOtpType = isBoth ? 'BOTH' : (isEmail ? 'EMAIL' : 'SMS');
+
+    let responseMsg = '';
+    if (isBoth) {
+      responseMsg = `Login successful. OTP sent to your registered email (${maskedEmail || 'email'}) and phone number (${maskedPhone || 'phone'}).`;
+    } else if (isEmail) {
+      responseMsg = `Login successful. OTP sent to your registered email address${maskedEmail ? ` (${maskedEmail})` : ''}.`;
+    } else {
+      responseMsg = `Login successful. OTP sent to your registered phone number${maskedPhone ? ` ending in ${maskedPhone}` : ''}.`;
+    }
 
     return {
       statusCode: HttpStatus.OK,
-      message: isEmail
-        ? `Login successful. OTP sent to your registered email address${maskedEmail ? ` (${maskedEmail})` : ''}.`
-        : `Login successful. OTP sent to your registered phone number${maskedPhone ? ` ending in ${maskedPhone}` : ''}.`,
+      message: responseMsg,
       id: user.id,
       username: user.username,
       userType: user.userType,
@@ -199,14 +211,14 @@ export class AuthService {
       empId: user.empId,
       phonenumber: phoneNumber,
       email,
-      otpNotificationType,
+      otpNotificationType: resolvedOtpType,
       maskedPhone,
       maskedEmail,
       moduleAccess,
       auth_token: authToken,
       access_token,
-      sms_sent: !isEmail && notificationSent,
-      email_sent: isEmail && notificationSent,
+      sms_sent: smsSent,
+      email_sent: emailSent,
     };
   }
 
@@ -287,75 +299,87 @@ export class AuthService {
       : null;
     const phoneNumber = employee?.phonenumber ?? '';
     const email = employee?.email ?? '';
-    const otpNotificationType = String(employee?.otpNotificationType || 'SMS').toUpperCase();
+    const rawOtpType = String(employee?.otpNotificationType || 'SMS').toUpperCase();
+    const shouldSendEmail = rawOtpType === 'EMAIL' || rawOtpType === 'BOTH' || (rawOtpType.includes('EMAIL') && rawOtpType.includes('SMS'));
+    const shouldSendSms = rawOtpType === 'SMS' || rawOtpType === 'BOTH' || (rawOtpType.includes('EMAIL') && rawOtpType.includes('SMS'));
 
-    let notificationSent = false;
+    let emailSent = false;
+    let smsSent = false;
     let maskedPhone = '';
     let maskedEmail = '';
 
-    if (otpNotificationType === 'EMAIL') {
-      if (email) {
-        maskedEmail = this.maskEmail(email);
-        const html = `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
-            <div style="text-align: center; margin-bottom: 24px;">
-              <h2 style="color: #0f172a; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">BEAM Platform</h2>
-              <p style="color: #64748b; margin-top: 6px; font-size: 14px;">Password Reset Verification</p>
-            </div>
-            <p style="color: #334155; font-size: 15px; margin-bottom: 12px;">Hello <strong>${employee?.employeeName || user.username}</strong>,</p>
-            <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Please use the one-time security code below to reset your password:</p>
-            <div style="text-align: center; margin: 28px 0;">
-              <div style="display: inline-block; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca; background: #eef2ff; padding: 14px 28px; border-radius: 8px; border: 1.5px dashed #6366f1;">
-                ${otp}
-              </div>
-            </div>
-            <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>5 minutes</strong>. If you did not request a password reset, please contact your administrator.</p>
-            <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
-            <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">SafeSiteWorks - BEAM System</p>
+    if (phoneNumber) {
+      maskedPhone = this.maskPhone(phoneNumber);
+    }
+    if (email) {
+      maskedEmail = this.maskEmail(email);
+    }
+
+    if (shouldSendEmail && email) {
+      const html = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #0f172a; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">BEAM Platform</h2>
+            <p style="color: #64748b; margin-top: 6px; font-size: 14px;">Password Reset Verification</p>
           </div>
-        `;
-        notificationSent = await this.emailService.sendEmail({
-          to: email,
-          subject: 'BEAM - Password Reset Code',
-          text: `Your BEAM password reset verification code is: ${otp}. It expires in 5 minutes.`,
-          html,
-        });
-      }
-      if (!notificationSent) {
+          <p style="color: #334155; font-size: 15px; margin-bottom: 12px;">Hello <strong>${employee?.employeeName || user.username}</strong>,</p>
+          <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Please use the one-time security code below to reset your password:</p>
+          <div style="text-align: center; margin: 28px 0;">
+            <div style="display: inline-block; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca; background: #eef2ff; padding: 14px 28px; border-radius: 8px; border: 1.5px dashed #6366f1;">
+              ${otp}
+            </div>
+          </div>
+          <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>5 minutes</strong>. If you did not request a password reset, please contact your administrator.</p>
+          <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+          <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">SafeSiteWorks - BEAM System</p>
+        </div>
+      `;
+      emailSent = await this.emailService.sendEmail({
+        to: email,
+        subject: 'BEAM - Password Reset Code',
+        text: `Your BEAM password reset verification code is: ${otp}. It expires in 5 minutes.`,
+        html,
+      });
+      if (!emailSent) {
         console.log(`[OTP - FORGOT PASSWORD VIA EMAIL] User: ${username} | OTP: ${otp} | Email: ${email || 'N/A'}`);
       }
-    } else {
-      if (phoneNumber) {
-        maskedPhone = this.maskPhone(phoneNumber);
-        notificationSent = await this.smsService.sendSms(
-          phoneNumber,
-          `Your BEAM password reset code is: ${otp}. Valid for 5 minutes.`,
-        );
-        if (!notificationSent) {
-          notificationSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
-        }
+    }
+
+    if (shouldSendSms && phoneNumber) {
+      smsSent = await this.smsService.sendSms(
+        phoneNumber,
+        `Your BEAM password reset code is: ${otp}. Valid for 5 minutes.`,
+      );
+      if (!smsSent) {
+        smsSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
       }
-      if (!notificationSent) {
+      if (!smsSent) {
         console.log(`[OTP - FORGOT PASSWORD VIA SMS] User: ${username} | OTP: ${otp} | Phone: ${phoneNumber || 'N/A'}`);
       }
     }
 
-    if (!maskedPhone && phoneNumber) maskedPhone = this.maskPhone(phoneNumber);
-    if (!maskedEmail && email) maskedEmail = this.maskEmail(email);
+    const isBoth = shouldSendEmail && shouldSendSms;
+    const isEmail = shouldSendEmail && !shouldSendSms;
+    const resolvedOtpType = isBoth ? 'BOTH' : (isEmail ? 'EMAIL' : 'SMS');
 
-    const isEmail = otpNotificationType === 'EMAIL';
+    let responseMsg = '';
+    if (isBoth) {
+      responseMsg = `OTP sent to your registered email address (${maskedEmail || 'email'}) and phone number (${maskedPhone || 'phone'}).`;
+    } else if (isEmail) {
+      responseMsg = `OTP sent to your registered email address${maskedEmail ? ` (${maskedEmail})` : ''}.`;
+    } else {
+      responseMsg = `OTP sent to your registered phone number ending in ${maskedPhone || 'N/A'}.`;
+    }
 
     return {
       statusCode: HttpStatus.OK,
-      message: isEmail
-        ? `OTP sent to your registered email address${maskedEmail ? ` (${maskedEmail})` : ''}.`
-        : `OTP sent to your registered phone number ending in ${maskedPhone || 'N/A'}.`,
+      message: responseMsg,
       user_id: user.id,
-      otpNotificationType,
+      otpNotificationType: resolvedOtpType,
       maskedPhone,
       maskedEmail,
-      sms_sent: !isEmail && notificationSent,
-      email_sent: isEmail && notificationSent,
+      sms_sent: smsSent,
+      email_sent: emailSent,
     };
   }
 
