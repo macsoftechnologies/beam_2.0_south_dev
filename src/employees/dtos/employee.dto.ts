@@ -31,6 +31,7 @@ export class CreateEmployeeDto {
   @IsOptional() @IsString() password?: string;
   @IsOptional() @IsString() userType?: string;
   @IsOptional() @IsString() otp?: string;
+  @IsOptional() @IsString() otpNotificationType?: string;
 }
 
 // ─── CREATE DEP EMPLOYEE ─────────────────────────────────────────────────────
@@ -95,6 +96,7 @@ export class CreateEmpDto {
   @IsOptional() @IsString() moduleAccess?: string;
   @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() password?: string;
+  @IsOptional() @IsString() otpNotificationType?: string;
 }
 
 // ─── UPDATE EMPLOYEE (generic / main) ────────────────────────────────────────
@@ -117,6 +119,7 @@ export class UpdateEmployeeDto {
   @IsOptional() @IsString() password?: string;
   @IsOptional() @IsString() userType?: string;
   @IsOptional() @IsString() otp?: string;
+  @IsOptional() @IsString() otpNotificationType?: string;
 }
 
 // ─── UPDATE DEP EMPLOYEE ─────────────────────────────────────────────────────
@@ -168,6 +171,7 @@ export class UpdateEmpDto {
   @IsOptional() @IsString() moduleAccess?: string;
   @IsOptional() @IsString() username?: string;
   @IsOptional() @IsString() password?: string;
+  @IsOptional() @IsString() otpNotificationType?: string;
 }
 
 // ─── DELETE EMPLOYEE ──────────────────────────────────────────────────────────

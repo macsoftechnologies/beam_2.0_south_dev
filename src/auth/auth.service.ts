@@ -14,6 +14,8 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { EmailService } from '../notifications/services/email.service';
+import { SmsService } from '../notifications/services/sms.service';
 
 @Injectable()
 export class AuthService {
@@ -22,10 +24,32 @@ export class AuthService {
     private jwtService: JwtService,
     private otpService: OtpService,
     private redisCacheService: RedisCacheService,
+    private emailService: EmailService,
+    private smsService: SmsService,
 
     @InjectRepository(Employee)
     private readonly employeeRepo: Repository<Employee>,
   ) { }
+
+  private maskEmail(email: string): string {
+    if (!email) return '';
+    const parts = email.split('@');
+    if (parts.length !== 2) return email;
+    const [name, domain] = parts;
+    if (name.length <= 2) {
+      return `${name[0]}*@${domain}`;
+    }
+    const firstChar = name[0];
+    const lastChar = name[name.length - 1];
+    return `${firstChar}${'*'.repeat(Math.max(1, Math.min(name.length - 2, 5)))}${lastChar}@${domain}`;
+  }
+
+  private maskPhone(phone: string): string {
+    if (!phone) return '';
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length <= 4) return digits;
+    return `****${digits.slice(-4)}`;
+  }
 
   /**
    * Register a new user
@@ -77,21 +101,66 @@ export class AuthService {
     // Update user with OTP
     await this.usersService.updateOtp(user.id, otp);
 
-    // Fetch phone number from Employee table
+    // Fetch phone number, email and notification type from Employee table
     const employee = (user.empId !== null && user.empId !== undefined)
       ? await this.employeeRepo.findOne({ where: { id: user.empId } })
       : null;
     const phoneNumber = employee?.phonenumber ?? '';
+    const email = employee?.email ?? '';
+    const otpNotificationType = String(employee?.otpNotificationType || 'SMS').toUpperCase();
 
-    // Send OTP via SMS using Twilio
-    let smsSent = false;
-    if (phoneNumber) {
-      smsSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
-    }
+    let notificationSent = false;
+    let maskedPhone = '';
+    let maskedEmail = '';
 
-    // Fallback: log OTP to server console for development/testing
-    if (!smsSent) {
-      console.log(`[OTP - LOGIN] User: ${username} | OTP: ${otp} | Phone: ${phoneNumber || 'N/A'}`);
+    if (otpNotificationType === 'EMAIL') {
+      if (email) {
+        maskedEmail = this.maskEmail(email);
+        const html = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <h2 style="color: #0f172a; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">BEAM Platform</h2>
+              <p style="color: #64748b; margin-top: 6px; font-size: 14px;">Secure Login Verification</p>
+            </div>
+            <p style="color: #334155; font-size: 15px; margin-bottom: 12px;">Hello <strong>${employee?.employeeName || user.username}</strong>,</p>
+            <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Please use the one-time security code below to complete your login to the BEAM Portal:</p>
+            <div style="text-align: center; margin: 28px 0;">
+              <div style="display: inline-block; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca; background: #eef2ff; padding: 14px 28px; border-radius: 8px; border: 1.5px dashed #6366f1;">
+                ${otp}
+              </div>
+            </div>
+            <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>5 minutes</strong>. If you did not request this login code, please contact your system administrator immediately.</p>
+            <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+            <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">SafeSiteWorks - BEAM System</p>
+          </div>
+        `;
+        notificationSent = await this.emailService.sendEmail({
+          to: email,
+          subject: 'BEAM - Login Security Code',
+          text: `Your BEAM login verification code is: ${otp}. It expires in 5 minutes.`,
+          html,
+        });
+      }
+
+      if (!notificationSent) {
+        console.log(`[OTP - LOGIN VIA EMAIL] User: ${username} | OTP: ${otp} | Email: ${email || 'N/A'}`);
+      }
+    } else {
+      // Send OTP via SMS
+      if (phoneNumber) {
+        maskedPhone = this.maskPhone(phoneNumber);
+        notificationSent = await this.smsService.sendSms(
+          phoneNumber,
+          `Your BEAM login verification code is: ${otp}. Valid for 5 minutes.`,
+        );
+        if (!notificationSent) {
+          notificationSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
+        }
+      }
+
+      if (!notificationSent) {
+        console.log(`[OTP - LOGIN VIA SMS] User: ${username} | OTP: ${otp} | Phone: ${phoneNumber || 'N/A'}`);
+      }
     }
 
     // Generate auth token (legacy support)
@@ -101,10 +170,12 @@ export class AuthService {
     // Save auth token
     await this.usersService.updateAuthToken(user.id, authToken);
 
-    // Mask phone number for display (show last 4 digits only)
-    const maskedPhone = phoneNumber
-      ? phoneNumber.replace(/\D/g, '').slice(-4).padStart(phoneNumber.replace(/\D/g, '').length, '*')
-      : '';
+    if (!maskedPhone && phoneNumber) {
+      maskedPhone = this.maskPhone(phoneNumber);
+    }
+    if (!maskedEmail && email) {
+      maskedEmail = this.maskEmail(email);
+    }
 
     const allModules = 'permit-to-work,incident-management,safety-observations,safety-inspection,spot-checks';
     const isUserAdmin = ['admin', 'superadmin'].includes(String(user.userType || '').toLowerCase());
@@ -114,20 +185,28 @@ export class AuthService {
     const payload = { sub: user.id, username: user.username };
     const access_token = this.jwtService.sign(payload);
 
+    const isEmail = otpNotificationType === 'EMAIL';
+
     return {
       statusCode: HttpStatus.OK,
-      message: 'Login successful. OTP sent to your registered phone number.',
+      message: isEmail
+        ? `Login successful. OTP sent to your registered email address${maskedEmail ? ` (${maskedEmail})` : ''}.`
+        : `Login successful. OTP sent to your registered phone number${maskedPhone ? ` ending in ${maskedPhone}` : ''}.`,
       id: user.id,
       username: user.username,
       userType: user.userType,
       typeId: user.typeId,
       empId: user.empId,
       phonenumber: phoneNumber,
+      email,
+      otpNotificationType,
       maskedPhone,
+      maskedEmail,
       moduleAccess,
       auth_token: authToken,
       access_token,
-      sms_sent: smsSent,
+      sms_sent: !isEmail && notificationSent,
+      email_sent: isEmail && notificationSent,
     };
   }
 
@@ -202,34 +281,81 @@ export class AuthService {
     // Save OTP to user record
     await this.usersService.updateOtp(user.id, otp);
 
-    // Fetch phone number from Employee table
+    // Fetch employee details
     const employee = (user.empId !== null && user.empId !== undefined)
       ? await this.employeeRepo.findOne({ where: { id: user.empId } })
       : null;
     const phoneNumber = employee?.phonenumber ?? '';
+    const email = employee?.email ?? '';
+    const otpNotificationType = String(employee?.otpNotificationType || 'SMS').toUpperCase();
 
-    // Send OTP via SMS
-    let smsSent = false;
-    if (phoneNumber) {
-      smsSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
+    let notificationSent = false;
+    let maskedPhone = '';
+    let maskedEmail = '';
+
+    if (otpNotificationType === 'EMAIL') {
+      if (email) {
+        maskedEmail = this.maskEmail(email);
+        const html = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <h2 style="color: #0f172a; margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">BEAM Platform</h2>
+              <p style="color: #64748b; margin-top: 6px; font-size: 14px;">Password Reset Verification</p>
+            </div>
+            <p style="color: #334155; font-size: 15px; margin-bottom: 12px;">Hello <strong>${employee?.employeeName || user.username}</strong>,</p>
+            <p style="color: #475569; font-size: 14px; line-height: 1.5; margin-bottom: 24px;">Please use the one-time security code below to reset your password:</p>
+            <div style="text-align: center; margin: 28px 0;">
+              <div style="display: inline-block; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca; background: #eef2ff; padding: 14px 28px; border-radius: 8px; border: 1.5px dashed #6366f1;">
+                ${otp}
+              </div>
+            </div>
+            <p style="color: #64748b; font-size: 13px; line-height: 1.5;">This code will expire in <strong>5 minutes</strong>. If you did not request a password reset, please contact your administrator.</p>
+            <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+            <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">SafeSiteWorks - BEAM System</p>
+          </div>
+        `;
+        notificationSent = await this.emailService.sendEmail({
+          to: email,
+          subject: 'BEAM - Password Reset Code',
+          text: `Your BEAM password reset verification code is: ${otp}. It expires in 5 minutes.`,
+          html,
+        });
+      }
+      if (!notificationSent) {
+        console.log(`[OTP - FORGOT PASSWORD VIA EMAIL] User: ${username} | OTP: ${otp} | Email: ${email || 'N/A'}`);
+      }
+    } else {
+      if (phoneNumber) {
+        maskedPhone = this.maskPhone(phoneNumber);
+        notificationSent = await this.smsService.sendSms(
+          phoneNumber,
+          `Your BEAM password reset code is: ${otp}. Valid for 5 minutes.`,
+        );
+        if (!notificationSent) {
+          notificationSent = await this.otpService.sendOtpViaSms(phoneNumber, otp);
+        }
+      }
+      if (!notificationSent) {
+        console.log(`[OTP - FORGOT PASSWORD VIA SMS] User: ${username} | OTP: ${otp} | Phone: ${phoneNumber || 'N/A'}`);
+      }
     }
 
-    // Fallback: log OTP to server console
-    if (!smsSent) {
-      console.log(`[OTP - FORGOT PASSWORD] User: ${username} | OTP: ${otp} | Phone: ${phoneNumber || 'N/A'}`);
-    }
+    if (!maskedPhone && phoneNumber) maskedPhone = this.maskPhone(phoneNumber);
+    if (!maskedEmail && email) maskedEmail = this.maskEmail(email);
 
-    // Mask phone number for display
-    const maskedPhone = phoneNumber
-      ? `****${phoneNumber.replace(/\D/g, '').slice(-4)}`
-      : 'N/A';
+    const isEmail = otpNotificationType === 'EMAIL';
 
     return {
       statusCode: HttpStatus.OK,
-      message: `OTP sent to your registered phone number ending in ${maskedPhone}.`,
+      message: isEmail
+        ? `OTP sent to your registered email address${maskedEmail ? ` (${maskedEmail})` : ''}.`
+        : `OTP sent to your registered phone number ending in ${maskedPhone || 'N/A'}.`,
       user_id: user.id,
+      otpNotificationType,
       maskedPhone,
-      sms_sent: smsSent,
+      maskedEmail,
+      sms_sent: !isEmail && notificationSent,
+      email_sent: isEmail && notificationSent,
     };
   }
 

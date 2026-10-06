@@ -11,12 +11,14 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { OtpService } from './otp.service';
 import { UsersService } from '../users/users.service';
 import { RedisModule } from '../redis/redis.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Employee]),
     PassportModule,
     RedisModule,
+    NotificationsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

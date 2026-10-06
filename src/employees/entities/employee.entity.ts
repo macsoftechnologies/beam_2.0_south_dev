@@ -57,6 +57,9 @@ export class Employee {
   @Column({ nullable: true })
   username: string;
 
+  @Column({ name: 'otp_notification_type', nullable: true, default: 'SMS' })
+  otpNotificationType: string;
+
   /**
    * Stored as base64 in the legacy system.
    * Kept as-is for compatibility; consider migrating to bcrypt.

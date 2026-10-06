@@ -2012,78 +2012,6 @@ export function generatePermitHtml(data: any): string {
       </div>
     </div>
 
-    <!-- Location & Schedule Section -->
-    <div class="dashboard-card" style="margin-bottom: 20px;">
-      <div class="card-section-header">
-        <div class="card-section-title-wrap">
-          <span class="card-section-icon">
-            ${getCardHeaderIcon('location')}
-          </span>
-          <div>
-            <h2 class="card-section-title">Location & Schedule</h2>
-            <p class="card-section-subtitle">Where and when the work occurs</p>
-          </div>
-        </div>
-      </div>
-      <div class="info-grid">
-        <div>
-          <div class="info-label">Building</div>
-          <div class="info-value">${data.building_name || '-'}</div>
-        </div>
-        <div>
-          <div class="info-label">Level</div>
-          <div class="info-value">${data.Room_Type || '-'}</div>
-        </div>
-        <div>
-          <div class="info-label">Zone</div>
-          <div class="info-value">${data.zone_name || '-'}</div>
-        </div>
-        <div>
-          <!-- Empty spacer to align the grid -->
-        </div>
-        <div class="info-fullwidth">
-          <div class="info-label">Specific Rooms</div>
-          <div class="info-value">${formatRooms(data.room_names || data.Room_Nos)}</div>
-        </div>
-        <div>
-          <div class="info-label">Permit Type</div>
-          <div class="info-value">${data.permit_type || '-'}</div>
-        </div>
-        <div>
-          <div class="info-label">Permit Under</div>
-          <div class="info-value">${data.permit_under || 'Construction'}</div>
-        </div>
-        <div>
-          <div class="info-label">Date</div>
-          <div class="info-value">${formatDateOnly(data.Working_Date)}</div>
-        </div>
-        <div>
-          <div class="info-label">Time</div>
-          <div class="info-value">${formatTimeOnly(data.Start_Time)} - ${formatTimeOnly(data.End_Time)}</div>
-        </div>
-        
-        ${Number(data.night_shift) === 1 ? `
-        <div class="info-fullwidth" style="margin-top: 4px;">
-          <div style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border: 1px solid #4338ca; border-left: 5px solid #818cf8; border-radius: 8px; padding: 14px 16px; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2); display: flex; gap: 32px; align-items: flex-start;">
-            <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="#818cf8" style="width: 22px; height: 22px; flex-shrink: 0;">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
-              </svg>
-              <div>
-                <div style="font-size: 10px; font-weight: 800; color: #a5b4fc; letter-spacing: 0.5px; margin-bottom: 3px;">NEW DATE (Working After Midnight)</div>
-                <div style="font-size: 14px; font-weight: 800; color: #e0e7ff;">${formatDateOnly(data.new_date)}</div>
-              </div>
-            </div>
-            <div style="flex: 1; border-left: 1px solid #4338ca; padding-left: 24px;">
-              <div style="font-size: 10px; font-weight: 800; color: #a5b4fc; letter-spacing: 0.5px; margin-bottom: 3px;">NEW END TIME</div>
-              <div style="font-size: 14px; font-weight: 800; color: #e0e7ff;">${formatTimeOnly(data.new_end_time)}</div>
-            </div>
-          </div>
-        </div>
-        ` : ''}
-      </div>
-    </div>
-
     <!-- Work Details & Resources Section -->
     <div class="dashboard-card" style="margin-bottom: 20px;">
       <div class="card-section-header">
@@ -2168,6 +2096,78 @@ export function generatePermitHtml(data: any): string {
           <div class="info-label">Attached Files</div>
           ${attachmentsHtml}
         </div>
+      </div>
+    </div>
+
+    <!-- Location & Schedule Section -->
+    <div class="dashboard-card" style="margin-bottom: 20px;">
+      <div class="card-section-header">
+        <div class="card-section-title-wrap">
+          <span class="card-section-icon">
+            ${getCardHeaderIcon('location')}
+          </span>
+          <div>
+            <h2 class="card-section-title">Location & Schedule</h2>
+            <p class="card-section-subtitle">Where and when the work occurs</p>
+          </div>
+        </div>
+      </div>
+      <div class="info-grid">
+        <div>
+          <div class="info-label">Building</div>
+          <div class="info-value">${data.building_name || '-'}</div>
+        </div>
+        <div>
+          <div class="info-label">Level</div>
+          <div class="info-value">${data.Room_Type || '-'}</div>
+        </div>
+        <div>
+          <div class="info-label">Zone</div>
+          <div class="info-value">${data.zone_name || '-'}</div>
+        </div>
+        <div>
+          <!-- Empty spacer to align the grid -->
+        </div>
+        <div class="info-fullwidth">
+          <div class="info-label">Specific Rooms</div>
+          <div class="info-value">${formatRooms(data.room_names || data.Room_Nos)}</div>
+        </div>
+        <div>
+          <div class="info-label">Permit Type</div>
+          <div class="info-value">${data.permit_type || '-'}</div>
+        </div>
+        <div>
+          <div class="info-label">Permit Under</div>
+          <div class="info-value">${data.permit_under || 'Construction'}</div>
+        </div>
+        <div>
+          <div class="info-label">Date</div>
+          <div class="info-value">${formatDateOnly(data.Working_Date)}</div>
+        </div>
+        <div>
+          <div class="info-label">Time</div>
+          <div class="info-value">${formatTimeOnly(data.Start_Time)} - ${formatTimeOnly(data.End_Time)}</div>
+        </div>
+        
+        ${Number(data.night_shift) === 1 ? `
+        <div class="info-fullwidth" style="margin-top: 4px;">
+          <div style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border: 1px solid #4338ca; border-left: 5px solid #818cf8; border-radius: 8px; padding: 14px 16px; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2); display: flex; gap: 32px; align-items: flex-start;">
+            <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="#818cf8" style="width: 22px; height: 22px; flex-shrink: 0;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
+              </svg>
+              <div>
+                <div style="font-size: 10px; font-weight: 800; color: #a5b4fc; letter-spacing: 0.5px; margin-bottom: 3px;">NEW DATE (Working After Midnight)</div>
+                <div style="font-size: 14px; font-weight: 800; color: #e0e7ff;">${formatDateOnly(data.new_date)}</div>
+              </div>
+            </div>
+            <div style="flex: 1; border-left: 1px solid #4338ca; padding-left: 24px;">
+              <div style="font-size: 10px; font-weight: 800; color: #a5b4fc; letter-spacing: 0.5px; margin-bottom: 3px;">NEW END TIME</div>
+              <div style="font-size: 14px; font-weight: 800; color: #e0e7ff;">${formatTimeOnly(data.new_end_time)}</div>
+            </div>
+          </div>
+        </div>
+        ` : ''}
       </div>
     </div>
 

@@ -119,6 +119,9 @@ export class EmployeesService {
         : dto.moduleAccess;
     }
     if (dto.username !== undefined) existing.username = dto.username;
+    if (dto.otpNotificationType !== undefined) {
+      existing.otpNotificationType = dto.otpNotificationType ? String(dto.otpNotificationType).toUpperCase() : 'SMS';
+    }
 
     if (dto.phonenumber !== undefined && dto.phonenumber !== null) {
       const rawPhone = String(dto.phonenumber).replace(/^\++/, '');
@@ -432,10 +435,15 @@ export class EmployeesService {
       return { statusCode: HttpStatus.CONFLICT, message: 'Username already exists' };
     }
 
+    if (String(dto.otpNotificationType || '').toUpperCase() === 'EMAIL' && (!dto.email || !dto.email.trim())) {
+      return { statusCode: HttpStatus.BAD_REQUEST, message: 'Email ID is mandatory when Email OTP notification is selected' };
+    }
+
     const employee = this.employeeRepo.create({
       ...dto,
       phonenumber: dto.phonenumber ? `+${dto.phonenumber}` : undefined,
       password: dto.password ? encodePassword(dto.password) : undefined,
+      otpNotificationType: dto.otpNotificationType ? String(dto.otpNotificationType).toUpperCase() : 'SMS',
     } as any) as any as Employee;
 
     await this.employeeRepo.save(employee);
@@ -530,9 +538,14 @@ export class EmployeesService {
       return { statusCode: HttpStatus.CONFLICT, message: 'Username already exists' };
     }
 
+    if (String(dto.otpNotificationType || '').toUpperCase() === 'EMAIL' && (!dto.email || !dto.email.trim())) {
+      return { statusCode: HttpStatus.BAD_REQUEST, message: 'Email ID is mandatory when Email OTP notification is selected' };
+    }
+
     const employee = this.employeeRepo.create({
       ...dto,
       password: dto.password ? encodePassword(dto.password) : undefined,
+      otpNotificationType: dto.otpNotificationType ? String(dto.otpNotificationType).toUpperCase() : 'SMS',
     } as any) as any as Employee;
 
     await this.employeeRepo.save(employee);
@@ -556,6 +569,12 @@ export class EmployeesService {
       const existing = await this.employeeRepo.findOne({ where: { id: dto.id } });
       if (!existing) {
         return { statusCode: HttpStatus.NOT_FOUND, message: 'Employee not found' };
+      }
+
+      const effectiveType = dto.otpNotificationType !== undefined ? String(dto.otpNotificationType).toUpperCase() : existing.otpNotificationType;
+      const effectiveEmail = dto.email !== undefined ? dto.email : existing.email;
+      if (effectiveType === 'EMAIL' && (!effectiveEmail || !effectiveEmail.trim())) {
+        return { statusCode: HttpStatus.BAD_REQUEST, message: 'Email ID is mandatory when Email OTP notification is selected' };
       }
 
       this.applyEmployeeFields(existing, dto);
@@ -656,6 +675,12 @@ export class EmployeesService {
 
       if (dto.username && (await this.isUsernameTaken(dto.username, dto.id))) {
         return { statusCode: HttpStatus.CONFLICT, message: 'Username already exists' };
+      }
+
+      const effectiveType = dto.otpNotificationType !== undefined ? String(dto.otpNotificationType).toUpperCase() : existing.otpNotificationType;
+      const effectiveEmail = dto.email !== undefined ? dto.email : existing.email;
+      if (effectiveType === 'EMAIL' && (!effectiveEmail || !effectiveEmail.trim())) {
+        return { statusCode: HttpStatus.BAD_REQUEST, message: 'Email ID is mandatory when Email OTP notification is selected' };
       }
 
       this.applyEmployeeFields(existing, dto);
