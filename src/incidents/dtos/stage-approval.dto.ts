@@ -6,8 +6,8 @@ export class StageApprovalDto {
   approvedBy: string;
 
   @IsString()
-  @IsOptional()
-  approverRole?: string;
+  @IsNotEmpty({ message: 'Approver initials are required' })
+  approverRole: string;
 
   @IsString()
   @IsOptional()

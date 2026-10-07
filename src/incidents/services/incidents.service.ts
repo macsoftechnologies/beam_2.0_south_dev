@@ -538,8 +538,11 @@ export class IncidentsService implements OnModuleInit {
     if (!headsUp) {
       throw new NotFoundException(`Heads-up notification for incident ID ${incidentId} not found`);
     }
+    if (!dto.approverRole || !dto.approverRole.trim()) {
+      throw new BadRequestException('Approver initials are required');
+    }
     headsUp.approvedBy = dto.approvedBy;
-    headsUp.approverRole = dto.approverRole || 'NNE Peer Reviewer';
+    headsUp.approverRole = dto.approverRole.trim();
     headsUp.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_appr_${incidentId}`) : undefined;
     headsUp.approvedTime = new Date();
     if (dto.noFurtherInvestigation !== undefined) {
@@ -703,8 +706,11 @@ export class IncidentsService implements OnModuleInit {
     if (!initialReport) {
       throw new NotFoundException(`Initial report for incident ID ${incidentId} not found`);
     }
+    if (!dto.approverRole || !dto.approverRole.trim()) {
+      throw new BadRequestException('Approver initials are required');
+    }
     initialReport.approvedBy = dto.approvedBy;
-    initialReport.approverRole = dto.approverRole || 'Customer Approver';
+    initialReport.approverRole = dto.approverRole.trim();
     initialReport.approverSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_initial_appr_${incidentId}`) : undefined;
     initialReport.approvedTime = new Date();
     if (dto.noFurtherInvestigation !== undefined) {
@@ -878,8 +884,12 @@ export class IncidentsService implements OnModuleInit {
     if (!reviewerName) {
       throw new BadRequestException('reviewedBy or approvedBy is required');
     }
+    const approverRole = dto.reviewerRole || dto.approverRole;
+    if (!approverRole || !approverRole.trim()) {
+      throw new BadRequestException('Approver initials are required');
+    }
     investigation.reviewedBy = reviewerName;
-    investigation.reviewerRole = dto.reviewerRole || dto.approverRole || 'Site HSE Lead Reviewer';
+    investigation.reviewerRole = approverRole.trim();
     investigation.reviewerSignature = dto.signature ? saveBase64Signature(dto.signature, `sig_invest_rev_${incidentId}`) : undefined;
     investigation.reviewedTime = new Date();
     const savedInv = await this.investigationRepo.save(investigation);
@@ -1346,6 +1356,9 @@ export class IncidentsService implements OnModuleInit {
     if (!incident) {
       throw new NotFoundException(`Incident with ID ${incidentId} not found`);
     }
+    if (incident.stage === IncidentStage.CLOSED || incident.closedBy || (incident as any).status === 2) {
+      throw new BadRequestException(`Cannot add action item. Incident ${incident.caseNumber} (ID: ${incidentId}) is closed.`);
+    }
 
     const targetDateVal = dto.targetDate || dto.date;
     const statusVal = dto.status || ActionItemStatus.PENDING;
@@ -1400,6 +1413,14 @@ export class IncidentsService implements OnModuleInit {
    * Update an Action Item
    */
   async updateActionItem(incidentId: number, actionId: number, dto: UpdateActionItemDto): Promise<IncidentActionItem> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+    if (incident.stage === IncidentStage.CLOSED || incident.closedBy || (incident as any).status === 2) {
+      throw new BadRequestException(`Cannot update action item. Incident ${incident.caseNumber} (ID: ${incidentId}) is closed.`);
+    }
+
     const actionItem = await this.actionItemRepo.findOne({ where: { id: actionId, incidentId } });
     if (!actionItem) {
       throw new NotFoundException(`Action item with ID ${actionId} for incident ${incidentId} not found`);
@@ -1455,6 +1476,14 @@ export class IncidentsService implements OnModuleInit {
    * Delete an Action Item
    */
   async deleteActionItem(incidentId: number, actionId: number): Promise<{ message: string }> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+    if (incident.stage === IncidentStage.CLOSED || incident.closedBy || (incident as any).status === 2) {
+      throw new BadRequestException(`Cannot delete action item. Incident ${incident.caseNumber} (ID: ${incidentId}) is closed.`);
+    }
+
     const actionItem = await this.actionItemRepo.findOne({ where: { id: actionId, incidentId } });
     if (!actionItem) {
       throw new NotFoundException(`Action item with ID ${actionId} for incident ${incidentId} not found`);

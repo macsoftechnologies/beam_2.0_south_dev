@@ -546,8 +546,21 @@ export class SpotCheckPdfService {
               </span>
               <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Work Area Layout</span>
             </div>
+            ${(() => {
+              const locDetail = sc.location || (Array.isArray(sc.selectedRooms) ? sc.selectedRooms.join(', ') : '');
+              if (!locDetail || locDetail === '-') return '';
+              return `
+              <table class="sc-grid" style="margin-bottom: 3px; border-color: #cbd5e1; background: #ffffff;">
+                <tr>
+                  <td class="lbl" style="width: 14%; font-size: 7.5px; background: #f1f5f9; padding: 2.5px 5px; vertical-align: top; white-space: nowrap;">Location Details:</td>
+                  <td class="val" style="font-size: 7.5px; padding: 2.5px 6px; line-height: 1.4; word-break: break-word;">${locDetail}</td>
+                </tr>
+              </table>`;
+            })()}
             <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; overflow: hidden; width: 100%;">
-              <img src="${locationMapBase64}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+              <div style="margin-top: -2.65%;">
+                <img src="${locationMapBase64}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+              </div>
             </div>
           </div>
           ` : ''}

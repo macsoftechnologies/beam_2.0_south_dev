@@ -79,6 +79,68 @@ export class ObservationPdfService {
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
+
+      // Sanitize composite location map image subheaders so they are never trimmed
+      try {
+        await page.evaluate(() => {
+          const imgs = Array.from(document.querySelectorAll('img[alt="Location Map"]')) as HTMLImageElement[];
+          for (const img of imgs) {
+            if (!img.naturalWidth || !img.naturalHeight) continue;
+            const nw = img.naturalWidth;
+            const nh = img.naturalHeight;
+            const canvas = document.createElement('canvas');
+            canvas.width = nw;
+            canvas.height = nh;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) continue;
+            ctx.drawImage(img, 0, 0);
+
+            let modified = false;
+
+            if (nh > 900 && nw >= 1200) {
+              const scaleY = nh / 1120;
+              const splitY = Math.round(516 * scaleY);
+              const subH = Math.round(32 * scaleY);
+
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(0, splitY, nw, subH);
+
+              ctx.strokeStyle = '#cbd5e1';
+              ctx.lineWidth = Math.max(1.5, Math.round(2 * scaleY));
+              ctx.beginPath();
+              ctx.moveTo(0, splitY);
+              ctx.lineTo(nw, splitY);
+              ctx.stroke();
+
+              ctx.fillStyle = '#15803d';
+              ctx.font = `bold ${Math.max(11, Math.round(13 * scaleY))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+              ctx.textBaseline = 'middle';
+              ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', 16, splitY + subH / 2);
+              modified = true;
+            } else if (nw >= 1400 && nh <= 1000) {
+              const splitX = Math.round(nw * 0.38);
+              const contentY = 42;
+              const subH = 32;
+
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(splitX, contentY, nw - splitX, subH);
+
+              ctx.fillStyle = '#15803d';
+              ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+              ctx.textBaseline = 'middle';
+              ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', splitX + 16, contentY + subH / 2);
+              modified = true;
+            }
+
+            if (modified) {
+              img.src = canvas.toDataURL('image/jpeg', 0.95);
+            }
+          }
+        });
+      } catch (evalErr) {
+        // Non-blocking fallback
+      }
+
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -555,7 +617,9 @@ export class ObservationPdfService {
       <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Zone / Specific Work Area</span>
     </div>
     <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; overflow: hidden; width: 100%;">
-      <img src="${locationMapBase64}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+      <div style="margin-top: -2.65%;">
+        <img src="${locationMapBase64}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+      </div>
     </div>
   </div>
   ` : ''}

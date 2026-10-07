@@ -116,6 +116,69 @@ export class SafetyInspectionPdfService {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
 
+      // Sanitize composite location map image subheaders so they are never trimmed
+      try {
+        await page.evaluate(() => {
+          const imgs = Array.from(document.querySelectorAll('img[alt="Location Map"]')) as HTMLImageElement[];
+          for (const img of imgs) {
+            if (!img.naturalWidth || !img.naturalHeight) continue;
+            const nw = img.naturalWidth;
+            const nh = img.naturalHeight;
+            const canvas = document.createElement('canvas');
+            canvas.width = nw;
+            canvas.height = nh;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) continue;
+            ctx.drawImage(img, 0, 0);
+
+            let modified = false;
+
+            // Landscape 2-panel composite (e.g., nw = 1600, nh = 1120 or similar aspect ratio)
+            if (nh > 900 && nw >= 1200) {
+              const scaleY = nh / 1120;
+              const splitY = Math.round(516 * scaleY);
+              const subH = Math.round(32 * scaleY);
+
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(0, splitY, nw, subH);
+
+              ctx.strokeStyle = '#cbd5e1';
+              ctx.lineWidth = Math.max(1.5, Math.round(2 * scaleY));
+              ctx.beginPath();
+              ctx.moveTo(0, splitY);
+              ctx.lineTo(nw, splitY);
+              ctx.stroke();
+
+              ctx.fillStyle = '#15803d';
+              ctx.font = `bold ${Math.max(11, Math.round(13 * scaleY))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+              ctx.textBaseline = 'middle';
+              ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', 16, splitY + subH / 2);
+              modified = true;
+            } else if (nw >= 1400 && nh <= 1000) {
+              // Portrait 2-panel composite (e.g. nw = 1600, nh = 960 or 720)
+              const splitX = Math.round(nw * 0.38);
+              const contentY = 42;
+              const subH = 32;
+
+              ctx.fillStyle = '#f8fafc';
+              ctx.fillRect(splitX, contentY, nw - splitX, subH);
+
+              ctx.fillStyle = '#15803d';
+              ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+              ctx.textBaseline = 'middle';
+              ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', splitX + 16, contentY + subH / 2);
+              modified = true;
+            }
+
+            if (modified) {
+              img.src = canvas.toDataURL('image/jpeg', 0.95);
+            }
+          }
+        });
+      } catch (evalErr) {
+        // Non-blocking fallback
+      }
+
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -573,13 +636,13 @@ export class SafetyInspectionPdfService {
                 <td class="val">${inspection.floorLevel || '-'}</td>
               </tr>
               <tr>
-                <td class="lbl">Location Details:</td>
+                <td class="lbl">Specific Work Area:</td>
                 <td class="val" colspan="3">${inspection.specificLocation || (Array.isArray(inspection.selectedRooms) ? inspection.selectedRooms.join(', ') : 'Site Wide')}</td>
               </tr>
               <tr>
-                <td class="lbl">Lead Auditor:</td>
+                <td class="lbl">Lead Reporter:</td>
                 <td class="val">${inspection.createdByUserName || 'Superadmin'} (${inspection.createdByRole || 'Admin'})</td>
-                <td class="lbl">Audit Status:</td>
+                <td class="lbl">Status:</td>
                 <td class="val">
                   <span class="chk-status-badge ${String(inspection.status || '').toLowerCase() === 'closed' ? 'green' : 'yellow'}">
                     ${inspection.status || 'IN_PROGRESS'}
@@ -598,7 +661,9 @@ export class SafetyInspectionPdfService {
                 <span style="font-size: 7.5px; color: #64748b; font-weight: 600;">Zone &amp; Work Area</span>
               </div>
               <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 3px; overflow: hidden; width: 100%;">
-                <img src="${this.resolveImageSrc(inspection.locationMapImage)}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+                <div style="margin-top: -2.65%;">
+                  <img src="${this.resolveImageSrc(inspection.locationMapImage)}" style="width: 100%; height: auto; display: block;" alt="Location Map" />
+                </div>
               </div>
             </div>
             ` : ''}
@@ -677,20 +742,20 @@ export class SafetyInspectionPdfService {
               </table>
             ` : ''}
 
-            <!-- Verification Sign-off Table -->
-            <div class="section-hdr" style="margin-top: 10px;">AUDIT VERIFICATION &amp; SIGN-OFF</div>
+            <!-- Submission Info Table -->
+            <div class="section-hdr" style="margin-top: 10px;">SUBMITTED BY</div>
             <table class="sc-grid" style="margin-top: 0; margin-bottom: 6px;">
               <tr>
-                <td class="lbl" style="width: 18%;">Lead Auditor:</td>
+                <td class="lbl" style="width: 18%;">Lead Reporter:</td>
                 <td class="val" style="width: 32%; font-weight: 700;">${inspection.createdByUserName || 'Safety Officer'} (${inspection.createdByRole || 'NNE'})</td>
                 <td class="lbl" style="width: 18%;">Inspection Ref:</td>
                 <td class="val" style="width: 32%; font-weight: 700; color: #0284c7;">${inspectionRef}</td>
               </tr>
               <tr>
-                <td class="lbl">Audit Status:</td>
+                <td class="lbl">Status:</td>
                 <td class="val">
                   <span class="chk-status-badge ${String(inspection.status || '').toLowerCase() === 'closed' ? 'green' : 'yellow'}">
-                    ${inspection.status === 'CLOSED' ? 'CLOSED &amp; VERIFIED' : (inspection.status || 'IN_PROGRESS')}
+                    ${inspection.status === 'CLOSED' ? 'CLOSED' : (inspection.status || 'IN_PROGRESS')}
                   </span>
                 </td>
                 <td class="lbl">Report Date:</td>
@@ -700,24 +765,11 @@ export class SafetyInspectionPdfService {
                 <td class="lbl">Project / Location:</td>
                 <td class="val" colspan="3">${inspection.projectName || 'M3SOUTH'} &bull; ${inspection.buildingName || 'Main Building'} ${inspection.floorLevel ? `&bull; ${inspection.floorLevel}` : ''}</td>
               </tr>
-              <tr>
-                <td class="lbl">Auditor Verification:</td>
-                <td class="val" colspan="3" style="height: 48px; vertical-align: bottom;">
-                  <div style="display: flex; justify-content: space-between; align-items: flex-end; padding-top: 12px;">
-                    <div style="font-family: 'Brush Script MT', cursive, sans-serif; font-size: 18px; color: #111c38; font-weight: 700;">
-                      ${inspection.createdByUserName || 'Lead Auditor'}
-                    </div>
-                    <div style="border-top: 1px dashed #94a3b8; width: 220px; text-align: center; font-size: 8px; color: #64748b; padding-top: 3px;">
-                      Authorized Lead Auditor Signature &amp; Stamp
-                    </div>
-                  </div>
-                </td>
-              </tr>
             </table>
           ` : ''}
 
           <div class="page-footer-note">
-            Novo Nordisk &bull; Site HSE Management System &bull; Safety Inspection Record ${inspectionRef} &bull; Page ${pNum} of ${totalPages}
+            Safety Inspection Record ${inspectionRef} &bull; Page ${pNum} of ${totalPages}
           </div>
         </div>
       `;
