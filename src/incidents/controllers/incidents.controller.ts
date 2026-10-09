@@ -161,8 +161,12 @@ export class IncidentsController {
    * PUT /incidents/:id/investigation
    */
   @Put(':id/investigation')
-  async saveInvestigation(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateInvestigationDto) {
-    return await this.incidentsService.saveInvestigation(id, dto);
+  async saveInvestigation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateInvestigationDto,
+    @Query('userRole') userRole?: string,
+  ) {
+    return await this.incidentsService.saveInvestigation(id, dto, userRole);
   }
 
   /**

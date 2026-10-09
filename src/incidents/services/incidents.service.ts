@@ -739,7 +739,7 @@ export class IncidentsService implements OnModuleInit {
   /**
    * Stage 3: Submit / Update Incident Investigation Report (within 7 days)
    */
-  async saveInvestigation(incidentId: number, dto: UpdateInvestigationDto): Promise<{ incident: Incident; investigation: IncidentInvestigation }> {
+  async saveInvestigation(incidentId: number, dto: UpdateInvestigationDto, userRole?: string): Promise<{ incident: Incident; investigation: IncidentInvestigation }> {
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (!incident) {
       throw new NotFoundException(`Incident with ID ${incidentId} not found`);
@@ -757,6 +757,22 @@ export class IncidentsService implements OnModuleInit {
       throw new BadRequestException(
         `Cannot submit Incident Investigation Report. Stage 2 Initial Incident Report for Incident ${incident.caseNumber} (ID: ${incidentId}) must be approved first.`,
       );
+    }
+
+    // Reopened incident validation: only Department and Admin users can edit Step 3
+    const isReopened = Array.isArray(incident.reopenLogs) && incident.reopenLogs.length > 0 && !incident.closedBy;
+    if (isReopened) {
+      const roleStr = String(userRole || (dto as any).editorRole || (dto as any).role || '').toLowerCase();
+      const isContractor =
+        roleStr.includes('contractor') ||
+        roleStr.includes('subcontractor') ||
+        (Array.isArray(dto.signatures) && dto.signatures.some((s: any) => String(s.role || '').toLowerCase().includes('contractor')));
+
+      if (isContractor) {
+        throw new BadRequestException(
+          'Contractor users are not permitted to edit the Investigation Report after an incident has been reopened by Department. Only Department and Admin users can edit reopened incidents.',
+        );
+      }
     }
 
     let investigation = await this.investigationRepo.findOne({ where: { incidentId } });
