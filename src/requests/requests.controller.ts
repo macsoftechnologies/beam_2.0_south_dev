@@ -14,6 +14,7 @@ import {
   Res,
   UseGuards,
   Request,
+  Headers,
 } from '@nestjs/common';
 import { FilesInterceptor, FileFieldsInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -82,7 +83,14 @@ export class RequestsController {
   async create(
     @Body() createDto: CreateRequestDto,
     @UploadedFiles() files?: { rams_file?: any[]; 'rams_file[]'?: any[] },
+    @Headers('x-user-type') userTypeHeader?: string,
   ) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return {
+        status: HttpStatus.FORBIDDEN,
+        message: 'Observer access is not authorized to create permits',
+      };
+    }
     try {
       const ramsFiles = [
         ...(files?.rams_file || []),
@@ -125,7 +133,14 @@ export class RequestsController {
       fire_image?: any[];
       'fire_image[]'?: any[];
     },
+    @Headers('x-user-type') userTypeHeader?: string,
   ) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return {
+        status: HttpStatus.FORBIDDEN,
+        message: 'Observer access is not authorized to edit permits',
+      };
+    }
     try {
       const ramsFiles = [
         ...(files?.rams_file || []),
@@ -137,7 +152,7 @@ export class RequestsController {
         ...(files?.fire_image || []),
         ...(files?.['fire_image[]'] || []),
       ];
-      const result = await this.requestsService.update(Number(id), updateDto, ramsFiles, imageFiles);
+      const result = await this.requestsService.update(Number(id), updateDto, ramsFiles, imageFiles, userTypeHeader);
       return result;
     } catch (error) {
       throw error;
@@ -148,9 +163,10 @@ export class RequestsController {
   @Post('search')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async search(@Body() searchDto: SearchRequestDto, @Request() req: any) {
+  async search(@Body() searchDto: SearchRequestDto, @Request() req: any, @Headers('x-user-type') userTypeHeader?: string) {
     try {
-      const results = await this.requestsService.search(searchDto, req.user?.userId);
+      const activeType = userTypeHeader || req.headers?.['x-user-type'];
+      const results = await this.requestsService.search(searchDto, req.user?.userId, activeType);
       return results;
     } catch (error) {
       return {
@@ -163,25 +179,34 @@ export class RequestsController {
 
   // 4. Bulk Update Status
   @Put('status/change')
-  async updateStatus(@Body() body: {
-    id: string;
-    Request_status?: string;
-    status?: number;
-    userId?: number;
-    initials?: string;
-    ConM_initials?: string;
-    CoMM_initials?: string;
-    ConM_initials1?: string;
-    reject_reason?: string;
-    cancel_reason?: string;
-    close_note?: string;
-    Start_Time?: string;
-    End_Time?: string;
-    night_shift?: number;
-    new_end_time?: string;
-  }) {
+  async updateStatus(
+    @Body() body: {
+      id: string;
+      Request_status?: string;
+      status?: number;
+      userId?: number;
+      initials?: string;
+      ConM_initials?: string;
+      CoMM_initials?: string;
+      ConM_initials1?: string;
+      reject_reason?: string;
+      cancel_reason?: string;
+      close_note?: string;
+      Start_Time?: string;
+      End_Time?: string;
+      night_shift?: number;
+      new_end_time?: string;
+    },
+    @Headers('x-user-type') userTypeHeader?: string,
+  ) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return {
+        status: HttpStatus.FORBIDDEN,
+        message: 'Observer access is not authorized to change permit status',
+      };
+    }
     try {
-      const result = await this.requestsService.updateStatus(body);
+      const result = await this.requestsService.updateStatus(body, userTypeHeader);
       return result;
     } catch (error) {
       throw error;
@@ -190,7 +215,16 @@ export class RequestsController {
 
   // 4b. Bulk Update Safety Precautions
   @Put('safety/change')
-  async updateSafety(@Body() body: { id: string; safety: string }) {
+  async updateSafety(
+    @Body() body: { id: string; safety: string },
+    @Headers('x-user-type') userTypeHeader?: string,
+  ) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return {
+        status: HttpStatus.FORBIDDEN,
+        message: 'Observer access is not authorized to change safety precautions',
+      };
+    }
     try {
       const result = await this.requestsService.updateSafety(body);
       return result;
@@ -202,7 +236,16 @@ export class RequestsController {
   // 5a. Create by count — copy a permit N times across consecutive days (createbycount.php)
   @Post('createbycount')
   @HttpCode(HttpStatus.OK)
-  async createByCount(@Body() dto: CreateByCountDto) {
+  async createByCount(
+    @Body() dto: CreateByCountDto,
+    @Headers('x-user-type') userTypeHeader?: string,
+  ) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return {
+        status: HttpStatus.FORBIDDEN,
+        message: 'Observer access is not authorized to copy permits',
+      };
+    }
     try {
       return await this.requestsService.createByCount(dto);
     } catch (error) {
@@ -216,7 +259,10 @@ export class RequestsController {
 
   // 5. Soft delete single request (delete.php)
   @Delete(':id')
-  async softDelete(@Param('id') id: string) {
+  async softDelete(@Param('id') id: string, @Headers('x-user-type') userTypeHeader?: string) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return { success: false, message: 'Observer access is not authorized to delete permits' };
+    }
     try {
       return await this.requestsService.softDelete(Number(id));
     } catch (error) {
@@ -226,7 +272,10 @@ export class RequestsController {
 
   // 6. Bulk soft delete requests (multipledelete.php)
   @Delete()
-  async softDeleteMultiple(@Body('ids') ids: number[]) {
+  async softDeleteMultiple(@Body('ids') ids: number[], @Headers('x-user-type') userTypeHeader?: string) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return { status: false, message: 'Observer access is not authorized to delete permits' };
+    }
     try {
       return await this.requestsService.softDeleteMultiple(ids);
     } catch (error) {
@@ -236,7 +285,13 @@ export class RequestsController {
 
   // 7. Selected delete status update (deleteSelected.php)
   @Post('deleteSelected')
-  async deleteSelected(@Body() body: { id: string; Request_status: string }) {
+  async deleteSelected(
+    @Body() body: { id: string; Request_status: string },
+    @Headers('x-user-type') userTypeHeader?: string,
+  ) {
+    if ((userTypeHeader || '').toLowerCase().includes('observer')) {
+      return { status: 403, message: 'Observer access is not authorized to delete permits' };
+    }
     try {
       return await this.requestsService.deleteSelected(body.id, body.Request_status);
     } catch (error) {
@@ -414,9 +469,10 @@ export class RequestsController {
   // 15. Fetch requests counts (readCounts.php)
   @Get('counts')
   @UseGuards(JwtAuthGuard)
-  async readCounts(@Request() req: any) {
+  async readCounts(@Request() req: any, @Headers('x-user-type') userTypeHeader?: string) {
     try {
-      return await this.requestsService.readCounts(req.user?.userId);
+      const activeType = userTypeHeader || req.headers?.['x-user-type'];
+      return await this.requestsService.readCounts(req.user?.userId, activeType);
     } catch (error) {
       return { message: error.message };
     }
@@ -425,9 +481,10 @@ export class RequestsController {
   // 16. Fetch request status count (readRequestCount.php)
   @Post('counts/status')
   @UseGuards(JwtAuthGuard)
-  async readRequestCount(@Body('Request_status') status: string, @Request() req: any) {
+  async readRequestCount(@Body('Request_status') status: string, @Request() req: any, @Headers('x-user-type') userTypeHeader?: string) {
     try {
-      return await this.requestsService.readRequestCount(status, req.user?.userId);
+      const activeType = userTypeHeader || req.headers?.['x-user-type'];
+      return await this.requestsService.readRequestCount(status, req.user?.userId, activeType);
     } catch (error) {
       return { message: error.message };
     }
@@ -436,9 +493,10 @@ export class RequestsController {
   // 17. Fetch plans list with nested notes (planslist.php)
   @Post('plans')
   // @UseGuards(JwtAuthGuard)
-  async plansList(@Body() searchDto: PlanSearchDto, @Request() req: any) {
+  async plansList(@Body() searchDto: PlanSearchDto, @Request() req: any, @Headers('x-user-type') userTypeHeader?: string) {
     try {
-      const result = await this.requestsService.plansList(searchDto, req.user?.userId);
+      const activeType = userTypeHeader || req.headers?.['x-user-type'];
+      const result = await this.requestsService.plansList(searchDto, req.user?.userId, activeType);
       return [result[0], result[1]];
     } catch (error) {
       return { message: error.message };
@@ -448,9 +506,10 @@ export class RequestsController {
   // 18. Fetch Graph counts per day (readGraph.php)
   @Post('analytics/graph')
   @UseGuards(JwtAuthGuard)
-  async readGraph(@Body() body: { WeekFirstday: string; WeekLastday: string }, @Request() req: any) {
+  async readGraph(@Body() body: { WeekFirstday: string; WeekLastday: string }, @Request() req: any, @Headers('x-user-type') userTypeHeader?: string) {
     try {
-      return await this.requestsService.readGraph(body.WeekFirstday, body.WeekLastday, req.user?.userId);
+      const activeType = userTypeHeader || req.headers?.['x-user-type'];
+      return await this.requestsService.readGraph(body.WeekFirstday, body.WeekLastday, req.user?.userId, activeType);
     } catch (error) {
       return { message: error.message };
     }
@@ -459,9 +518,10 @@ export class RequestsController {
   // 19. Fetch Graph summary (readGraphCounts.php)
   @Get('analytics/graph/counts')
   @UseGuards(JwtAuthGuard)
-  async readGraphCounts(@Request() req: any) {
+  async readGraphCounts(@Request() req: any, @Headers('x-user-type') userTypeHeader?: string) {
     try {
-      return await this.requestsService.readGraphCounts(req.user?.userId);
+      const activeType = userTypeHeader || req.headers?.['x-user-type'];
+      return await this.requestsService.readGraphCounts(req.user?.userId, activeType);
     } catch (error) {
       return { message: error.message };
     }

@@ -7,7 +7,7 @@ import { IncidentPdfService } from '../services/incident-pdf.service';
 import { CreateHeadsUpDto } from '../dtos/create-headsup.dto';
 import { CreateInitialReportDto } from '../dtos/create-initial-report.dto';
 import { UpdateInvestigationDto } from '../dtos/update-investigation.dto';
-import { StageApprovalDto, ReviewInvestigationDto, CloseIncidentDto, ReturnForRevisionDto } from '../dtos/stage-approval.dto';
+import { StageApprovalDto, ReviewInvestigationDto, CloseIncidentDto, ReturnForRevisionDto, ReopenIncidentDto } from '../dtos/stage-approval.dto';
 import { CreateActionItemDto, UpdateActionItemDto } from '../dtos/action-item.dto';
 import { IncidentStage, InvestigationLevel } from '../entities/incident.entity';
 import { incidentMulterConfig } from '../config/multer.config';
@@ -190,6 +190,15 @@ export class IncidentsController {
   @Put(':id/close')
   async closeIncident(@Param('id', ParseIntPipe) id: number, @Body() dto?: CloseIncidentDto) {
     return await this.incidentsService.closeIncident(id, dto);
+  }
+
+  /**
+   * Reopen Incident
+   * POST /incidents/:id/reopen
+   */
+  @Post(':id/reopen')
+  async reopenIncident(@Param('id', ParseIntPipe) id: number, @Body() dto: ReopenIncidentDto) {
+    return await this.incidentsService.reopenIncident(id, dto);
   }
 
   /**

@@ -201,6 +201,21 @@ export class AuthService {
       responseMsg = `Login successful. OTP sent to your registered phone number${maskedPhone ? ` ending in ${maskedPhone}` : ''}.`;
     }
 
+    let subContractorName: string | null = null;
+    if (employee?.subContId) {
+      try {
+        const subRows = await this.employeeRepo.query(
+          `SELECT subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+          [employee.subContId],
+        );
+        if (subRows && subRows.length > 0) {
+          subContractorName = subRows[0].subContractorName;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
     return {
       statusCode: HttpStatus.OK,
       message: responseMsg,
@@ -209,6 +224,13 @@ export class AuthService {
       userType: user.userType,
       typeId: user.typeId,
       empId: user.empId,
+      departId: employee?.departId ?? null,
+      subContId: employee?.subContId ?? null,
+      subcontractor_id: employee?.subContId ?? null,
+      subContractorId: employee?.subContId ?? null,
+      subContractorName: subContractorName ?? null,
+      companyName: employee?.companyName ?? null,
+      obserId: employee?.obserId ?? null,
       phonenumber: phoneNumber,
       email,
       otpNotificationType: resolvedOtpType,
@@ -254,6 +276,21 @@ export class AuthService {
     const isUserAdmin = ['admin', 'superadmin'].includes(String(user.userType || '').toLowerCase());
     const moduleAccess = isUserAdmin ? allModules : (employee?.moduleAccess || 'permit-to-work');
 
+    let subContractorName: string | null = null;
+    if (employee?.subContId) {
+      try {
+        const subRows = await this.employeeRepo.query(
+          `SELECT subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+          [employee.subContId],
+        );
+        if (subRows && subRows.length > 0) {
+          subContractorName = subRows[0].subContractorName;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
     // Generate JWT token
     const payload = { sub: user.id, username: user.username };
     const access_token = this.jwtService.sign(payload);
@@ -266,6 +303,13 @@ export class AuthService {
       userType: user.userType,
       typeId: user.typeId,
       empId: user.empId,
+      departId: employee?.departId ?? null,
+      subContId: employee?.subContId ?? null,
+      subcontractor_id: employee?.subContId ?? null,
+      subContractorId: employee?.subContId ?? null,
+      subContractorName: subContractorName ?? null,
+      companyName: employee?.companyName ?? null,
+      obserId: employee?.obserId ?? null,
       moduleAccess,
       access_token,
     };

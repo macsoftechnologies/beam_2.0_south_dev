@@ -163,26 +163,134 @@ export class RequestsService implements OnModuleInit {
     return String(val1).trim() === String(val2).trim();
   }
 
-  async getSubcontractorIdForUser(userId?: number): Promise<number | null> {
-    if (!userId) return null;
-    const user = await this.userRepo.findOne({ where: { id: userId } });
-    if (user && user.userType === 'Subcontractor') {
-      return user.typeId;
+  async resolveUserScope(loggedInUserId?: number, activeUserTypeHeader?: string): Promise<{
+    isAll: boolean;
+    subContractorId: number | null;
+    limitToUserId: number | null;
+    role: string;
+  }> {
+    if (!loggedInUserId) {
+      return { isAll: true, subContractorId: null, limitToUserId: null, role: 'guest' };
     }
-    return null;
+
+    const user = await this.userRepo.findOne({ where: { id: loggedInUserId } });
+    if (!user) {
+      return { isAll: true, subContractorId: null, limitToUserId: null, role: 'unknown' };
+    }
+
+    const employee = user.empId ? await this.employeeRepo.findOne({ where: { id: user.empId } }) : null;
+
+    // 1. Check activeUserTypeHeader if supplied (from frontend localStorage UserType)
+    const activeHeader = (activeUserTypeHeader || '').trim().toLowerCase();
+    if (activeHeader) {
+      if (activeHeader.includes('admin') || activeHeader.includes('superadmin')) {
+        return { isAll: true, subContractorId: null, limitToUserId: null, role: 'admin' };
+      }
+      if (
+        activeHeader.includes('department') ||
+        activeHeader.includes('conm') ||
+        activeHeader.includes('c&q') ||
+        activeHeader.includes('hse')
+      ) {
+        return { isAll: true, subContractorId: null, limitToUserId: null, role: 'department' };
+      }
+      if (activeHeader.includes('contractor') || activeHeader.includes('subcontractor')) {
+        const scId = employee?.subContId || user.typeId || null;
+        return { isAll: false, subContractorId: scId, limitToUserId: scId ? null : user.id, role: 'contractor' };
+      }
+      if (activeHeader.includes('observer')) {
+        return { isAll: true, subContractorId: null, limitToUserId: null, role: 'observer' };
+      }
+    }
+
+    // 2. Check employee.moduleAccess specifically for 'permit-to-work'
+    const rawModuleAccess = employee?.moduleAccess || (employee as any)?.module_access;
+    if (rawModuleAccess) {
+      const modules = String(rawModuleAccess).split(',').map((m: string) => m.trim());
+      for (const mod of modules) {
+        const [modName, modRole] = mod.split(':').map((s: string) => s.trim().toLowerCase());
+        if (modName === 'permit-to-work' || modName === 'permit_to_work' || modName === 'ptw') {
+          if (modRole) {
+            if (modRole.includes('contractor') || modRole.includes('subcontractor')) {
+              const scId = employee?.subContId || user.typeId || null;
+              return { isAll: false, subContractorId: scId, limitToUserId: scId ? null : user.id, role: 'contractor' };
+            }
+            if (
+              modRole.includes('department') ||
+              modRole.includes('conm') ||
+              modRole.includes('c&q') ||
+              modRole.includes('hse')
+            ) {
+              return { isAll: true, subContractorId: null, limitToUserId: null, role: 'department' };
+            }
+            if (modRole.includes('admin')) {
+              return { isAll: true, subContractorId: null, limitToUserId: null, role: 'admin' };
+            }
+            if (modRole.includes('observer')) {
+              return { isAll: true, subContractorId: null, limitToUserId: null, role: 'observer' };
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Check employee relation
+    if (employee?.subContId && !employee?.departId) {
+      return { isAll: false, subContractorId: employee.subContId, limitToUserId: null, role: 'contractor' };
+    }
+    if (employee?.departId) {
+      return { isAll: true, subContractorId: null, limitToUserId: null, role: 'department' };
+    }
+
+    // 4. Check user.userType comma-separated values
+    const userTypes = (user.userType || '')
+      .split(',')
+      .map((t: string) => t.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (userTypes.some((t: string) => t.includes('admin') || t.includes('superadmin'))) {
+      return { isAll: true, subContractorId: null, limitToUserId: null, role: 'admin' };
+    }
+    if (userTypes.some((t: string) => t.includes('observer'))) {
+      return { isAll: true, subContractorId: null, limitToUserId: null, role: 'observer' };
+    }
+    if (userTypes.some((t: string) => t.includes('department') || t.includes('department1') || t.includes('hse'))) {
+      return { isAll: true, subContractorId: null, limitToUserId: null, role: 'department' };
+    }
+    if (userTypes.some((t: string) => t.includes('subcontractor') || t.includes('contractor'))) {
+      const scId = employee?.subContId || user.typeId || null;
+      return { isAll: false, subContractorId: scId, limitToUserId: scId ? null : user.id, role: 'contractor' };
+    }
+
+    return { isAll: false, subContractorId: null, limitToUserId: user.id, role: 'user' };
+  }
+
+  async getSubcontractorIdForUser(userId?: number, activeUserType?: string): Promise<number | null> {
+    const scope = await this.resolveUserScope(userId, activeUserType);
+    return scope.subContractorId;
   }
 
   private async validateStatusTransitionAndRole(
     existing: RequestEntity,
     newStatus: string,
     actorUserId: number,
+    activeUserType?: string,
   ): Promise<void> {
     if (!actorUserId) {
       throw new BadRequestException('Actor userId is required for status updates');
     }
+    const activeHeader = (activeUserType || '').toLowerCase().trim();
+    if (activeHeader.includes('observer')) {
+      throw new BadRequestException('Observer access is not authorized to change permit status');
+    }
     const user = await this.userRepo.findOne({ where: { id: actorUserId } });
     if (!user) {
       throw new BadRequestException(`User not found for ID: ${actorUserId}`);
+    }
+
+    const scope = await this.resolveUserScope(actorUserId, activeUserType);
+    if (scope.role === 'observer') {
+      throw new BadRequestException('Observer access is not authorized to change permit status');
     }
 
     let role = 'observer';
@@ -863,7 +971,19 @@ export class RequestsService implements OnModuleInit {
     dto: UpdateRequestDto,
     files?: any[],
     images?: any[],
+    activeUserType?: string,
   ): Promise<any> {
+    const activeHeader = (activeUserType || '').toLowerCase().trim();
+    if (activeHeader.includes('observer')) {
+      throw new BadRequestException('Observer access is not authorized to modify permits');
+    }
+    if (dto.userId) {
+      const scope = await this.resolveUserScope(dto.userId, activeUserType);
+      if (scope.role === 'observer') {
+        throw new BadRequestException('Observer access is not authorized to modify permits');
+      }
+    }
+
     const existing = await this.requestRepo.findOne({ where: { id } });
     if (!existing) {
       throw new BadRequestException('Request not found');
@@ -921,7 +1041,7 @@ export class RequestsService implements OnModuleInit {
     if (dto.Request_status !== undefined && dto.Request_status !== '') {
       const normalizedNew = dto.Request_status.toLowerCase().trim();
       if (normalizedNew !== currentStatus) {
-        await this.validateStatusTransitionAndRole(existing, normalizedNew, dto.userId ?? 0);
+        await this.validateStatusTransitionAndRole(existing, normalizedNew, dto.userId ?? 0, activeUserType);
         isStatusChanged = true;
         finalRequestStatusForLog = dto.Request_status;
       }
@@ -929,7 +1049,7 @@ export class RequestsService implements OnModuleInit {
       const normalizedNew = dto.status === 1 ? 'pending' : 'cancelled';
       if (normalizedNew !== currentStatus) {
         try {
-          await this.validateStatusTransitionAndRole(existing, normalizedNew, dto.userId ?? 0);
+          await this.validateStatusTransitionAndRole(existing, normalizedNew, dto.userId ?? 0, activeUserType);
           isStatusChanged = true;
           finalRequestStatusForLog = dto.status === 1 ? 'Pending' : 'Cancelled';
         } catch (error) {
@@ -2014,23 +2134,36 @@ export class RequestsService implements OnModuleInit {
     return `${nextY}-${nextM}-${nextD}`;
   }
 
-  async updateStatus(body: {
-    id: string;
-    Request_status?: string;
-    status?: number;
-    userId?: number;
-    initials?: string;
-    ConM_initials?: string;
-    CoMM_initials?: string;
-    ConM_initials1?: string;
-    reject_reason?: string;
-    cancel_reason?: string;
-    close_note?: string;
-    Start_Time?: string;
-    End_Time?: string;
-    night_shift?: number;
-    new_end_time?: string;
-  }): Promise<any> {
+  async updateStatus(
+    body: {
+      id: string;
+      Request_status?: string;
+      status?: number;
+      userId?: number;
+      initials?: string;
+      ConM_initials?: string;
+      CoMM_initials?: string;
+      ConM_initials1?: string;
+      reject_reason?: string;
+      cancel_reason?: string;
+      close_note?: string;
+      Start_Time?: string;
+      End_Time?: string;
+      night_shift?: number;
+      new_end_time?: string;
+    },
+    activeUserType?: string,
+  ): Promise<any> {
+    const activeHeader = (activeUserType || '').toLowerCase().trim();
+    if (activeHeader.includes('observer')) {
+      throw new BadRequestException('Observer access is not authorized to change permit status');
+    }
+    if (body.userId) {
+      const scope = await this.resolveUserScope(body.userId, activeUserType);
+      if (scope.role === 'observer') {
+        throw new BadRequestException('Observer access is not authorized to change permit status');
+      }
+    }
     const {
       id,
       Request_status,
@@ -2113,7 +2246,7 @@ export class RequestsService implements OnModuleInit {
             );
           }
 
-          await this.validateStatusTransitionAndRole(existing, targetStatus, userId || 0);
+          await this.validateStatusTransitionAndRole(existing, targetStatus, userId || 0, activeUserType);
           if (Request_status !== undefined) {
             updateData.requestStatus = resolvedStatus;
           }
@@ -2768,10 +2901,14 @@ export class RequestsService implements OnModuleInit {
   }
 
   // Search/Filter Requests
-  async search(dto: SearchRequestDto, loggedInUserId?: number): Promise<any> {
-    const subContractorId = await this.getSubcontractorIdForUser(loggedInUserId);
+  async search(dto: SearchRequestDto, loggedInUserId?: number, activeUserType?: string): Promise<any> {
+    const scope = await this.resolveUserScope(loggedInUserId, activeUserType);
+    const subContractorId = scope.subContractorId;
+    const limitToUserId = scope.limitToUserId;
     const key = subContractorId
       ? `requests:search:${JSON.stringify(dto)}:subcon:${subContractorId}`
+      : limitToUserId
+      ? `requests:search:${JSON.stringify(dto)}:user:${limitToUserId}`
       : `requests:search:${JSON.stringify(dto)}`;
     return this.redisCacheService.getOrSet(
       key,
@@ -3125,11 +3262,15 @@ export class RequestsService implements OnModuleInit {
           qb.andWhere('requests.Sub_Contractor_Id = :subContractorIdFilter', {
             subContractorIdFilter: subContractorId,
           });
+        } else if (limitToUserId) {
+          qb.andWhere('requests.userId = :userIdFilter', {
+            userIdFilter: limitToUserId,
+          });
         } else if (dto.LoginType === 'Subcontractor' && dto.user_id) {
-          const user = await this.userRepo.findOne({ where: { id: dto.user_id } });
-          if (user && user.userType === 'Subcontractor') {
+          const userSubId = await this.getSubcontractorIdForUser(dto.user_id);
+          if (userSubId) {
             qb.andWhere('requests.Sub_Contractor_Id = :subContractorIdFilter', {
-              subContractorIdFilter: user.typeId,
+              subContractorIdFilter: userSubId,
             });
           } else {
             qb.andWhere('requests.userId = :userIdFilter', {
@@ -3491,7 +3632,7 @@ export class RequestsService implements OnModuleInit {
     );
   }
 
-  async plansList(searchDto: PlanSearchDto, loggedInUserId?: number): Promise<any> {
+  async plansList(searchDto: PlanSearchDto, loggedInUserId?: number, activeUserType?: string): Promise<any> {
     const allowedKeys: (keyof PlanSearchDto)[] = [
       'Date', 'Week', 'Year', 'Month', 'Site_Id', 'Building_Id', 'Sub_Contractor_Id',
       'Room_Type', 'from_date', 'to_date', 'start_time', 'end_time', 'area',
@@ -3533,7 +3674,7 @@ export class RequestsService implements OnModuleInit {
 
     searchDto = filteredSearchDto;
 
-    const subContractorId = await this.getSubcontractorIdForUser(loggedInUserId);
+    const subContractorId = await this.getSubcontractorIdForUser(loggedInUserId, activeUserType);
     // --- Week parsing ---
         let weekStart: string | null = null;
         let weekEnd: string | null = null;
@@ -4403,32 +4544,10 @@ export class RequestsService implements OnModuleInit {
   }
 
   // 11. Read counts (readCounts.php)
-  async readCounts(loggedInUserId?: number): Promise<any> {
-    const user = loggedInUserId ? await this.userRepo.findOne({ where: { id: loggedInUserId } }) : null;
-    const userTypes = (user?.userType || '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    let subContractorId: number | null = null;
-    let limitToUserId: number | null = null;
-
-    if (user) {
-      if (userTypes.includes('Subcontractor')) {
-        subContractorId = user.typeId;
-      } else if (
-        userTypes.includes('Admin') ||
-        userTypes.includes('SuperAdmin') ||
-        userTypes.includes('Department') ||
-        userTypes.includes('Department1') ||
-        userTypes.includes('HSE') ||
-        userTypes.includes('Observer')
-      ) {
-        // No filter for admin / department
-      } else {
-        limitToUserId = user.id;
-      }
-    }
+  async readCounts(loggedInUserId?: number, activeUserType?: string): Promise<any> {
+    const scope = await this.resolveUserScope(loggedInUserId, activeUserType);
+    const subContractorId = scope.subContractorId;
+    const limitToUserId = scope.limitToUserId;
 
     const cacheKey = subContractorId
       ? `requests:counts:subcon:${subContractorId}`
@@ -4519,32 +4638,10 @@ export class RequestsService implements OnModuleInit {
   }
 
   // 12. Read single status count (readRequestCount.php)
-  async readRequestCount(status: string, loggedInUserId?: number): Promise<any> {
-    const user = loggedInUserId ? await this.userRepo.findOne({ where: { id: loggedInUserId } }) : null;
-    const userTypes = (user?.userType || '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    let subContractorId: number | null = null;
-    let limitToUserId: number | null = null;
-
-    if (user) {
-      if (userTypes.includes('Subcontractor')) {
-        subContractorId = user.typeId;
-      } else if (
-        userTypes.includes('Admin') ||
-        userTypes.includes('SuperAdmin') ||
-        userTypes.includes('Department') ||
-        userTypes.includes('Department1') ||
-        userTypes.includes('HSE') ||
-        userTypes.includes('Observer')
-      ) {
-        // No filter
-      } else {
-        limitToUserId = user.id;
-      }
-    }
+  async readRequestCount(status: string, loggedInUserId?: number, activeUserType?: string): Promise<any> {
+    const scope = await this.resolveUserScope(loggedInUserId, activeUserType);
+    const subContractorId = scope.subContractorId;
+    const limitToUserId = scope.limitToUserId;
 
     const cacheKey = subContractorId
       ? `requests:counts:${status}:subcon:${subContractorId}`
@@ -4577,32 +4674,10 @@ export class RequestsService implements OnModuleInit {
   }
 
   // 13. Read Graph counts per day (readGraph.php)
-  async readGraph(WeekFirstday: string, WeekLastday: string, loggedInUserId?: number): Promise<any> {
-    const user = loggedInUserId ? await this.userRepo.findOne({ where: { id: loggedInUserId } }) : null;
-    const userTypes = (user?.userType || '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    let subContractorId: number | null = null;
-    let limitToUserId: number | null = null;
-
-    if (user) {
-      if (userTypes.includes('Subcontractor')) {
-        subContractorId = user.typeId;
-      } else if (
-        userTypes.includes('Admin') ||
-        userTypes.includes('SuperAdmin') ||
-        userTypes.includes('Department') ||
-        userTypes.includes('Department1') ||
-        userTypes.includes('HSE') ||
-        userTypes.includes('Observer')
-      ) {
-        // No filter
-      } else {
-        limitToUserId = user.id;
-      }
-    }
+  async readGraph(WeekFirstday: string, WeekLastday: string, loggedInUserId?: number, activeUserType?: string): Promise<any> {
+    const scope = await this.resolveUserScope(loggedInUserId, activeUserType);
+    const subContractorId = scope.subContractorId;
+    const limitToUserId = scope.limitToUserId;
 
     const first = new Date(
       WeekFirstday.replace(' GMT+0530 (India Standard Time)', ''),
@@ -4675,32 +4750,10 @@ export class RequestsService implements OnModuleInit {
   }
 
   // 14. Read Graph Counts summary today vs week (readGraphCounts.php)
-  async readGraphCounts(loggedInUserId?: number): Promise<any> {
-    const user = loggedInUserId ? await this.userRepo.findOne({ where: { id: loggedInUserId } }) : null;
-    const userTypes = (user?.userType || '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    let subContractorId: number | null = null;
-    let limitToUserId: number | null = null;
-
-    if (user) {
-      if (userTypes.includes('Subcontractor')) {
-        subContractorId = user.typeId;
-      } else if (
-        userTypes.includes('Admin') ||
-        userTypes.includes('SuperAdmin') ||
-        userTypes.includes('Department') ||
-        userTypes.includes('Department1') ||
-        userTypes.includes('HSE') ||
-        userTypes.includes('Observer')
-      ) {
-        // Admin/HSE/Department sees all
-      } else {
-        limitToUserId = user.id;
-      }
-    }
+  async readGraphCounts(loggedInUserId?: number, activeUserType?: string): Promise<any> {
+    const scope = await this.resolveUserScope(loggedInUserId, activeUserType);
+    const subContractorId = scope.subContractorId;
+    const limitToUserId = scope.limitToUserId;
 
     const cacheKey = subContractorId
       ? `requests:graph:counts:subcon:${subContractorId}`

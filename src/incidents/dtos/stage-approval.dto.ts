@@ -83,3 +83,21 @@ export class ReturnForRevisionDto {
   @IsOptional()
   signature?: string;
 }
+
+export class ReopenIncidentDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Reopened by user is required' })
+  reopenedBy: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Reason for reopening is required' })
+  reason: string;
+
+  @IsString()
+  @IsOptional()
+  role?: string;
+
+  @IsString()
+  @IsOptional()
+  signature?: string;
+}

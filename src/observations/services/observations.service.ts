@@ -696,7 +696,15 @@ export class ObservationsService implements OnModuleInit {
     const qb = this.obsRepo.createQueryBuilder('obs');
 
     // Role-Based Access Control (RBAC) Scoping for Contractors
-    if (query.userRole === 'CONTRACTOR' || query.contractorId || (query.userId && query.userRole !== 'ADMIN' && query.userRole !== 'SUPERADMIN' && query.userRole !== 'DEPARTMENT')) {
+    const isContractorScope =
+      query.userRole === 'CONTRACTOR' ||
+      (Boolean(query.contractorId) &&
+        query.userRole !== 'ADMIN' &&
+        query.userRole !== 'SUPERADMIN' &&
+        query.userRole !== 'DEPARTMENT' &&
+        query.userRole !== 'DEPARTMENT1');
+
+    if (isContractorScope) {
       let resolvedContractorName = query.contractor ? query.contractor.trim() : '';
       let resolvedSubcontractorId = query.contractorId;
       let resolvedUserId = query.userId;
@@ -709,22 +717,33 @@ export class ObservationsService implements OnModuleInit {
           );
           if (subRows && subRows.length > 0) {
             resolvedSubcontractorId = subRows[0].id;
-            if (!resolvedContractorName) {
-              resolvedContractorName = subRows[0].subContractorName;
-            }
+            resolvedContractorName = subRows[0].subContractorName;
           } else {
-            const userRows = await this.obsRepo.query(
-              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
-               FROM users u 
-               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
-               WHERE u.id = ? LIMIT 1`,
-              [query.contractorId],
+            const empRows = await this.obsRepo.query(
+              `SELECT s.id as subId, s.subContractorName 
+               FROM employees e 
+               JOIN subcontractors s ON s.id = e.subContId 
+               WHERE e.id = ? OR e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+               LIMIT 1`,
+              [query.contractorId, query.contractorId],
             );
-            if (userRows && userRows.length > 0) {
-              resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId || query.contractorId;
-              if (!resolvedUserId) resolvedUserId = userRows[0].id;
-              if (!resolvedContractorName && userRows[0].subContractorName) {
-                resolvedContractorName = userRows[0].subContractorName;
+            if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+              resolvedSubcontractorId = empRows[0].subId;
+              resolvedContractorName = empRows[0].subContractorName;
+            } else {
+              const userRows = await this.obsRepo.query(
+                `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+                 FROM users u 
+                 LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+                 WHERE u.id = ? LIMIT 1`,
+                [query.contractorId],
+              );
+              if (userRows && userRows.length > 0) {
+                resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId || query.contractorId;
+                if (!resolvedUserId) resolvedUserId = userRows[0].id;
+                if (userRows[0].subContractorName) {
+                  resolvedContractorName = userRows[0].subContractorName;
+                }
               }
             }
           }
@@ -735,17 +754,30 @@ export class ObservationsService implements OnModuleInit {
 
       if (resolvedUserId && (!resolvedContractorName || !resolvedSubcontractorId)) {
         try {
-          const userRows = await this.obsRepo.query(
-            `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
-             FROM users u 
-             LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
-             WHERE u.id = ? LIMIT 1`,
+          const empRows = await this.obsRepo.query(
+            `SELECT s.id as subId, s.subContractorName 
+             FROM employees e 
+             JOIN subcontractors s ON s.id = e.subContId 
+             WHERE e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+             LIMIT 1`,
             [resolvedUserId],
           );
-          if (userRows && userRows.length > 0) {
-            if (!resolvedSubcontractorId) resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId;
-            if (!resolvedContractorName && userRows[0].subContractorName) {
-              resolvedContractorName = userRows[0].subContractorName;
+          if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+            if (!resolvedSubcontractorId) resolvedSubcontractorId = empRows[0].subId;
+            if (!resolvedContractorName) resolvedContractorName = empRows[0].subContractorName;
+          } else {
+            const userRows = await this.obsRepo.query(
+              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+               FROM users u 
+               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+               WHERE u.id = ? LIMIT 1`,
+              [resolvedUserId],
+            );
+            if (userRows && userRows.length > 0) {
+              if (!resolvedSubcontractorId) resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId;
+              if (userRows[0].subContractorName) {
+                resolvedContractorName = userRows[0].subContractorName;
+              }
             }
           }
         } catch (e) {
@@ -927,7 +959,15 @@ export class ObservationsService implements OnModuleInit {
   async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userId?: number; userRole?: string; range?: string }) {
     const qb = this.obsRepo.createQueryBuilder('obs');
 
-    if (filters.userRole === 'CONTRACTOR' || filters.contractorId || (filters.userId && filters.userRole !== 'ADMIN' && filters.userRole !== 'SUPERADMIN' && filters.userRole !== 'DEPARTMENT')) {
+    const isContractorScope =
+      filters.userRole === 'CONTRACTOR' ||
+      (Boolean(filters.contractorId) &&
+        filters.userRole !== 'ADMIN' &&
+        filters.userRole !== 'SUPERADMIN' &&
+        filters.userRole !== 'DEPARTMENT' &&
+        filters.userRole !== 'DEPARTMENT1');
+
+    if (isContractorScope) {
       let resolvedContractorName = filters.contractor ? filters.contractor.trim() : '';
       let resolvedSubcontractorId = filters.contractorId;
       let resolvedUserId = filters.userId;
@@ -940,22 +980,33 @@ export class ObservationsService implements OnModuleInit {
           );
           if (subRows && subRows.length > 0) {
             resolvedSubcontractorId = subRows[0].id;
-            if (!resolvedContractorName) {
-              resolvedContractorName = subRows[0].subContractorName;
-            }
+            resolvedContractorName = subRows[0].subContractorName;
           } else {
-            const userRows = await this.obsRepo.query(
-              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
-               FROM users u 
-               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
-               WHERE u.id = ? LIMIT 1`,
-              [filters.contractorId],
+            const empRows = await this.obsRepo.query(
+              `SELECT s.id as subId, s.subContractorName 
+               FROM employees e 
+               JOIN subcontractors s ON s.id = e.subContId 
+               WHERE e.id = ? OR e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+               LIMIT 1`,
+              [filters.contractorId, filters.contractorId],
             );
-            if (userRows && userRows.length > 0) {
-              resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId || filters.contractorId;
-              if (!resolvedUserId) resolvedUserId = userRows[0].id;
-              if (!resolvedContractorName && userRows[0].subContractorName) {
-                resolvedContractorName = userRows[0].subContractorName;
+            if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+              resolvedSubcontractorId = empRows[0].subId;
+              resolvedContractorName = empRows[0].subContractorName;
+            } else {
+              const userRows = await this.obsRepo.query(
+                `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+                 FROM users u 
+                 LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+                 WHERE u.id = ? LIMIT 1`,
+                [filters.contractorId],
+              );
+              if (userRows && userRows.length > 0) {
+                resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId || filters.contractorId;
+                if (!resolvedUserId) resolvedUserId = userRows[0].id;
+                if (userRows[0].subContractorName) {
+                  resolvedContractorName = userRows[0].subContractorName;
+                }
               }
             }
           }
@@ -966,17 +1017,30 @@ export class ObservationsService implements OnModuleInit {
 
       if (resolvedUserId && (!resolvedContractorName || !resolvedSubcontractorId)) {
         try {
-          const userRows = await this.obsRepo.query(
-            `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
-             FROM users u 
-             LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
-             WHERE u.id = ? LIMIT 1`,
+          const empRows = await this.obsRepo.query(
+            `SELECT s.id as subId, s.subContractorName 
+             FROM employees e 
+             JOIN subcontractors s ON s.id = e.subContId 
+             WHERE e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+             LIMIT 1`,
             [resolvedUserId],
           );
-          if (userRows && userRows.length > 0) {
-            if (!resolvedSubcontractorId) resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId;
-            if (!resolvedContractorName && userRows[0].subContractorName) {
-              resolvedContractorName = userRows[0].subContractorName;
+          if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+            if (!resolvedSubcontractorId) resolvedSubcontractorId = empRows[0].subId;
+            if (!resolvedContractorName) resolvedContractorName = empRows[0].subContractorName;
+          } else {
+            const userRows = await this.obsRepo.query(
+              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+               FROM users u 
+               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+               WHERE u.id = ? LIMIT 1`,
+              [resolvedUserId],
+            );
+            if (userRows && userRows.length > 0) {
+              if (!resolvedSubcontractorId) resolvedSubcontractorId = userRows[0].subId || userRows[0].typeId;
+              if (userRows[0].subContractorName) {
+                resolvedContractorName = userRows[0].subContractorName;
+              }
             }
           }
         } catch (e) {

@@ -152,6 +152,8 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incidents\` ADD COLUMN \`closed_time\` DATETIME NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`closure_comments\` TEXT NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`closure_signature\` TEXT NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`reopen_logs\` JSON NULL`,
+        `ALTER TABLE \`incidents\` ADD COLUMN \`closure_history\` JSON NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`building_name\` VARCHAR(255) NULL`,
         `ALTER TABLE \`incidents\` ADD COLUMN \`origin\` VARCHAR(100) DEFAULT 'Direct'`,
         `ALTER TABLE \`incident_headsup\` ADD COLUMN \`approved_by\` VARCHAR(255) NULL`,
@@ -1083,7 +1085,21 @@ export class IncidentsService implements OnModuleInit {
     incident.closedBy = dto?.closedBy || 'System Admin / Site HSE';
     incident.closedTime = new Date();
     if (dto?.closureComments) incident.closureComments = dto.closureComments;
-    if (dto?.signature) incident.closureSignature = saveBase64Signature(dto.signature, `sig_close_${incidentId}`);
+    if (dto?.signature) incident.closureSignature = saveBase64Signature(dto.signature, `sig_close_${incidentId}_${Date.now()}`);
+
+    const closureLogEntry = {
+      action: 'Closed',
+      status: 'CLOSED',
+      closedBy: incident.closedBy,
+      closedTime: incident.closedTime.toISOString(),
+      closureComments: incident.closureComments || '',
+      signature: incident.closureSignature || null,
+      timestamp: incident.closedTime.toISOString(),
+      cycle: (Array.isArray(incident.closureHistory) ? incident.closureHistory.length : 0) + 1,
+    };
+    incident.closureHistory = Array.isArray(incident.closureHistory)
+      ? [...incident.closureHistory, closureLogEntry]
+      : [closureLogEntry];
 
     const savedClosed = await this.incidentRepo.save(incident);
 
@@ -1097,6 +1113,142 @@ export class IncidentsService implements OnModuleInit {
     ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Incident closure notification:', err));
 
     return savedClosed;
+  }
+
+  /**
+   * Reopen Incident
+   * Returns incident to Stage 3 (INVESTIGATION)
+   * Keeps Stage 1 (HEADS_UP) and Stage 2 (INITIAL_REPORT) COMPLETED
+   * Enables Department users to edit third form and perform corrective actions
+   * Records mandatory reopen logs and tracks all previous/closing logs
+   */
+  async reopenIncident(
+    incidentId: number,
+    dto: { reopenedBy: string; reason: string; role?: string; signature?: string },
+  ): Promise<{ success: boolean; message: string; incident: Incident; log: any }> {
+    const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
+    if (!incident) {
+      throw new NotFoundException(`Incident with ID ${incidentId} not found`);
+    }
+
+    if (!dto.reason || !dto.reason.trim()) {
+      throw new BadRequestException('Reason for reopening the incident is required.');
+    }
+
+    // Verify incident was closed
+    const wasClosed = Boolean(
+      incident.closedBy ||
+      incident.closedTime ||
+      (incident.stage as string) === 'CLOSED' ||
+      incident.status === 2 ||
+      (Array.isArray(incident.closureHistory) && incident.closureHistory.length > 0)
+    );
+    if (!wasClosed) {
+      throw new BadRequestException(`Incident ${incident.caseNumber} (ID: ${incidentId}) is not currently closed and cannot be reopened.`);
+    }
+
+    // Ensure last closure is saved in closureHistory
+    if (incident.closedBy || incident.closedTime) {
+      const existingHistory = Array.isArray(incident.closureHistory) ? incident.closureHistory : [];
+      const isAlreadyArchived = existingHistory.some(
+        (c: any) => c.closedTime && incident.closedTime && new Date(c.closedTime).getTime() === new Date(incident.closedTime).getTime()
+      );
+      if (!isAlreadyArchived) {
+        const lastClosure = {
+          action: 'Closed',
+          status: 'CLOSED',
+          closedBy: incident.closedBy || 'System Admin / Site HSE',
+          closedTime: incident.closedTime ? incident.closedTime.toISOString() : new Date().toISOString(),
+          closureComments: incident.closureComments || '',
+          signature: incident.closureSignature || null,
+          timestamp: incident.closedTime ? incident.closedTime.toISOString() : new Date().toISOString(),
+          cycle: existingHistory.length + 1,
+        };
+        incident.closureHistory = [...existingHistory, lastClosure];
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const sigUrl = dto.signature
+      ? saveBase64Signature(dto.signature, `sig_reopen_${incidentId}_${Date.now()}`)
+      : undefined;
+
+    const reopenLog = {
+      action: 'Reopened',
+      status: 'REOPENED',
+      reopenedBy: dto.reopenedBy || 'Department User',
+      role: dto.role || 'Department User / HSE',
+      reason: dto.reason.trim(),
+      signature: sigUrl,
+      reopenedTime: nowIso,
+      timestamp: nowIso,
+      cycle: (Array.isArray(incident.reopenLogs) ? incident.reopenLogs.length : 0) + 1,
+      stageReopenedTo: 'INVESTIGATION',
+      previousClosedBy: incident.closedBy || undefined,
+      previousClosedTime: incident.closedTime ? incident.closedTime.toISOString() : undefined,
+    };
+
+    incident.reopenLogs = Array.isArray(incident.reopenLogs)
+      ? [...incident.reopenLogs, reopenLog]
+      : [reopenLog];
+
+    // Ensure Stage 1 and Stage 2 remain completed / approved
+    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+    if (headsUp && !headsUp.approvedBy) {
+      headsUp.approvedBy = 'Site HSE (Verified on Reopen)';
+      headsUp.approvedTime = new Date();
+      await this.headsUpRepo.save(headsUp);
+    }
+    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+    if (initialReport && !initialReport.approvedBy && (initialReport.submittedBy || initialReport.signature)) {
+      initialReport.approvedBy = 'Site HSE (Verified on Reopen)';
+      initialReport.approvedTime = new Date();
+      await this.initialReportRepo.save(initialReport);
+    }
+
+    // Prepare Investigation (Stage 3):
+    // Allow Department users to edit third form and corrective actions
+    const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+    if (investigation) {
+      // Clear sign-off so it can be re-reviewed & signed off prior to subsequent closure
+      investigation.reviewedBy = null as any;
+      investigation.reviewedTime = null as any;
+      investigation.reviewerSignature = null as any;
+      const invLog = {
+        action: 'Incident Reopened by Department User',
+        status: 'REOPENED',
+        returnedBy: dto.reopenedBy || 'Department User',
+        role: dto.role || 'Department User',
+        reason: dto.reason.trim(),
+        signature: sigUrl,
+        reopenedTime: nowIso,
+        timestamp: nowIso,
+        returnedTime: nowIso,
+        editedTime: nowIso,
+      };
+      investigation.editHistory = Array.isArray(investigation.editHistory)
+        ? [...investigation.editHistory, invLog]
+        : [invLog];
+      await this.investigationRepo.save(investigation);
+    }
+
+    // Reset Incident status & stage
+    incident.stage = IncidentStage.INVESTIGATION;
+    incident.status = 1; // Active / Open
+    incident.closedBy = null as any;
+    incident.closedTime = null as any;
+    incident.closureComments = null as any;
+    incident.closureSignature = null as any;
+    incident.updatedTime = new Date();
+
+    const saved = await this.incidentRepo.save(incident);
+
+    return {
+      success: true,
+      message: `Incident ${saved.caseNumber} successfully reopened to Investigation Stage.`,
+      incident: saved,
+      log: reopenLog,
+    };
   }
 
   /**
@@ -1210,8 +1362,8 @@ export class IncidentsService implements OnModuleInit {
       : [];
 
     if (query.userRole === 'CONTRACTOR' || query.contractorId) {
-      let resolvedContractor = rawContractors[0] || '';
-      if (!resolvedContractor && query.contractorId) {
+      let resolvedContractor = '';
+      if (query.contractorId) {
         try {
           const subRows = await this.incidentRepo.query(
             `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
@@ -1220,20 +1372,36 @@ export class IncidentsService implements OnModuleInit {
           if (subRows && subRows.length > 0) {
             resolvedContractor = subRows[0].subContractorName;
           } else {
-            const userRows = await this.incidentRepo.query(
-              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
-               FROM users u 
-               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
-               WHERE u.id = ? LIMIT 1`,
-              [query.contractorId],
+            const empRows = await this.incidentRepo.query(
+              `SELECT s.id as subId, s.subContractorName 
+               FROM employees e 
+               JOIN subcontractors s ON s.id = e.subContId 
+               WHERE e.id = ? OR e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+               LIMIT 1`,
+              [query.contractorId, query.contractorId],
             );
-            if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
-              resolvedContractor = userRows[0].subContractorName;
+            if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+              resolvedContractor = empRows[0].subContractorName;
+            } else {
+              const userRows = await this.incidentRepo.query(
+                `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+                 FROM users u 
+                 LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+                 WHERE u.id = ? LIMIT 1`,
+                [query.contractorId],
+              );
+              if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
+                resolvedContractor = userRows[0].subContractorName;
+              }
             }
           }
         } catch (e) {
           this.logger.warn(`Could not resolve contractor ID in incidents findAll: ${e.message}`);
         }
+      }
+
+      if (!resolvedContractor && rawContractors.length > 0) {
+        resolvedContractor = rawContractors[0];
       }
 
       if (resolvedContractor) {
@@ -1522,8 +1690,8 @@ export class IncidentsService implements OnModuleInit {
       : [];
 
     if (filters.userRole === 'CONTRACTOR' || filters.contractorId) {
-      let resolvedContractor = rawContractors[0] || '';
-      if (!resolvedContractor && filters.contractorId) {
+      let resolvedContractor = '';
+      if (filters.contractorId) {
         try {
           const subRows = await this.incidentRepo.query(
             `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
@@ -1532,20 +1700,36 @@ export class IncidentsService implements OnModuleInit {
           if (subRows && subRows.length > 0) {
             resolvedContractor = subRows[0].subContractorName;
           } else {
-            const userRows = await this.incidentRepo.query(
-              `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
-               FROM users u 
-               LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
-               WHERE u.id = ? LIMIT 1`,
-              [filters.contractorId],
+            const empRows = await this.incidentRepo.query(
+              `SELECT s.id as subId, s.subContractorName 
+               FROM employees e 
+               JOIN subcontractors s ON s.id = e.subContId 
+               WHERE e.id = ? OR e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+               LIMIT 1`,
+              [filters.contractorId, filters.contractorId],
             );
-            if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
-              resolvedContractor = userRows[0].subContractorName;
+            if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+              resolvedContractor = empRows[0].subContractorName;
+            } else {
+              const userRows = await this.incidentRepo.query(
+                `SELECT u.id, u.username, u.typeId, s.id as subId, s.subContractorName 
+                 FROM users u 
+                 LEFT JOIN subcontractors s ON (s.id = u.typeId OR s.username = u.username)
+                 WHERE u.id = ? LIMIT 1`,
+                [filters.contractorId],
+              );
+              if (userRows && userRows.length > 0 && userRows[0].subContractorName) {
+                resolvedContractor = userRows[0].subContractorName;
+              }
             }
           }
         } catch (e) {
           this.logger.warn(`Could not resolve contractor ID in incident stats: ${e.message}`);
         }
+      }
+
+      if (!resolvedContractor && rawContractors.length > 0) {
+        resolvedContractor = rawContractors[0];
       }
 
       if (resolvedContractor) {

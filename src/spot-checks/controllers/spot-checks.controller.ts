@@ -26,8 +26,14 @@ export class SpotChecksController {
    * GET /spot-checks/stats
    */
   @Get('stats')
-  async getStats() {
-    return await this.scService.getStats();
+  async getStats(
+    @Query('building') building?: string,
+    @Query('contractor') contractor?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('userRole') userRole?: string,
+  ) {
+    const cId = contractorId ? parseInt(contractorId, 10) : undefined;
+    return await this.scService.getStats({ building, contractor, contractorId: cId, userRole });
   }
 
   /**
@@ -42,10 +48,13 @@ export class SpotChecksController {
     @Query('search') search?: string,
     @Query('building') building?: string,
     @Query('contractor') contractor?: string,
+    @Query('contractorId') contractorId?: string,
+    @Query('userRole') userRole?: string,
     @Query('compliance') compliance?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ) {
+    const cId = contractorId ? parseInt(contractorId, 10) : undefined;
     return await this.scService.findAll({
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 10,
@@ -53,6 +62,8 @@ export class SpotChecksController {
       search,
       building,
       contractor,
+      contractorId: cId,
+      userRole,
       compliance,
       dateFrom,
       dateTo,

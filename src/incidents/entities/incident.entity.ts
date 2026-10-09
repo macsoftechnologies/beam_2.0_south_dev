@@ -118,6 +118,12 @@ export class Incident {
   @Column({ name: 'closure_signature', type: 'text', nullable: true })
   closureSignature?: string;
 
+  @Column({ name: 'closure_history', type: 'json', nullable: true })
+  closureHistory?: any[];
+
+  @Column({ name: 'reopen_logs', type: 'json', nullable: true })
+  reopenLogs?: any[];
+
   @Column({ name: 'status', type: 'int', default: 1 })
   status: number;
 

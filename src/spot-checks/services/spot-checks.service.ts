@@ -211,6 +211,8 @@ export class SpotChecksService implements OnModuleInit {
     search?: string;
     building?: string;
     contractor?: string;
+    contractorId?: number;
+    userRole?: string;
     status?: string;
     compliance?: string;
     dateFrom?: string;
@@ -223,10 +225,46 @@ export class SpotChecksService implements OnModuleInit {
     totalPages: number;
   }> {
     const page = Math.max(1, query.page || 1);
-    const limit = Math.max(1, Math.min(100, query.limit || 10));
+    const limit = Math.max(1, Math.min(1000, query.limit || 10));
     const skip = (page - 1) * limit;
 
     const qb = this.spotCheckRepo.createQueryBuilder('sc');
+
+    // Contractor resolution & scoping
+    let resolvedContractor = query.contractor ? query.contractor.trim() : '';
+    const isContractorScope =
+      query.userRole === 'CONTRACTOR' ||
+      (Boolean(query.contractorId) &&
+        query.userRole !== 'ADMIN' &&
+        query.userRole !== 'SUPERADMIN' &&
+        query.userRole !== 'DEPARTMENT' &&
+        query.userRole !== 'DEPARTMENT1');
+
+    if (isContractorScope && query.contractorId) {
+      try {
+        const subRows = await this.spotCheckRepo.query(
+          `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+          [query.contractorId],
+        );
+        if (subRows && subRows.length > 0) {
+          resolvedContractor = subRows[0].subContractorName;
+        } else {
+          const empRows = await this.spotCheckRepo.query(
+            `SELECT s.id as subId, s.subContractorName 
+             FROM employees e 
+             JOIN subcontractors s ON s.id = e.subContId 
+             WHERE e.id = ? OR e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+             LIMIT 1`,
+            [query.contractorId, query.contractorId],
+          );
+          if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+            resolvedContractor = empRows[0].subContractorName;
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`Could not resolve contractor ID in spot checks findAll: ${e.message}`);
+      }
+    }
 
     if (query.search && query.search.trim() !== '') {
       const s = `%${query.search.trim()}%`;
@@ -240,8 +278,8 @@ export class SpotChecksService implements OnModuleInit {
       qb.andWhere('sc.building_name = :bName', { bName: query.building.trim() });
     }
 
-    if (query.contractor && query.contractor.trim() !== '') {
-      qb.andWhere('sc.company_involved = :cName', { cName: query.contractor.trim() });
+    if (resolvedContractor) {
+      qb.andWhere('sc.company_involved LIKE :cName', { cName: `%${resolvedContractor}%` });
     }
 
     if (query.status && query.status.trim() !== '') {
@@ -344,7 +382,7 @@ export class SpotChecksService implements OnModuleInit {
   /**
    * Dashboard statistics for Spot Checks
    */
-  async getStats(): Promise<{
+  async getStats(filters?: { building?: string; contractor?: string; contractorId?: number; userRole?: string }): Promise<{
     totalChecks: number;
     compliantCount: number;
     nonCompliantCount: number;
@@ -354,24 +392,67 @@ export class SpotChecksService implements OnModuleInit {
     contractorStats: { name: string; count: number; compliant: number; nonCompliant: number }[];
     buildingStats: { name: string; count: number; compliant: number; nonCompliant: number }[];
   }> {
-    const totalChecks = await this.spotCheckRepo.count();
-    const compliantCount = await this.spotCheckRepo.count({ where: { chk3_2: 'Yes' } });
-    const nonCompliantCount = await this.spotCheckRepo.count({ where: { chk3_2: 'No' } });
+    let resolvedContractor = filters?.contractor ? filters.contractor.trim() : '';
+    const isContractorScope =
+      filters?.userRole === 'CONTRACTOR' ||
+      (Boolean(filters?.contractorId) &&
+        filters?.userRole !== 'ADMIN' &&
+        filters?.userRole !== 'SUPERADMIN' &&
+        filters?.userRole !== 'DEPARTMENT' &&
+        filters?.userRole !== 'DEPARTMENT1');
+
+    if (isContractorScope && filters?.contractorId) {
+      try {
+        const subRows = await this.spotCheckRepo.query(
+          `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+          [filters.contractorId],
+        );
+        if (subRows && subRows.length > 0) {
+          resolvedContractor = subRows[0].subContractorName;
+        } else {
+          const empRows = await this.spotCheckRepo.query(
+            `SELECT s.id as subId, s.subContractorName 
+             FROM employees e 
+             JOIN subcontractors s ON s.id = e.subContId 
+             WHERE e.id = ? OR e.id = (SELECT empId FROM users WHERE id = ? LIMIT 1) 
+             LIMIT 1`,
+            [filters.contractorId, filters.contractorId],
+          );
+          if (empRows && empRows.length > 0 && empRows[0].subContractorName) {
+            resolvedContractor = empRows[0].subContractorName;
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`Could not resolve contractor ID in spot checks getStats: ${e.message}`);
+      }
+    }
+
+    const baseQb = this.spotCheckRepo.createQueryBuilder('sc');
+    if (resolvedContractor) {
+      baseQb.andWhere('sc.company_involved LIKE :cName', { cName: `%${resolvedContractor}%` });
+    }
+    if (filters?.building && filters.building.trim() !== '') {
+      baseQb.andWhere('sc.building_name = :bName', { bName: filters.building.trim() });
+    }
+
+    const totalChecks = await baseQb.getCount();
+    const compliantCount = await baseQb.clone().andWhere('sc.chk3_2 = :compY', { compY: 'Yes' }).getCount();
+    const nonCompliantCount = await baseQb.clone().andWhere('sc.chk3_2 = :compN', { compN: 'No' }).getCount();
     const complianceRate = totalChecks > 0 ? Math.round((compliantCount / totalChecks) * 100) : 100;
 
     // Contractor stats
     let contractorStats: { name: string; count: number; compliant: number; nonCompliant: number }[] = [];
     try {
-      const contractorRaw = await this.spotCheckRepo
-        .createQueryBuilder('sc')
+      const cQb = baseQb.clone()
         .select('sc.company_involved', 'name')
         .addSelect('COUNT(*)', 'count')
         .addSelect("SUM(CASE WHEN sc.chk3_2 = 'Yes' THEN 1 ELSE 0 END)", 'compliant')
         .addSelect("SUM(CASE WHEN sc.chk3_2 = 'No' THEN 1 ELSE 0 END)", 'nonCompliant')
-        .where('sc.company_involved IS NOT NULL AND sc.company_involved != :empty', { empty: '' })
+        .andWhere('sc.company_involved IS NOT NULL AND sc.company_involved != :empty', { empty: '' })
         .groupBy('sc.company_involved')
-        .orderBy('count', 'DESC')
-        .getRawMany();
+        .orderBy('count', 'DESC');
+
+      const contractorRaw = await cQb.getRawMany();
 
       contractorStats = contractorRaw.map((r: any) => ({
         name: r.name,
@@ -386,16 +467,16 @@ export class SpotChecksService implements OnModuleInit {
     // Building stats
     let buildingStats: { name: string; count: number; compliant: number; nonCompliant: number }[] = [];
     try {
-      const buildingRaw = await this.spotCheckRepo
-        .createQueryBuilder('sc')
+      const bQb = baseQb.clone()
         .select('COALESCE(sc.building_name, sc.location)', 'name')
         .addSelect('COUNT(*)', 'count')
         .addSelect("SUM(CASE WHEN sc.chk3_2 = 'Yes' THEN 1 ELSE 0 END)", 'compliant')
         .addSelect("SUM(CASE WHEN sc.chk3_2 = 'No' THEN 1 ELSE 0 END)", 'nonCompliant')
-        .where('(sc.building_name IS NOT NULL AND sc.building_name != :empty) OR (sc.location IS NOT NULL AND sc.location != :empty)', { empty: '' })
+        .andWhere('(sc.building_name IS NOT NULL AND sc.building_name != :empty) OR (sc.location IS NOT NULL AND sc.location != :empty)', { empty: '' })
         .groupBy('COALESCE(sc.building_name, sc.location)')
-        .orderBy('count', 'DESC')
-        .getRawMany();
+        .orderBy('count', 'DESC');
+
+      const buildingRaw = await bQb.getRawMany();
 
       buildingStats = buildingRaw.map((r: any) => ({
         name: r.name || 'Unspecified Building',

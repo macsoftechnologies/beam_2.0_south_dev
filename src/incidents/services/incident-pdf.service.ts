@@ -900,6 +900,127 @@ export class IncidentPdfService {
       `;
     };
 
+    const renderReopenAndClosureLifecycleLogs = () => {
+      let reopenList: any[] = [];
+      let closureList: any[] = [];
+
+      if (typeof inc.reopenLogs === 'string') {
+        try { reopenList = JSON.parse(inc.reopenLogs); } catch (e) {}
+      } else if (Array.isArray(inc.reopenLogs)) {
+        reopenList = inc.reopenLogs;
+      }
+
+      if (typeof inc.closureHistory === 'string') {
+        try { closureList = JSON.parse(inc.closureHistory); } catch (e) {}
+      } else if (Array.isArray(inc.closureHistory)) {
+        closureList = inc.closureHistory;
+      }
+
+      // If there are closure details on incident not yet in closureHistory, synthesize it
+      if (inc.closedBy || inc.closedTime) {
+        const hasMatchingClosure = closureList.some(
+          (c) => c.closedTime && inc.closedTime && new Date(c.closedTime).getTime() === new Date(inc.closedTime).getTime()
+        );
+        if (!hasMatchingClosure) {
+          closureList.push({
+            action: 'Closed',
+            status: 'CLOSED',
+            closedBy: inc.closedBy || 'Site HSE Lead / Admin',
+            closedTime: inc.closedTime || inc.updatedTime,
+            closureComments: inc.closureComments || '',
+            signature: inc.closureSignature || null,
+            timestamp: inc.closedTime || inc.updatedTime,
+          });
+        }
+      }
+
+      if (reopenList.length === 0 && closureList.length === 0) return '';
+
+      // Combine and order all lifecycle events chronologically
+      const allEvents: any[] = [
+        ...reopenList.map((r, idx) => ({
+          eventType: 'REOPENED',
+          actionText: 'Incident Reopened',
+          badgeBg: '#fef3c7',
+          badgeColor: '#b45309',
+          userName: r.reopenedBy || 'Department User',
+          role: r.role || 'Department User / HSE',
+          remarks: r.reason || 'Reopened for investigation & corrective actions',
+          timestamp: r.reopenedTime || r.timestamp || r.date,
+          signature: r.signature,
+          cycle: r.cycle || (idx + 1),
+        })),
+        ...closureList.map((c, idx) => ({
+          eventType: 'CLOSED',
+          actionText: 'Incident Closed',
+          badgeBg: '#dcfce7',
+          badgeColor: '#15803d',
+          userName: c.closedBy || 'Site HSE Lead / Admin',
+          role: 'Incident Closer / Sign-off',
+          remarks: c.closureComments || 'All corrective actions completed and investigation signed off.',
+          timestamp: c.closedTime || c.timestamp || c.date,
+          signature: c.signature,
+          cycle: c.cycle || (idx + 1),
+        })),
+      ].sort((a, b) => {
+        const tA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return tA - tB;
+      });
+
+      const formatDt = (dStr: string) => {
+        if (!dStr) return '—';
+        try {
+          const d = new Date(dStr);
+          if (isNaN(d.getTime())) return dStr.replace('T', ' ');
+          return d.toLocaleString('en-GB', { timeZone: 'Europe/Copenhagen', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '');
+        } catch (e) { return dStr; }
+      };
+
+      return `
+        <div style="margin-top: 10px; border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; page-break-inside: avoid; break-inside: avoid;">
+          <div style="background: #f1f5f9; padding: 4px 8px; font-size: 8.5px; font-weight: 700; color: #1e293b; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #cbd5e1;">
+            <span>Incident Closure &amp; Reopen Lifecycle Audit Trail</span>
+            <span style="font-size: 8px; font-weight: 600; color: #64748b;">${allEvents.length} Lifecycle Event${allEvents.length === 1 ? '' : 's'}</span>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 8px;">
+            <thead>
+              <tr style="background: #f8fafc; border-bottom: 1px solid #cbd5e1; color: #475569;">
+                <th style="padding: 4px 6px; text-align: left; width: 20%; font-weight: 700;">Lifecycle Event</th>
+                <th style="padding: 4px 6px; text-align: left; width: 22%; font-weight: 700;">Performed By (Role)</th>
+                <th style="padding: 4px 6px; text-align: left; width: 30%; font-weight: 700;">Reason / Closure Remarks</th>
+                <th style="padding: 4px 6px; text-align: left; width: 14%; font-weight: 700;">Date &amp; Time</th>
+                <th style="padding: 4px 6px; text-align: left; width: 14%; font-weight: 700;">Signature</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${allEvents.map((item, idx) => `
+                <tr style="border-bottom: ${idx < allEvents.length - 1 ? '1px solid #e2e8f0' : 'none'}; background: ${idx % 2 === 0 ? '#ffffff' : '#fafafa'};">
+                  <td style="padding: 4px 6px;">
+                    <span style="display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 7.5px; font-weight: 700; background: ${item.badgeBg}; color: ${item.badgeColor}; border: 1px solid ${item.badgeColor}33;">
+                      ${item.actionText}
+                    </span>
+                  </td>
+                  <td style="padding: 4px 6px; color: #0f172a; font-weight: 600;">
+                    ${item.userName}
+                    <div style="font-size: 7.5px; color: #64748b; font-weight: normal;">${item.role}</div>
+                  </td>
+                  <td style="padding: 4px 6px; color: #334155;">${item.remarks}</td>
+                  <td style="padding: 4px 6px; color: #64748b;">${formatDt(item.timestamp)}</td>
+                  <td style="padding: 4px 6px;">
+                    ${item.eventType === 'REOPENED'
+                      ? (item.signature ? renderSignature(item.signature, item.userName) : '<span style="font-size: 7.5px; color: #94a3b8; font-style: italic;">No signature</span>')
+                      : '<span style="font-size: 7.5px; color: #94a3b8; font-style: italic;">—</span>'
+                    }
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
     // Helper for immediate actions (Stage 1 & Stage 2)
     const getImmediateActions = (): any[] => {
       const list: any[] = [];
@@ -2189,6 +2310,7 @@ export class IncidentPdfService {
           </table>
 
           ${renderEditAndRevisionHistory(headsUp.editHistory, 'Form 1: Heads-Up Notification')}
+          ${!includeForm2 && !includeForm3 ? renderReopenAndClosureLifecycleLogs() : ''}
 
           ${renderPageFooter(p1)}
         </div>
@@ -2545,6 +2667,7 @@ export class IncidentPdfService {
           </table>
 
           ${renderEditAndRevisionHistory(initial.editHistory, 'Form 2: Initial Incident Report')}
+          ${!includeForm3 ? renderReopenAndClosureLifecycleLogs() : ''}
 
           ${renderPageFooter(p2)}
         </div>
@@ -2760,6 +2883,7 @@ export class IncidentPdfService {
           </table>
 
           ${renderEditAndRevisionHistory(inv.editHistory, 'Form 3: Incident Investigation Report')}
+          ${renderReopenAndClosureLifecycleLogs()}
 
           ${renderPageFooter(p3)}
         </div>
