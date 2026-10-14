@@ -403,12 +403,15 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
-    // Trigger incident submission notification to Department/Department1 notification group (unless skipped e.g. when escalated from Observation)
+    // Trigger incident submission notification to Notification Group 1 (unless skipped e.g. when escalated from Observation)
     if (!dto.skipNotification && !dto.origin?.startsWith('SO-') && !dto.origin?.startsWith('OBS-')) {
       this.notificationsService.triggerIncidentSubmissionNotification(
         savedIncident,
         'Heads-Up Notification',
         dto.contractorsInvolved || savedIncident.contractorsInvolved,
+        undefined,
+        'GROUP_1',
+        false,
       ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up submission notification:', err));
     }
 
@@ -427,6 +430,20 @@ export class IncidentsService implements OnModuleInit {
     let headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
     if (!headsUp) {
       headsUp = this.headsUpRepo.create({ incidentId });
+    }
+
+    // Reopened incident validation: only Department and Admin users can edit
+    const isReopenedHu = Array.isArray(incident.reopenLogs) && incident.reopenLogs.length > 0 && !incident.closedBy;
+    if (isReopenedHu) {
+      const roleStr = String((dto as any).editorRole || (dto as any).role || dto.editedBy || dto.submittedBy || '').toLowerCase();
+      const isContractor =
+        roleStr.includes('contractor') ||
+        roleStr.includes('subcontractor');
+      if (isContractor) {
+        throw new BadRequestException(
+          'Contractor users are not permitted to edit the Heads-Up Notification after an incident has been reopened. Only Department and Admin users can edit reopened incidents.',
+        );
+      }
     }
 
     // Update Incident level fields
@@ -529,6 +546,21 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
+    // Trigger notification to Group 1 on Heads-Up update or return-to-revision resubmission
+    const isHuResubmission = Boolean(
+      savedHeadsUp.editHistory &&
+      (savedHeadsUp.editHistory as any[]).some((h: any) => h.action === 'Returned for Revision' || h.status === 'RETURNED_FOR_REVISION')
+    );
+
+    this.notificationsService.triggerIncidentSubmissionNotification(
+      savedIncident,
+      'Heads-Up Notification',
+      savedIncident.contractorsInvolved,
+      undefined,
+      'GROUP_1',
+      isHuResubmission,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up update/resubmission notification:', err));
+
     return { incident: savedIncident, headsUp: savedHeadsUp };
   }
 
@@ -606,6 +638,20 @@ export class IncidentsService implements OnModuleInit {
     }
     if (!initialReport) {
       initialReport = this.initialReportRepo.create({ incidentId });
+    }
+
+    // Reopened incident validation: only Department and Admin users can edit
+    const isReopenedIr = Array.isArray(incident.reopenLogs) && incident.reopenLogs.length > 0 && !incident.closedBy;
+    if (isReopenedIr) {
+      const roleStr = String((dto as any).editorRole || (dto as any).role || dto.submittedBy || '').toLowerCase();
+      const isContractor =
+        roleStr.includes('contractor') ||
+        roleStr.includes('subcontractor');
+      if (isContractor) {
+        throw new BadRequestException(
+          'Contractor users are not permitted to edit the Initial Incident Report after an incident has been reopened. Only Department and Admin users can edit reopened incidents.',
+        );
+      }
     }
 
     const isEditMode = Boolean(initialReport.submittedBy || initialReport.submittedTime);
@@ -690,11 +736,19 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
-    // Trigger incident submission notification to Department/Department1 notification group
+    // Trigger incident submission notification to Notification Group 1
+    const isIrResubmission = Boolean(
+      savedReport.editHistory &&
+      (savedReport.editHistory as any[]).some((h: any) => h.action === 'Returned for Revision' || h.status === 'RETURNED_FOR_REVISION')
+    );
+
     this.notificationsService.triggerIncidentSubmissionNotification(
       savedIncident,
       'Initial Incident Report',
       savedIncident.contractorsInvolved,
+      undefined,
+      'GROUP_1',
+      isIrResubmission,
     ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Initial Report submission notification:', err));
 
     return { incident: savedIncident, initialReport: savedReport };
@@ -880,11 +934,19 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(correctiveEntities);
     }
 
-    // Trigger incident submission notification to Department/Department1 notification group
+    // Trigger incident submission notification to Notification Group 1
+    const isInvResubmission = Boolean(
+      savedInvestigation.editHistory &&
+      (savedInvestigation.editHistory as any[]).some((h: any) => h.action === 'Returned for Revision' || h.status === 'RETURNED_FOR_REVISION')
+    );
+
     this.notificationsService.triggerIncidentSubmissionNotification(
       savedIncident,
       'Incident Investigation Report',
       savedIncident.contractorsInvolved,
+      undefined,
+      'GROUP_1',
+      isInvResubmission,
     ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Investigation submission notification:', err));
 
     return { incident: savedIncident, investigation: savedInvestigation };
@@ -1140,7 +1202,7 @@ export class IncidentsService implements OnModuleInit {
    */
   async reopenIncident(
     incidentId: number,
-    dto: { reopenedBy: string; reason: string; role?: string; signature?: string },
+    dto: { reopenedBy: string; reason: string; role?: string; signature?: string; stageReopenedTo?: string },
   ): Promise<{ success: boolean; message: string; incident: Incident; log: any }> {
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (!incident) {
@@ -1184,6 +1246,42 @@ export class IncidentsService implements OnModuleInit {
       }
     }
 
+    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
+    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
+    const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
+
+    const isWaived = Boolean(
+      incident.noFurtherInvestigation ||
+      headsUp?.noFurtherInvestigation ||
+      initialReport?.noFurtherInvestigation
+    );
+    const hasIrData = Boolean(
+      initialReport && (
+        (initialReport.submittedBy && initialReport.submittedBy !== 'User') ||
+        initialReport.signature ||
+        initialReport.injuredPersonName ||
+        initialReport.submittedTime
+      )
+    );
+    const hasInvData = Boolean(
+      investigation && (
+        (Array.isArray(investigation.signatures) && investigation.signatures.length > 0) ||
+        (investigation.problemStatement && investigation.problemStatement.trim().length > 0) ||
+        (investigation.investigationDetails && investigation.investigationDetails.trim().length > 0)
+      )
+    );
+
+    let targetStage: string = (dto as any).stageReopenedTo || '';
+    if (!targetStage) {
+      if (isWaived && !hasIrData) {
+        targetStage = 'HEADS_UP';
+      } else if (isWaived && !hasInvData) {
+        targetStage = 'INITIAL_REPORT';
+      } else {
+        targetStage = 'INVESTIGATION';
+      }
+    }
+
     const nowIso = new Date().toISOString();
     const sigUrl = dto.signature
       ? saveBase64Signature(dto.signature, `sig_reopen_${incidentId}_${Date.now()}`)
@@ -1199,7 +1297,7 @@ export class IncidentsService implements OnModuleInit {
       reopenedTime: nowIso,
       timestamp: nowIso,
       cycle: (Array.isArray(incident.reopenLogs) ? incident.reopenLogs.length : 0) + 1,
-      stageReopenedTo: 'INVESTIGATION',
+      stageReopenedTo: targetStage,
       previousClosedBy: incident.closedBy || undefined,
       previousClosedTime: incident.closedTime ? incident.closedTime.toISOString() : undefined,
     };
@@ -1208,48 +1306,93 @@ export class IncidentsService implements OnModuleInit {
       ? [...incident.reopenLogs, reopenLog]
       : [reopenLog];
 
-    // Ensure Stage 1 and Stage 2 remain completed / approved
-    const headsUp = await this.headsUpRepo.findOne({ where: { incidentId } });
-    if (headsUp && !headsUp.approvedBy) {
-      headsUp.approvedBy = 'Site HSE (Verified on Reopen)';
-      headsUp.approvedTime = new Date();
-      await this.headsUpRepo.save(headsUp);
-    }
-    const initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
-    if (initialReport && !initialReport.approvedBy && (initialReport.submittedBy || initialReport.signature)) {
-      initialReport.approvedBy = 'Site HSE (Verified on Reopen)';
-      initialReport.approvedTime = new Date();
-      await this.initialReportRepo.save(initialReport);
+    if (targetStage === 'HEADS_UP') {
+      if (headsUp) {
+        headsUp.approvedBy = null as any;
+        headsUp.approvedTime = null as any;
+        headsUp.approverSignature = null as any;
+        const huLog = {
+          action: 'Incident Reopened by Department User',
+          status: 'REOPENED',
+          returnedBy: dto.reopenedBy || 'Department User',
+          role: dto.role || 'Department User',
+          reason: dto.reason.trim(),
+          signature: sigUrl,
+          reopenedTime: nowIso,
+          timestamp: nowIso,
+          returnedTime: nowIso,
+          editedTime: nowIso,
+        };
+        headsUp.editHistory = Array.isArray(headsUp.editHistory)
+          ? [...headsUp.editHistory, huLog]
+          : [huLog];
+        await this.headsUpRepo.save(headsUp);
+      }
+      incident.stage = IncidentStage.HEADS_UP;
+    } else if (targetStage === 'INITIAL_REPORT') {
+      if (headsUp && !headsUp.approvedBy) {
+        headsUp.approvedBy = 'Site HSE (Verified on Reopen)';
+        headsUp.approvedTime = new Date();
+        await this.headsUpRepo.save(headsUp);
+      }
+      if (initialReport) {
+        initialReport.approvedBy = null as any;
+        initialReport.approvedTime = null as any;
+        initialReport.approverSignature = null as any;
+        const irLog = {
+          action: 'Incident Reopened by Department User',
+          status: 'REOPENED',
+          returnedBy: dto.reopenedBy || 'Department User',
+          role: dto.role || 'Department User',
+          reason: dto.reason.trim(),
+          signature: sigUrl,
+          reopenedTime: nowIso,
+          timestamp: nowIso,
+          returnedTime: nowIso,
+          editedTime: nowIso,
+        };
+        (initialReport as any).editHistory = Array.isArray((initialReport as any).editHistory)
+          ? [...(initialReport as any).editHistory, irLog]
+          : [irLog];
+        await this.initialReportRepo.save(initialReport);
+      }
+      incident.stage = IncidentStage.INITIAL_REPORT;
+    } else {
+      if (headsUp && !headsUp.approvedBy) {
+        headsUp.approvedBy = 'Site HSE (Verified on Reopen)';
+        headsUp.approvedTime = new Date();
+        await this.headsUpRepo.save(headsUp);
+      }
+      if (initialReport && !initialReport.approvedBy && (initialReport.submittedBy || initialReport.signature)) {
+        initialReport.approvedBy = 'Site HSE (Verified on Reopen)';
+        initialReport.approvedTime = new Date();
+        await this.initialReportRepo.save(initialReport);
+      }
+      if (investigation) {
+        investigation.reviewedBy = null as any;
+        investigation.reviewedTime = null as any;
+        investigation.reviewerSignature = null as any;
+        const invLog = {
+          action: 'Incident Reopened by Department User',
+          status: 'REOPENED',
+          returnedBy: dto.reopenedBy || 'Department User',
+          role: dto.role || 'Department User',
+          reason: dto.reason.trim(),
+          signature: sigUrl,
+          reopenedTime: nowIso,
+          timestamp: nowIso,
+          returnedTime: nowIso,
+          editedTime: nowIso,
+        };
+        investigation.editHistory = Array.isArray(investigation.editHistory)
+          ? [...investigation.editHistory, invLog]
+          : [invLog];
+        await this.investigationRepo.save(investigation);
+      }
+      incident.stage = IncidentStage.INVESTIGATION;
     }
 
-    // Prepare Investigation (Stage 3):
-    // Allow Department users to edit third form and corrective actions
-    const investigation = await this.investigationRepo.findOne({ where: { incidentId } });
-    if (investigation) {
-      // Clear sign-off so it can be re-reviewed & signed off prior to subsequent closure
-      investigation.reviewedBy = null as any;
-      investigation.reviewedTime = null as any;
-      investigation.reviewerSignature = null as any;
-      const invLog = {
-        action: 'Incident Reopened by Department User',
-        status: 'REOPENED',
-        returnedBy: dto.reopenedBy || 'Department User',
-        role: dto.role || 'Department User',
-        reason: dto.reason.trim(),
-        signature: sigUrl,
-        reopenedTime: nowIso,
-        timestamp: nowIso,
-        returnedTime: nowIso,
-        editedTime: nowIso,
-      };
-      investigation.editHistory = Array.isArray(investigation.editHistory)
-        ? [...investigation.editHistory, invLog]
-        : [invLog];
-      await this.investigationRepo.save(investigation);
-    }
-
-    // Reset Incident status & stage
-    incident.stage = IncidentStage.INVESTIGATION;
+    // Reset Incident status
     incident.status = 1; // Active / Open
     incident.closedBy = null as any;
     incident.closedTime = null as any;
@@ -1337,9 +1480,17 @@ export class IncidentsService implements OnModuleInit {
       qb.andWhere('incident.isHipo = :isHipo', { isHipo: query.isHipo });
     }
     if (query.category) {
-      qb.andWhere(`JSON_CONTAINS(incident.categories, :categoryJson)`, {
-        categoryJson: JSON.stringify(query.category),
-      });
+      if (query.category.toLowerCase().includes('lost time') || query.category.toLowerCase().includes('loss time')) {
+        qb.andWhere(
+          `(JSON_CONTAINS(incident.categories, :catLost) OR JSON_CONTAINS(incident.categories, :catLoss) OR JSON_SEARCH(incident.categories, 'one', '%Lost Time%') IS NOT NULL OR JSON_SEARCH(incident.categories, 'one', '%Loss Time%') IS NOT NULL)`,
+          { catLost: JSON.stringify('Lost Time Injury'), catLoss: JSON.stringify('Loss Time Injury') },
+        );
+      } else {
+        qb.andWhere(
+          `(JSON_CONTAINS(incident.categories, :categoryJson) OR JSON_SEARCH(incident.categories, 'one', :categoryLike) IS NOT NULL)`,
+          { categoryJson: JSON.stringify(query.category), categoryLike: `%${query.category}%` },
+        );
+      }
     }
     if (query.buildingId) {
       qb.andWhere('incident.buildingId = :buildingId', { buildingId: query.buildingId });
@@ -1677,6 +1828,73 @@ export class IncidentsService implements OnModuleInit {
   }
 
   /**
+   * Resolves raw categories to standard Heads-Up incident categories
+   */
+  private resolveHeadsUpCategory(rawCategories: any): string {
+    let list: string[] = [];
+    if (Array.isArray(rawCategories)) {
+      list = rawCategories;
+    } else if (typeof rawCategories === 'string') {
+      try {
+        const parsed = JSON.parse(rawCategories);
+        list = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        list = [rawCategories];
+      }
+    }
+
+    const cleaned = list.filter(Boolean).map(c => String(c).trim());
+    if (cleaned.length === 0) return 'Near Miss';
+
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('fatal')) return 'Fatality';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('permanent') || low.includes('disability')) return 'Permanent Disability';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('lost time') || low.includes('loss time') || low === 'lti') return 'Lost Time Injury';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('restricted work') || low === 'rwi') return 'Restricted Work Injury';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('medical treatment') || low === 'mti') return 'Medical Treatment Injury';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('first aid') || low === 'fai') return 'First Aid Injury';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('no treatment')) return 'No Treatment Injury';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('occupational illness') || low.includes('illness')) return 'Occupational Illness';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('environmental') || low.includes('environ') || low.includes('spill')) return 'Environmental Incident';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('property')) return 'Property Damage';
+    }
+    for (const c of cleaned) {
+      const low = c.toLowerCase();
+      if (low.includes('near miss') || low === 'nearmiss') return 'Near Miss';
+    }
+
+    return 'Near Miss';
+  }
+
+  /**
    * High-performance Backend Aggregation for Dashboard Stats (handles 1,000,000+ records in <10ms)
    */
   async getDashboardStats(filters: { building?: string; contractor?: string; contractorId?: number; userRole?: string; dateRange?: string; startDate?: string; endDate?: string }) {
@@ -1837,7 +2055,7 @@ export class IncidentsService implements OnModuleInit {
       const pot = Number(r.potentialSeverity) || 1;
       if (potSevCount[pot] !== undefined) potSevCount[pot]++;
 
-      const ty = (r.categories && r.categories.length > 0) ? r.categories[0] : 'Near Miss';
+      const ty = this.resolveHeadsUpCategory(r.categories);
       typeCountMap[ty] = (typeCountMap[ty] || 0) + 1;
 
       let pk = 'Heads-Up';
@@ -1951,21 +2169,28 @@ export class IncidentsService implements OnModuleInit {
     });
 
     const categoryColorMap: Record<string, string> = {
-      'Near Miss': '#C07D10',
-      'First Aid Injury': '#583C66',
       'Medical Treatment Injury': '#E8663A',
-      'Restricted Work Injury': '#8F1B32',
-      'Lost Time Injury': '#E32B50',
+      'First Aid Injury': '#583C66',
+      'Near Miss': '#C07D10',
+      'Environmental Incident': '#2D9E5A',
+      'Occupational Illness': '#6366F1',
       'Property Damage': '#A1A5B3',
-      'Environmental Incident': '#7BBE97',
-      'Personal Injury': '#E32B50',
+      'Lost Time Injury': '#E32B50',
+      'Loss Time Injury': '#E32B50',
+      'Restricted Work Injury': '#8F1B32',
+      'No Treatment Injury': '#64748B',
+      'Permanent Disability': '#991B1B',
+      'Fatality': '#450A0A',
     };
 
-    const typeList = Object.keys(typeCountMap).map(key => ({
-      type: key,
-      count: typeCountMap[key],
-      color: categoryColorMap[key] || '#131E40',
-    })).sort((a, b) => b.count - a.count);
+    const typeList = Object.keys(typeCountMap)
+      .filter(key => typeCountMap[key] > 0)
+      .map(key => ({
+        type: key,
+        count: typeCountMap[key],
+        color: categoryColorMap[key] || '#131E40',
+      }))
+      .sort((a, b) => b.count - a.count);
 
     const frontRes = Object.keys(frontMap).map(k => ({ part: k, count: frontMap[k] })).sort((a, b) => b.count - a.count);
     const backRes = Object.keys(backMap).map(k => ({ part: k, count: backMap[k] })).sort((a, b) => b.count - a.count);

@@ -100,4 +100,8 @@ export class ReopenIncidentDto {
   @IsString()
   @IsOptional()
   signature?: string;
+
+  @IsString()
+  @IsOptional()
+  stageReopenedTo?: string;
 }

@@ -638,6 +638,18 @@ export class ObservationsService implements OnModuleInit {
       },
     ).catch((err) => this.logger.error('Observation notification error on escalate:', err));
 
+    // Also trigger notification to Notification Group 1 for the newly submitted Heads-Up incident
+    if (incidentResult?.incident) {
+      this.notificationsService.triggerIncidentSubmissionNotification(
+        incidentResult.incident,
+        'Heads-Up Notification',
+        savedObs.assignedContractorName,
+        dto.escalatedByUserId,
+        'GROUP_1',
+        false,
+      ).catch((err) => this.logger.error('Failed to notify Group 1 on escalated incident submission:', err));
+    }
+
     const history = await this.logRepo.find({ where: { observationId: id }, order: { id: 'ASC' } });
 
     return { observation: savedObs, incident: incidentResult, history };

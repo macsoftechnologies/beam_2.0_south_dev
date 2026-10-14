@@ -96,19 +96,19 @@ export class NotificationsController {
   ───────────────────────────────────────────────────────────── */
 
   /**
-   * Get all members in the Incident Notification Group.
+   * Get all members in the Incident Notification Group (supports ?group=GROUP_1 or ?group=GROUP_2).
    */
   @Get('incident-group')
-  async getIncidentGroup() {
-    return this.notificationsService.getIncidentNotificationGroupMembers();
+  async getIncidentGroup(@Query('group') group?: string) {
+    return this.notificationsService.getIncidentNotificationGroupMembers(group);
   }
 
   /**
    * Get candidate users who can be added to the Incident Notification Group.
    */
   @Get('incident-group/available-users')
-  async getAvailableUsersForGroup() {
-    return this.notificationsService.getAvailableUsersForIncidentGroup();
+  async getAvailableUsersForGroup(@Query('group') group?: string) {
+    return this.notificationsService.getAvailableUsersForIncidentGroup(group);
   }
 
   /**
@@ -117,12 +117,15 @@ export class NotificationsController {
   @Post('incident-group')
   async addMembersToGroup(
     @Request() req: any,
-    @Body() body: { members: any[] } | any[],
+    @Body() body: { members?: any[]; group?: string; groupKey?: string } | any[],
+    @Query('group') queryGroup?: string,
   ) {
     const list = Array.isArray(body) ? body : body.members || [body];
+    const groupKey = (!Array.isArray(body) && (body.group || body.groupKey)) ? (body.group || body.groupKey) : (queryGroup || 'GROUP_1');
     const created = await this.notificationsService.addIncidentNotificationGroupMembers(
       list,
       req.user?.userId,
+      groupKey,
     );
     return { success: true, count: created.length, data: created };
   }

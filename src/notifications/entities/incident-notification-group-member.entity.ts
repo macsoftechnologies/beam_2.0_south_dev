@@ -34,6 +34,10 @@ export class IncidentNotificationGroupMember {
   @Column({ type: 'varchar', length: 150, nullable: true })
   departmentName: string;
 
+  @Index()
+  @Column({ type: 'varchar', length: 50, default: 'GROUP_1' })
+  groupKey: string;
+
   @Column({ type: 'boolean', default: true })
   isEmailEnabled: boolean;
 

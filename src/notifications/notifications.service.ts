@@ -36,7 +36,7 @@ export class NotificationsService {
     private readonly redisCacheService: RedisCacheService,
     private readonly emailService: EmailService,
     private readonly smsService: SmsService,
-  ) {}
+  ) { }
 
   /**
    * Auto-create incident_notification_group_members table if not exists upon startup.
@@ -53,13 +53,15 @@ export class NotificationsService {
           \`phoneNumber\` VARCHAR(50) NULL,
           \`userType\` VARCHAR(100) NULL,
           \`departmentName\` VARCHAR(150) NULL,
+          \`groupKey\` VARCHAR(50) NOT NULL DEFAULT 'GROUP_1',
           \`isEmailEnabled\` TINYINT(1) NOT NULL DEFAULT 1,
           \`isSmsEnabled\` TINYINT(1) NOT NULL DEFAULT 1,
           \`isInAppEnabled\` TINYINT(1) NOT NULL DEFAULT 1,
           \`addedByUserId\` INT NULL,
           \`createdAt\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           \`updatedAt\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          INDEX \`IDX_incident_group_userId\` (\`userId\`)
+          INDEX \`IDX_incident_group_userId\` (\`userId\`),
+          INDEX \`IDX_incident_group_key\` (\`groupKey\`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
       console.log('[Notification] Checked/Created table: incident_notification_group_members');
@@ -119,12 +121,12 @@ export class NotificationsService {
       // SCENARIO 1: Raised in Hold status or changed from Draft -> Hold
       const isCreatedAsHold = !previousStatus && normNew === 'hold';
       const isDraftToHold = normPrev === 'draft' && normNew === 'hold';
-      
+
       if (isCreatedAsHold || isDraftToHold) {
         title = 'New Permit Request Raised';
         message = `A new work permit request has been raised by ${actorName}.`;
         recipientRole = 'department'; // Notify only responsible Department Users (and Admins as system level)
-      } 
+      }
       // SCENARIO 2 & 3: Approved status or other general transitions
       else if (normNew === 'approved') {
         title = 'Permit Request Approved';
@@ -263,6 +265,146 @@ export class NotificationsService {
   }
 
   /**
+   * Resolve contractor users who have contractor access for Incident Management
+   * and whose company matches the company involved in the observation/incident.
+   */
+  async getContractorUsersForIncidentManagementByCompany(
+    companyName?: string,
+    companyId?: number,
+  ): Promise<Array<{ id: number; username?: string; email?: string; phone?: string; name?: string; companyName?: string }>> {
+    const userMap = new Map<number, { id: number; username?: string; email?: string; phone?: string; name?: string; companyName?: string }>();
+    const trimmedName = (companyName || '').trim();
+    const cId = companyId && !isNaN(Number(companyId)) ? Number(companyId) : null;
+
+    let resolvedSubId = cId;
+    let resolvedName = trimmedName;
+
+    try {
+      if (!resolvedSubId && resolvedName) {
+        const subs = await this.userRepo.query(
+          `SELECT id, subContractorName FROM subcontractors WHERE LOWER(TRIM(subContractorName)) = LOWER(TRIM(?)) OR subContractorName LIKE ? LIMIT 1`,
+          [resolvedName, `%${resolvedName}%`],
+        );
+        if (subs && subs.length > 0) {
+          resolvedSubId = Number(subs[0].id);
+          resolvedName = subs[0].subContractorName;
+        }
+      } else if (resolvedSubId && !resolvedName) {
+        const subs = await this.userRepo.query(
+          `SELECT id, subContractorName FROM subcontractors WHERE id = ? LIMIT 1`,
+          [resolvedSubId],
+        );
+        if (subs && subs.length > 0) {
+          resolvedName = subs[0].subContractorName;
+        }
+      }
+
+      const rows = await this.userRepo.query(
+        `
+        SELECT 
+          u.id AS userId,
+          u.username,
+          u.userType,
+          u.typeId,
+          e.id AS empId,
+          e.employeeName,
+          e.companyName,
+          e.subContId,
+          e.access,
+          s.subContractorName,
+          e.module_access,
+          e.email,
+          e.phonenumber
+        FROM users u
+        LEFT JOIN employees e ON u.empId = e.id OR u.username = e.username
+        LEFT JOIN subcontractors s ON e.subContId = s.id OR u.typeId = s.id
+        WHERE (
+          (e.subContId IS NOT NULL AND e.subContId = ?)
+          OR (s.id IS NOT NULL AND s.id = ?)
+          OR (u.typeId IS NOT NULL AND u.typeId = ?)
+          OR (s.subContractorName IS NOT NULL AND LOWER(TRIM(s.subContractorName)) = LOWER(TRIM(?)))
+          OR (e.companyName IS NOT NULL AND LOWER(TRIM(e.companyName)) = LOWER(TRIM(?)))
+          OR (s.subContractorName IS NOT NULL AND s.subContractorName LIKE ?)
+          OR (e.companyName IS NOT NULL AND e.companyName LIKE ?)
+        )
+      `,
+        [
+          resolvedSubId || 0,
+          resolvedSubId || 0,
+          resolvedSubId || 0,
+          resolvedName || '',
+          resolvedName || '',
+          resolvedName ? `%${resolvedName}%` : '',
+          resolvedName ? `%${resolvedName}%` : '',
+        ],
+      );
+
+      for (const r of rows) {
+        if (!r || r.userId === null || r.userId === undefined) continue;
+        const uId = Number(r.userId);
+        if (isNaN(uId)) continue;
+
+        // Filter: user MUST have contractor access for Incident Management
+        const modAccess = (r.module_access || '').toLowerCase();
+        const hasExplicitIMContractor =
+          modAccess.includes('incident-management:subcontractor') ||
+          modAccess.includes('incident-management:contractor');
+
+        const isLegacyIM = modAccess.includes('incident-management') && !modAccess.includes('incident-management:');
+        const isContractorUserType =
+          (r.userType || '').toLowerCase().includes('subcontractor') ||
+          (r.userType || '').toLowerCase().includes('contractor');
+
+        const isIMContractor = hasExplicitIMContractor || (isLegacyIM && isContractorUserType);
+        if (!isIMContractor) {
+          continue;
+        }
+
+        // Active employee check: skip if access is explicitly disabled (0)
+        if (r.access !== null && r.access !== undefined && (r.access === 0 || r.access === '0' || r.access === false)) {
+          continue;
+        }
+
+        let email = r.email || (r.username && r.username.includes('@') ? r.username : undefined);
+        let phone = r.phonenumber || undefined;
+        const name = r.employeeName || r.username;
+        const comp = r.subContractorName || r.companyName || resolvedName;
+
+        // Fallback: check incidentGroupRepo if email or phone is missing
+        if (!email || !phone) {
+          try {
+            const member = await this.incidentGroupRepo.findOne({ where: { userId: uId } });
+            if (member) {
+              if (!email && member.email) email = member.email;
+              if (!phone && member.phoneNumber) phone = member.phoneNumber;
+            }
+          } catch (_) {}
+        }
+
+        if (!userMap.has(uId)) {
+          userMap.set(uId, {
+            id: uId,
+            username: r.username,
+            name,
+            companyName: comp,
+            email,
+            phone,
+          });
+        }
+      }
+
+      console.log(
+        `[Notification] Resolved ${userMap.size} contractor user(s) with Incident Management contractor access for company "${resolvedName || companyName}" (ID: ${resolvedSubId}):`,
+        Array.from(userMap.values()).map(u => `${u.name} (ID: ${u.id}, Email: ${u.email || 'none'}, Phone: ${u.phone || 'none'}, Company: ${u.companyName})`),
+      );
+    } catch (err) {
+      console.error('[Notification] Error in getContractorUsersForIncidentManagementByCompany:', err);
+    }
+
+    return Array.from(userMap.values());
+  }
+
+  /**
    * Centralized method to trigger in-app notifications for Safety Observations across all lifecycle events.
    */
   async triggerObservationNotification(
@@ -299,8 +441,106 @@ export class NotificationsService {
       let message = '';
       let notifType = `OBSERVATION_${actionType}`;
 
-      // SCENARIO 1: Observation Created, Reassigned, Closed, or Escalated -> Notify Contractor Users
-      if (actionType === 'CREATED' || actionType === 'REASSIGNED' || actionType === 'CLOSED' || actionType === 'ESCALATED') {
+      // SPECIAL WORKFLOW: Observation Escalated to Incident -> Notify contractor users with Incident Management contractor access matching the company involved
+      if (actionType === 'ESCALATED') {
+        const incCase = extraData?.incidentCaseNumber ? ` to Incident ${extraData.incidentCaseNumber}` : ' to an official Incident';
+        const reasonText = extraRemarks ? ` Reason: "${extraRemarks}"` : '';
+
+        title = 'Safety Observation Escalated to Incident';
+        message = `Safety Observation ${observation.observationNumber} (${observation.subject || observation.safetyCategory || 'Finding'}) assigned to ${contractorName || 'your company'} has been escalated${incCase} by ${actorDisplayName}.${reasonText}`;
+
+        const incidentId = extraData?.escalatedIncidentId || observation.id;
+        const incidentLink = this.getIncidentDirectLink(incidentId);
+
+        const imContractorUsers = await this.getContractorUsersForIncidentManagementByCompany(
+          contractorName,
+          contractorId ?? undefined,
+        );
+
+        console.log(`[Notification] Dispatching ESCALATION alert to ${imContractorUsers.length} contractor user(s) with Incident Management access for company "${contractorName}"`);
+
+        for (const rx of imContractorUsers) {
+          // 1. In-App Notification (marked for both Incident & Observation modules)
+          await this.notificationRepo.save(
+            this.notificationRepo.create({
+              receiverUserId: rx.id,
+              senderUserId: actorUserId || undefined,
+              companyId: contractorId || undefined,
+              notificationType: 'OBSERVATION_ESCALATED',
+              permitStatus: 'ESCALATED',
+              title,
+              message,
+              isRead: 0,
+              metadata: JSON.stringify({
+                module: 'INCIDENTS',
+                observationId: observation.id,
+                observationNumber: observation.observationNumber,
+                subject: observation.subject,
+                safetyCategory: observation.safetyCategory,
+                riskLevel: observation.riskLevel,
+                contractorName: rx.companyName || contractorName,
+                actionType: 'ESCALATED',
+                remarks: extraRemarks,
+                escalatedIncidentId: extraData?.escalatedIncidentId,
+                incidentCaseNumber: extraData?.incidentCaseNumber,
+                link: `/incident-management/details/${incidentId}`,
+              }),
+            }),
+          ).catch(err => {
+            console.error(`[Notification] In-app notification error to ${rx.id} for escalated observation:`, err);
+          });
+
+          // 2. Email Dispatch with Direct Incident Link
+          if (rx.email) {
+            const emailSubject = `Incident Alert: Observation ${observation.observationNumber} Escalated to Incident ${extraData?.incidentCaseNumber || ''} (${rx.companyName || contractorName})`;
+            const emailHtml = this.buildIncidentEmailHtml({
+              title,
+              message,
+              caseNumber: extraData?.incidentCaseNumber || `INC-${incidentId}`,
+              stepName: 'Heads-Up Notification (Escalated)',
+              categoryName: observation.safetyCategory || observation.subject || 'Incident',
+              incidentId,
+              badgeText: 'Observation Escalated',
+              badgeColor: '#fee2e2',
+              badgeTextColor: '#991b1b',
+              borderColor: '#e11d48',
+              extraRows: [
+                { label: 'Origin Observation', value: observation.observationNumber },
+                { label: 'Company Involved', value: rx.companyName || contractorName || 'N/A' },
+                { label: 'Risk Level', value: observation.riskLevel || 'N/A' },
+                { label: 'Escalated By', value: actorDisplayName },
+                ...(extraRemarks ? [{ label: 'Escalation Reason', value: extraRemarks }] : []),
+              ],
+            });
+
+            await this.emailService.sendEmail({
+              to: rx.email,
+              subject: emailSubject,
+              text: `${title}\n\n${message}\n\nIncident: ${extraData?.incidentCaseNumber || ''}\nObservation: ${observation.observationNumber}\nCompany Involved: ${rx.companyName || contractorName}\nEscalated By: ${actorDisplayName}${extraRemarks ? `\nReason: ${extraRemarks}` : ''}\n\nView Incident Details:\n${incidentLink}`,
+              html: emailHtml,
+            }).catch(emailErr => {
+              console.error(`[Notification] Email error to ${rx.email} for escalated observation ${observation.observationNumber}:`, emailErr);
+            });
+          } else {
+            console.warn(`[Notification] No email for contractor user ${rx.name} (ID: ${rx.id}) on escalation`);
+          }
+
+          // 3. SMS Dispatch
+          if (rx.phone) {
+            const smsText = `Safety Alert: Observation ${observation.observationNumber} involving ${rx.companyName || contractorName} escalated to Incident ${extraData?.incidentCaseNumber || ''} by ${actorDisplayName}.${extraRemarks ? ` Reason: ${extraRemarks}.` : ''} Link: ${incidentLink}`;
+            await this.smsService.sendSms(rx.phone, smsText).catch(smsErr => {
+              console.error(`[Notification] SMS error to ${rx.phone} for escalated observation ${observation.observationNumber}:`, smsErr);
+            });
+          } else {
+            console.warn(`[Notification] No phone for contractor user ${rx.name} (ID: ${rx.id}) on escalation`);
+          }
+        }
+
+        return;
+      }
+
+      // SCENARIO 1: Observation Created, Reassigned, or Closed -> Notify Contractor Users
+      if (actionType === 'CREATED' || actionType === 'REASSIGNED' || actionType === 'CLOSED') {
         let resolvedSubId: number | null = contractorId ?? null;
         let matchedContractorName = contractorName;
 
@@ -376,13 +616,8 @@ export class NotificationsService {
             const creator = await this.userRepo.findOne({ where: { id: observation.createdByUserId } });
             if (creator) recipients.push(creator);
           }
-        } else if (actionType === 'ESCALATED') {
-          title = 'Safety Observation Escalated to Incident';
-          const incCase = extraData?.incidentCaseNumber ? ` to Incident ${extraData.incidentCaseNumber}` : ' to an official Incident';
-          const reasonText = extraRemarks ? ` Reason: "${extraRemarks}"` : '';
-          message = `Safety Observation ${observation.observationNumber} (${observation.subject || observation.safetyCategory || 'Finding'}) assigned to ${matchedContractorName || 'your company'} has been escalated${incCase} by ${actorDisplayName}.${reasonText}`;
         }
-      } 
+      }
       // SCENARIO 2: Contractor Accepts, Rejects, or Submits Resolution -> Notify Department & Admin Users
       else {
         // 1. Fetch Department Users
@@ -579,9 +814,14 @@ export class NotificationsService {
    * Get all configured members from incident_notification_group_members table.
    * Dynamically hydrates live email, phone, and name from the users & employees table for all linked user accounts.
    */
-  async getIncidentNotificationGroupMembers(): Promise<IncidentNotificationGroupMember[]> {
+  async getIncidentNotificationGroupMembers(groupKey?: string): Promise<IncidentNotificationGroupMember[]> {
     try {
+      const where: any = {};
+      if (groupKey && groupKey !== 'ALL') {
+        where.groupKey = groupKey;
+      }
       const members = await this.incidentGroupRepo.find({
+        where,
         order: { createdAt: 'DESC' },
       });
 
@@ -617,7 +857,7 @@ export class NotificationsService {
    * Get all active system users (candidates) directly from the users table.
    * Includes employee, department, and subcontractor details, along with isAdded status.
    */
-  async getAvailableUsersForIncidentGroup(): Promise<any[]> {
+  async getAvailableUsersForIncidentGroup(groupKey: string = 'GROUP_1'): Promise<any[]> {
     try {
       const users = await this.userRepo.createQueryBuilder('user')
         .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
@@ -645,7 +885,11 @@ export class NotificationsService {
         .orderBy('user.id', 'ASC')
         .getRawMany();
 
-      const existingMembers = await this.incidentGroupRepo.find();
+      const where: any = {};
+      if (groupKey && groupKey !== 'ALL') {
+        where.groupKey = groupKey;
+      }
+      const existingMembers = await this.incidentGroupRepo.find({ where });
       const existingUserIds = new Set(existingMembers.filter(m => m.userId !== null && m.userId !== undefined).map(m => Number(m.userId)));
 
       return users.map(u => {
@@ -685,17 +929,20 @@ export class NotificationsService {
       phoneNumber?: string;
       userType?: string;
       departmentName?: string;
+      groupKey?: string;
       isEmailEnabled?: boolean;
       isSmsEnabled?: boolean;
       isInAppEnabled?: boolean;
     }>,
     actorUserId?: number,
+    defaultGroupKey: string = 'GROUP_1',
   ): Promise<IncidentNotificationGroupMember[]> {
     const saved: IncidentNotificationGroupMember[] = [];
     const userIds = members.filter(m => m.userId !== null && m.userId !== undefined).map(m => Number(m.userId));
     const liveContacts = userIds.length > 0 ? await this.resolveLiveUserContacts(userIds) : new Map();
 
     for (const m of members) {
+      const targetGroup = m.groupKey || defaultGroupKey || 'GROUP_1';
       const uIdNum = m.userId !== null && m.userId !== undefined ? Number(m.userId) : undefined;
       const live = uIdNum !== undefined ? liveContacts.get(uIdNum) : null;
 
@@ -703,14 +950,14 @@ export class NotificationsService {
       const finalPhone = live?.phone || m.phoneNumber || '';
       const finalName = live?.name || m.name || m.email || 'User';
       const finalDept = live?.departmentName || m.departmentName || '';
-      const finalUserType = live?.userType || m.userType || 'Department';
+      const finalUserType = live?.userType || m.userType || 'User';
 
-      // Check if already exists by userId (or by email only if no userId)
+      // Check if already exists in this specific group
       let existing: IncidentNotificationGroupMember | null = null;
       if (uIdNum !== undefined) {
-        existing = await this.incidentGroupRepo.findOne({ where: { userId: uIdNum } });
+        existing = await this.incidentGroupRepo.findOne({ where: { userId: uIdNum, groupKey: targetGroup } });
       } else if (m.email) {
-        existing = await this.incidentGroupRepo.findOne({ where: { email: m.email.trim() } });
+        existing = await this.incidentGroupRepo.findOne({ where: { email: m.email.trim(), groupKey: targetGroup } });
       }
 
       if (existing) {
@@ -720,6 +967,7 @@ export class NotificationsService {
         existing.phoneNumber = finalPhone;
         existing.userType = finalUserType;
         existing.departmentName = finalDept;
+        existing.groupKey = targetGroup;
         if (typeof m.isEmailEnabled === 'boolean') existing.isEmailEnabled = m.isEmailEnabled;
         if (typeof m.isSmsEnabled === 'boolean') existing.isSmsEnabled = m.isSmsEnabled;
         if (typeof m.isInAppEnabled === 'boolean') existing.isInAppEnabled = m.isInAppEnabled;
@@ -733,6 +981,7 @@ export class NotificationsService {
           phoneNumber: finalPhone,
           userType: finalUserType,
           departmentName: finalDept,
+          groupKey: targetGroup,
           isEmailEnabled: m.isEmailEnabled !== false,
           isSmsEnabled: m.isSmsEnabled !== false,
           isInAppEnabled: m.isInAppEnabled !== false,
@@ -832,7 +1081,7 @@ export class NotificationsService {
    * Get all active users belonging to the Incident Notification Group.
    * Always hydrates live email and phone directly from the users & employees table.
    */
-  async getIncidentNotificationGroupUsers(): Promise<{
+  async getIncidentNotificationGroupUsers(groupKey: string = 'GROUP_1'): Promise<{
     id: number;
     userId?: number;
     username: string;
@@ -844,10 +1093,11 @@ export class NotificationsService {
     isInAppEnabled: boolean;
   }[]> {
     try {
-      let members = await this.incidentGroupRepo.find();
+      const members = await this.incidentGroupRepo.find({
+        where: { groupKey },
+      });
       if (members.length === 0) {
-        console.log('[Notification] Incident Notification Group is empty. Auto-seeding default Department/Department1 users.');
-        members = await this.seedDefaultDepartmentUsers();
+        return [];
       }
 
       const userIds = members
@@ -894,7 +1144,7 @@ export class NotificationsService {
 
     try {
       const qb = this.userRepo.createQueryBuilder('user')
-        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
+        .leftJoin('employees', 'emp', '(user.empId = emp.id OR user.username = emp.username OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
           empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
         })
         .select([
@@ -912,13 +1162,43 @@ export class NotificationsService {
       }
 
       const matched = await qb.getRawMany();
-      return matched.filter(m => m && m.id !== null && m.id !== undefined).map(m => ({
-        id: Number(m.id),
-        username: m.username,
-        email: m.email || (m.username && m.username.includes('@') ? m.username : undefined),
-        phone: m.phone,
-        name: m.employeeName || m.username,
-      }));
+      const results: Array<{ id: number; username?: string; email?: string; phone?: string; name?: string }> = [];
+
+      for (const m of matched) {
+        if (!m || m.id === null || m.id === undefined) continue;
+        const uId = Number(m.id);
+        if (isNaN(uId)) continue;
+
+        let email = m.email || (m.username && m.username.includes('@') ? m.username : undefined);
+        let phone = m.phone;
+        const name = m.employeeName || m.username;
+
+        // Fallback: check incidentGroupRepo if email or phone is missing
+        if (!email || !phone) {
+          try {
+            const member = await this.incidentGroupRepo.findOne({ where: { userId: uId } });
+            if (member) {
+              if (!email && member.email) email = member.email;
+              if (!phone && member.phoneNumber) phone = member.phoneNumber;
+            }
+          } catch (_) {}
+        }
+
+        // Fallback: if trimmed looks like an email and user still has no email
+        if (!email && trimmed.includes('@')) {
+          email = trimmed;
+        }
+
+        results.push({
+          id: uId,
+          username: m.username,
+          email,
+          phone,
+          name,
+        });
+      }
+
+      return results;
     } catch (err) {
       console.error('[Notification] Error finding user by submitter identifier:', err);
       return [];
@@ -926,8 +1206,8 @@ export class NotificationsService {
   }
 
   /**
-   * Resolve ONLY the specific contractor user(s) who actually submitted the incident / step.
-   * Checks stage submitters (Heads-Up, Initial Report, Investigation) and direct incident creator.
+   * Resolve ONLY the specific contractor / submitter user(s) who actually submitted the incident / step.
+   * Checks stage submitters (Heads-Up, Initial Report, Investigation), edit history, and direct incident creator.
    */
   async getContractorUsersForIncident(incident: any, stepName?: string): Promise<Array<{ id: number; username?: string; email?: string; phone?: string; name?: string }>> {
     const userMap = new Map<number, { id: number; username?: string; email?: string; phone?: string; name?: string }>();
@@ -937,33 +1217,62 @@ export class NotificationsService {
 
       // 1. Direct creator ID / username on incident
       const creatorId = incident.createdByUserId || incident.createdById || incident.userId;
-      if (creatorId) {
-        submitterIdentifiers.push(String(creatorId));
+      if (creatorId !== undefined && creatorId !== null && String(creatorId).trim() !== '') {
+        submitterIdentifiers.push(String(creatorId).trim());
+      }
+      if (incident.submittedBy || incident.submitted_by) {
+        submitterIdentifiers.push(String(incident.submittedBy || incident.submitted_by).trim());
       }
 
       // 2. Query stage-specific submitters from incident tables
       if (incidentId) {
         try {
           const headsupRows = await this.userRepo.query(
-            `SELECT submitted_by FROM incident_headsup WHERE incident_id = ? AND submitted_by IS NOT NULL`,
+            `SELECT submitted_by, edit_history FROM incident_headsup WHERE incident_id = ?`,
             [incidentId],
           );
-          headsupRows.forEach((r: any) => r.submitted_by && submitterIdentifiers.push(String(r.submitted_by).trim()));
+          for (const r of headsupRows) {
+            if (r.submitted_by) submitterIdentifiers.push(String(r.submitted_by).trim());
+            if (r.edit_history) {
+              try {
+                const edits = typeof r.edit_history === 'string' ? JSON.parse(r.edit_history) : r.edit_history;
+                if (Array.isArray(edits)) {
+                  edits.forEach(e => {
+                    if (e && e.editedBy) submitterIdentifiers.push(String(e.editedBy).trim());
+                    if (e && e.submittedBy) submitterIdentifiers.push(String(e.submittedBy).trim());
+                  });
+                }
+              } catch (_) {}
+            }
+          }
 
           const initialRows = await this.userRepo.query(
-            `SELECT submitted_by FROM incident_initial_reports WHERE incident_id = ? AND submitted_by IS NOT NULL`,
+            `SELECT submitted_by, edit_history FROM incident_initial_reports WHERE incident_id = ?`,
             [incidentId],
           ).catch(() => this.userRepo.query(
-            `SELECT submitted_by FROM incident_initial_report WHERE incident_id = ? AND submitted_by IS NOT NULL`,
+            `SELECT submitted_by, edit_history FROM incident_initial_report WHERE incident_id = ?`,
             [incidentId],
           ).catch(() => []));
-          initialRows.forEach((r: any) => r.submitted_by && submitterIdentifiers.push(String(r.submitted_by).trim()));
+          for (const r of initialRows) {
+            if (r.submitted_by) submitterIdentifiers.push(String(r.submitted_by).trim());
+            if (r.edit_history) {
+              try {
+                const edits = typeof r.edit_history === 'string' ? JSON.parse(r.edit_history) : r.edit_history;
+                if (Array.isArray(edits)) {
+                  edits.forEach(e => {
+                    if (e && e.editedBy) submitterIdentifiers.push(String(e.editedBy).trim());
+                    if (e && e.submittedBy) submitterIdentifiers.push(String(e.submittedBy).trim());
+                  });
+                }
+              } catch (_) {}
+            }
+          }
 
           const invRows = await this.userRepo.query(
-            `SELECT signatures, team FROM incident_investigations WHERE incident_id = ?`,
+            `SELECT signatures, team, edit_history FROM incident_investigations WHERE incident_id = ?`,
             [incidentId],
           ).catch(() => this.userRepo.query(
-            `SELECT signatures, team FROM incident_investigation WHERE incident_id = ?`,
+            `SELECT signatures, team, edit_history FROM incident_investigation WHERE incident_id = ?`,
             [incidentId],
           ).catch(() => []));
 
@@ -974,7 +1283,7 @@ export class NotificationsService {
                 if (Array.isArray(sigs)) {
                   sigs.forEach(s => s && s.name && submitterIdentifiers.push(String(s.name).trim()));
                 }
-              } catch (_) {}
+              } catch (_) { }
             }
             if (row.team) {
               try {
@@ -984,6 +1293,16 @@ export class NotificationsService {
                     if (typeof t === 'string' && t.trim()) submitterIdentifiers.push(t.trim());
                     else if (t && t.name) submitterIdentifiers.push(String(t.name).trim());
                     else if (t && t.email) submitterIdentifiers.push(String(t.email).trim());
+                  });
+                }
+              } catch (_) { }
+            }
+            if (row.edit_history) {
+              try {
+                const edits = typeof row.edit_history === 'string' ? JSON.parse(row.edit_history) : row.edit_history;
+                if (Array.isArray(edits)) {
+                  edits.forEach(e => {
+                    if (e && e.editedBy) submitterIdentifiers.push(String(e.editedBy).trim());
                   });
                 }
               } catch (_) {}
@@ -1005,8 +1324,44 @@ export class NotificationsService {
         }
       }
 
+      // Fallback: if no user resolved, search by contractorsInvolved
+      if (userMap.size === 0 && (incident.contractorsInvolved || incident.contractors_involved)) {
+        const contractorName = String(incident.contractorsInvolved || incident.contractors_involved).trim();
+        if (contractorName) {
+          const matchedByContractor = await this.findUsersBySubmitterIdentifier(contractorName);
+          for (const u of matchedByContractor) {
+            if (!userMap.has(u.id)) {
+              userMap.set(u.id, u);
+            }
+          }
+        }
+      }
+
+      // Enrichment: For any resolved user that lacks email or phone, check employees table & incidentGroupRepo
+      for (const [userId, user] of userMap.entries()) {
+        if (!user.email || !user.phone) {
+          try {
+            const empRows = await this.userRepo.query(
+              `SELECT email, phonenumber FROM employees WHERE id = ? OR username = ? OR employeeName = ?`,
+              [userId, user.username || '', user.name || ''],
+            );
+            if (empRows && empRows.length > 0) {
+              if (!user.email && empRows[0].email) user.email = empRows[0].email;
+              if (!user.phone && empRows[0].phonenumber) user.phone = empRows[0].phonenumber;
+            }
+          } catch (_) {}
+          try {
+            const member = await this.incidentGroupRepo.findOne({ where: { userId } });
+            if (member) {
+              if (!user.email && member.email) user.email = member.email;
+              if (!user.phone && member.phoneNumber) user.phone = member.phoneNumber;
+            }
+          } catch (_) {}
+        }
+      }
+
       if (userMap.size > 0) {
-        console.log(`[Notification] Resolved ${userMap.size} exact submitter user(s) for incident ${incident.caseNumber || incident.id}:`, Array.from(userMap.values()).map(u => `${u.name} (ID: ${u.id}, Email: ${u.email || 'none'}, Phone: ${u.phone || 'none'})`));
+        console.log(`[Notification] Resolved ${userMap.size} submitter user(s) for incident ${incident.caseNumber || incident.id}:`, Array.from(userMap.values()).map(u => `${u.name} (ID: ${u.id}, Email: ${u.email || 'none'}, Phone: ${u.phone || 'none'})`));
         return Array.from(userMap.values());
       }
 
@@ -1026,18 +1381,126 @@ export class NotificationsService {
   }
 
   /**
-   * Trigger notifications when a contractor submits an incident step report.
-   * Sends:
-   * 1. In-App Notification to all Department/Department1 Notification Group users AND all Admin/SuperAdmin users.
-   * 2. SMS to group users with isSmsEnabled = true.
-   * 3. Email to group users with isEmailEnabled = true.
-   * Text: "{contractor_name} has submitted the {Step of incident} report for {incident type category} with {incident number}."
+   * Helper to construct direct incident detail link.
+   */
+  getIncidentDirectLink(incidentId: number | string): string {
+    const rawUrl =
+      process.env.FRONTEND_URL ||
+      process.env.APP_URL ||
+      process.env.CLIENT_URL ||
+      'https://beam.safesiteworks.com/development/m3south';
+    const baseUrl = rawUrl.trim().replace(/\/+$/, '');
+    return `${baseUrl}/incident-management/details/${incidentId}`;
+  }
+
+  /**
+   * Helper to build modern, rich HTML email for incidents with direct link.
+   */
+  buildIncidentEmailHtml(options: {
+    title: string;
+    message: string;
+    caseNumber: string;
+    stepName: string;
+    categoryName: string;
+    incidentId: number | string;
+    badgeText?: string;
+    badgeColor?: string;
+    badgeTextColor?: string;
+    borderColor?: string;
+    extraRows?: Array<{ label: string; value: string }>;
+  }): string {
+    const incidentLink = this.getIncidentDirectLink(options.incidentId);
+    const badgeBg = options.badgeColor || '#fee2e2';
+    const badgeFg = options.badgeTextColor || '#991b1b';
+    const borderCol = options.borderColor || '#e11d48';
+
+    const extraRowsHtml = (options.extraRows || [])
+      .map(
+        (r) => `
+          <tr>
+            <td style="padding: 7px 0; color: #64748b; font-weight: 600; width: 140px; vertical-align: top;">${r.label}:</td>
+            <td style="padding: 7px 0; color: #0f172a; font-weight: 500;">${r.value}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    return `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 620px; margin: 0 auto; padding: 24px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+        <div style="border-bottom: 2px solid ${borderCol}; padding-bottom: 16px; margin-bottom: 20px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td>
+                <h2 style="color: #0f172a; margin: 0; font-size: 20px; font-weight: 700;">BEAM Safety Management</h2>
+                <div style="font-size: 13px; color: #64748b; margin-top: 2px;">Incident Notification System</div>
+              </td>
+              <td style="text-align: right; vertical-align: middle;">
+                <span style="display: inline-block; padding: 4px 12px; background-color: ${badgeBg}; color: ${badgeFg}; font-size: 12px; font-weight: 700; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px;">
+                  ${options.badgeText || 'Incident Alert'}
+                </span>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        <h3 style="color: #1e293b; margin: 0 0 12px 0; font-size: 17px; font-weight: 600;">
+          ${options.title}
+        </h3>
+        <p style="font-size: 15px; line-height: 1.6; color: #334155; margin: 0 0 20px 0;">
+          ${options.message}
+        </p>
+
+        <div style="margin: 20px 0; padding: 16px 20px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid ${borderCol}; border-radius: 6px; font-size: 14px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 7px 0; color: #64748b; font-weight: 600; width: 140px;">Case Number:</td>
+              <td style="padding: 7px 0; color: #0f172a; font-weight: 700;">${options.caseNumber}</td>
+            </tr>
+            <tr>
+              <td style="padding: 7px 0; color: #64748b; font-weight: 600;">Incident Type:</td>
+              <td style="padding: 7px 0; color: #0f172a;">${options.categoryName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 7px 0; color: #64748b; font-weight: 600;">Stage / Step:</td>
+              <td style="padding: 7px 0; color: #0f172a; font-weight: 600;">${options.stepName}</td>
+            </tr>
+            ${extraRowsHtml}
+          </table>
+        </div>
+
+        <!-- Direct Incident Link Button -->
+        <div style="margin: 28px 0; text-align: center;">
+          <a href="${incidentLink}" style="display: inline-block; background-color: #e11d48; color: #ffffff !important; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-size: 15px; font-weight: 600; box-shadow: 0 2px 4px rgba(225, 29, 72, 0.25);">
+            View Incident Details &rarr;
+          </a>
+        </div>
+
+        <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b; word-break: break-all;">
+          <p style="margin: 0 0 6px 0;">If the button above does not work, copy and paste this link into your browser:</p>
+          <a href="${incidentLink}" style="color: #2563eb; text-decoration: underline;">${incidentLink}</a>
+        </div>
+
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 16px; text-align: center;">
+          This is an automated notification from the BEAM Incident Management System.
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Trigger notifications when a contractor submits an incident step report or resubmits after revision.
+   * Sends to Notification Group 1 (GROUP_1):
+   * 1. In-App Notification to configured group members (isInAppEnabled !== false).
+   * 2. Email with direct incident link to group members (isEmailEnabled === true).
+   * 3. SMS to group members (isSmsEnabled === true).
    */
   async triggerIncidentSubmissionNotification(
     incident: any,
     stepName: string,
     contractorName?: string,
     actorUserId?: number,
+    groupKey: string = 'GROUP_1',
+    isResubmission: boolean = false,
   ): Promise<void> {
     try {
       const cName = contractorName || incident.contractorsInvolved || incident.contractorName || 'Contractor';
@@ -1045,30 +1508,24 @@ export class NotificationsService {
         ? incident.categories.join(', ')
         : (incident.category || incident.type || 'Incident');
       const caseNumber = incident.caseNumber || `INC-${incident.id}`;
+      const incidentLink = this.getIncidentDirectLink(incident.id);
 
-      const message = `${cName} has submitted the ${stepName} report for ${categoryName} with ${caseNumber}.`;
-      const title = `New ${stepName} Submitted`;
+      const title = isResubmission ? `${stepName} Resubmitted (Revised)` : `New ${stepName} Submitted`;
+      const message = isResubmission
+        ? `${cName} has resubmitted the revised ${stepName} report for ${categoryName} with ${caseNumber}.`
+        : `${cName} has submitted the ${stepName} report for ${categoryName} with ${caseNumber}.`;
+      const emailSubject = isResubmission
+        ? `Incident Alert: ${caseNumber} - ${stepName} Resubmitted`
+        : `Incident Alert: ${caseNumber} - ${stepName} Submitted`;
 
-      // 1. Fetch all system users with live contacts to ensure all Admin, SuperAdmin, Department, and Department1 accounts receive alerts
-      const allSystemUsers = await this.userRepo.createQueryBuilder('user')
-        .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
-          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
-        })
-        .select([
-          'user.id AS id',
-          'user.username AS username',
-          'user.userType AS userType',
-          'user.typeId AS typeId',
-          'emp.email AS email',
-          'emp.phonenumber AS phone',
-          'emp.employeeName AS employeeName',
-        ])
-        .getRawMany();
+      // Fetch configured group members for Group 1 (or specified groupKey)
+      const groupUsers = await this.getIncidentNotificationGroupUsers(groupKey || 'GROUP_1');
+      if (!groupUsers || groupUsers.length === 0) {
+        console.log(`[Notification] No members configured in ${groupKey || 'GROUP_1'}. Skipping submission notification.`);
+        return;
+      }
 
-      // 2. Fetch configured group members (hydrated with live users table contacts)
-      const groupUsers = await this.getIncidentNotificationGroupUsers();
-
-      // 3. Build unified recipient map keyed by userId
+      // Build recipient map from configured group members ONLY
       const recipientMap = new Map<number, {
         userId: number;
         username: string;
@@ -1081,73 +1538,17 @@ export class NotificationsService {
         isEmailEnabled: boolean;
       }>();
 
-      // Match and add all Department, Department1, Admin, and SuperAdmin users (in-app enabled by default)
-      for (const u of allSystemUsers) {
-        const uId = (u.id !== null && u.id !== undefined) ? Number(u.id) : NaN;
-        if (isNaN(uId)) continue;
-
-        const uType = (u.userType || '').toLowerCase();
-        const uName = (u.username || '').toLowerCase();
-        const typeId = Number(u.typeId);
-
-        const isTarget =
-          uType.includes('admin') ||
-          uType.includes('superadmin') ||
-          uType.includes('department') ||
-          uType.includes('department1') ||
-          uType.includes('site manager') ||
-          uType.includes('hse') ||
-          uName.includes('admin') ||
-          uName.includes('superadmin') ||
-          uName === 'south_admin' ||
-          uId === 0 ||
-          uId === 1 ||
-          uId === 785 ||
-          typeId === 0 ||
-          typeId === 1;
-
-        if (isTarget) {
-          recipientMap.set(uId, {
-            userId: uId,
-            username: u.username || `User-${uId}`,
-            email: u.email || (u.username && u.username.includes('@') ? u.username : undefined),
-            phone: u.phone,
-            name: u.employeeName || u.username,
-            userType: u.userType || 'User',
-            isInAppEnabled: true,
-            isSmsEnabled: false,
-            isEmailEnabled: false,
-          });
-        }
-      }
-
-      // Explicitly guarantee all known admin/superadmin accounts (IDs: 0, 1, 785) are in recipientMap
-      for (const adminId of [0, 1, 785]) {
-        if (!recipientMap.has(adminId)) {
-          recipientMap.set(adminId, {
-            userId: adminId,
-            username: adminId === 0 ? 'Superadmin' : adminId === 1 ? 'Admin-South' : 'superadmin@gmail.com',
-            email: adminId === 785 ? 'superadmin@gmail.com' : undefined,
-            isInAppEnabled: true,
-            isSmsEnabled: false,
-            isEmailEnabled: false,
-          });
-        }
-      }
-
-      // 4. Overlay configured group members (using live contacts from users table + configured channel preferences)
       for (const rx of groupUsers) {
         if (rx.userId !== null && rx.userId !== undefined) {
           const uId = Number(rx.userId);
           if (!isNaN(uId)) {
-            const existing = recipientMap.get(uId);
             recipientMap.set(uId, {
               userId: uId,
-              username: rx.username || existing?.username || `User-${uId}`,
-              email: rx.email || existing?.email,
-              phone: rx.phone || existing?.phone,
-              name: rx.username || existing?.name,
-              userType: rx.userType || existing?.userType || 'Group Member',
+              username: rx.username || `User-${uId}`,
+              email: rx.email,
+              phone: rx.phone,
+              name: rx.username,
+              userType: rx.userType || 'Group Member',
               isInAppEnabled: rx.isInAppEnabled !== false,
               isSmsEnabled: rx.isSmsEnabled === true,
               isEmailEnabled: rx.isEmailEnabled === true,
@@ -1156,8 +1557,25 @@ export class NotificationsService {
         }
       }
 
-      const recipientSummary = Array.from(recipientMap.values()).map(r => `[ID:${r.userId} (${r.username}/${r.userType}) InApp:${r.isInAppEnabled}]`).join(', ');
-      console.log(`[Notification] Dispatching Incident submission alert to ${recipientMap.size} recipients: ${recipientSummary}`);
+      const recipientSummary = Array.from(recipientMap.values()).map(r => `[ID:${r.userId} (${r.username}/${r.userType}) InApp:${r.isInAppEnabled} Mail:${r.isEmailEnabled}]`).join(', ');
+      console.log(`[Notification] Dispatching Incident submission alert (${groupKey || 'GROUP_1'}) to ${recipientMap.size} recipients: ${recipientSummary}`);
+
+      const emailHtml = this.buildIncidentEmailHtml({
+        title,
+        message,
+        caseNumber,
+        stepName,
+        categoryName,
+        incidentId: incident.id,
+        badgeText: isResubmission ? 'Revision Resubmitted' : 'Report Submitted',
+        badgeColor: isResubmission ? '#fef3c7' : '#fee2e2',
+        badgeTextColor: isResubmission ? '#92400e' : '#991b1b',
+        borderColor: isResubmission ? '#f59e0b' : '#ef4444',
+        extraRows: [
+          { label: 'Contractor', value: cName },
+          { label: 'Submission Type', value: isResubmission ? 'Return to Revision Resubmission' : 'Initial Submission' },
+        ],
+      });
 
       for (const rx of recipientMap.values()) {
         if (actorUserId !== undefined && actorUserId !== null && rx.userId === actorUserId) {
@@ -1170,7 +1588,7 @@ export class NotificationsService {
             this.notificationRepo.create({
               receiverUserId: Number(rx.userId),
               senderUserId: actorUserId || undefined,
-              notificationType: 'INCIDENT_SUBMISSION',
+              notificationType: isResubmission ? 'INCIDENT_REVISION_SUBMITTED' : 'INCIDENT_SUBMISSION',
               permitStatus: stepName,
               title,
               message,
@@ -1182,42 +1600,32 @@ export class NotificationsService {
                 stepName,
                 contractorName: cName,
                 category: categoryName,
+                isResubmission,
+                link: `/incident-management/details/${incident.id}`,
               }),
             }),
           );
         }
 
-        // SMS & Email Dispatch for incident submission
-        // NOTE: Temporarily disabled for Incident Module (in-app notifications only). Code preserved for future re-enablement.
-        /*
-        // 2. SMS Dispatch (if enabled)
-        if (rx.isSmsEnabled && rx.phone) {
-          await this.smsService.sendSms(rx.phone, message);
-        }
-
-        // 3. Email Dispatch (if enabled)
+        // 2. Email Dispatch (with Incident Direct Link)
         if (rx.isEmailEnabled && rx.email) {
           await this.emailService.sendEmail({
             to: rx.email,
-            subject: `Incident Alert: ${caseNumber} - ${stepName} Submitted`,
-            text: message,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-                <h3 style="color: #0f172a; margin-top: 0;">Incident Report Submitted</h3>
-                <p style="font-size: 15px; line-height: 1.6; color: #334155;">
-                  <strong>${cName}</strong> has submitted the <strong>${stepName}</strong> report for <strong>${categoryName}</strong> with <strong>${caseNumber}</strong>.
-                </p>
-                <div style="margin-top: 16px; padding: 12px 16px; background-color: #f8fafc; border-left: 4px solid #3b82f6; border-radius: 4px; font-size: 14px;">
-                  <div><strong>Case Number:</strong> ${caseNumber}</div>
-                  <div><strong>Incident Type / Category:</strong> ${categoryName}</div>
-                  <div><strong>Submitted Step:</strong> ${stepName}</div>
-                  <div><strong>Contractor:</strong> ${cName}</div>
-                </div>
-              </div>
-            `,
+            subject: emailSubject,
+            text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nContractor: ${cName}\n\nView Incident Details:\n${incidentLink}`,
+            html: emailHtml,
+          }).catch(err => {
+            console.error(`[Notification] Failed to send submission email to ${rx.email}:`, err);
           });
         }
-        */
+
+        // 3. SMS Dispatch (if enabled)
+        if (rx.isSmsEnabled && rx.phone) {
+          const smsText = `${message} Link: ${incidentLink}`;
+          await this.smsService.sendSms(rx.phone, smsText).catch(err => {
+            console.error(`[Notification] Failed to send submission SMS to ${rx.phone}:`, err);
+          });
+        }
       }
     } catch (err) {
       console.error('[Notification] Error in triggerIncidentSubmissionNotification:', err);
@@ -1226,10 +1634,10 @@ export class NotificationsService {
 
   /**
    * Trigger notifications when Department / Department1 / Admin reviews & approves an incident step, returns it for revision, or closes the incident.
-   * Sends In-App Notification, Email, and SMS back to the contractor user(s) who submitted the incident.
-   * Text (Approval): "{approver_name} has reviewed and approved the {Step of incident} report for {incident type category} with {incident number}."
-   * Text (Closure): "{approver_name} has approved and closed incident {incident number} ({incident type category})."
-   * Text (Revision): "{approver_name} has returned the {Step of incident} report for revision on {incident number}. Reason: {returnReason}"
+   * Rules:
+   * 1. On Review OK / Approval of Step 1, Step 2, Step 3, or Closure: Dispatches to Notification Group 2 (GROUP_2) & contractor users.
+   * 2. On Return to Revision: Dispatches to the contractor user(s) with revision reason.
+   * 3. Direct Incident link is always included in the emails.
    */
   async triggerIncidentApprovalNotification(
     incident: any,
@@ -1245,100 +1653,184 @@ export class NotificationsService {
         ? incident.categories.join(', ')
         : (incident.category || incident.type || 'Incident');
       const caseNumber = incident.caseNumber || `INC-${incident.id}`;
+      const incidentLink = this.getIncidentDirectLink(incident.id);
 
       let message = '';
       let title = '';
       let notifType = 'INCIDENT_APPROVED';
+      let emailSubject = '';
 
       if (isReturned) {
         message = `${approverName} has returned the ${stepName} report for revision on ${caseNumber}.${returnReason ? ` Reason: ${returnReason}` : ''}`;
         title = `${stepName} Returned for Revision`;
         notifType = 'INCIDENT_REVISION';
+        emailSubject = `Incident Revision Required: ${caseNumber} - ${stepName}`;
       } else if (isClosed) {
         message = `${approverName} has approved and closed incident ${caseNumber} (${categoryName}).`;
         title = 'Incident Approved & Closed';
         notifType = 'INCIDENT_CLOSED';
+        emailSubject = `Incident Closed: ${caseNumber}`;
       } else {
         message = `${approverName} has reviewed and approved the ${stepName} report for ${categoryName} with ${caseNumber}.`;
         title = `${stepName} Approved`;
         notifType = 'INCIDENT_APPROVED';
+        emailSubject = `Incident Report Approved: ${caseNumber} - ${stepName}`;
       }
 
+      const emailHtml = this.buildIncidentEmailHtml({
+        title,
+        message,
+        caseNumber,
+        stepName,
+        categoryName,
+        incidentId: incident.id,
+        badgeText: isReturned ? 'Revision Required' : isClosed ? 'Incident Closed' : 'Review Approved',
+        badgeColor: isReturned ? '#fef2f2' : isClosed ? '#e0e7ff' : '#dcfce7',
+        badgeTextColor: isReturned ? '#991b1b' : isClosed ? '#3730a3' : '#166534',
+        borderColor: isReturned ? '#ef4444' : isClosed ? '#6366f1' : '#10b981',
+        extraRows: [
+          { label: 'Reviewed / Signed By', value: approverName },
+          ...(isReturned && returnReason ? [{ label: 'Return Reason', value: returnReason }] : []),
+        ],
+      });
+
+      // Track already notified user IDs to prevent duplicate alerts
+      const notifiedUserIds = new Set<number>();
+
+      // Rule C: On Step 1, Step 2, or Step 3 review ok (and closure), send notification to GROUP 2
+      if (!isReturned) {
+        const group2Users = await this.getIncidentNotificationGroupUsers('GROUP_2');
+        console.log(`[Notification] Dispatching Review OK / Approval (${stepName}) to ${group2Users.length} member(s) in GROUP_2.`);
+
+        for (const rx of group2Users) {
+          if (rx.userId === null || rx.userId === undefined) continue;
+          const uId = Number(rx.userId);
+          if (isNaN(uId)) continue;
+          if (actorUserId && uId === actorUserId) continue;
+
+          notifiedUserIds.add(uId);
+
+          // 1. In-App Notification
+          if (rx.isInAppEnabled !== false) {
+            await this.notificationRepo.save(
+              this.notificationRepo.create({
+                receiverUserId: uId,
+                senderUserId: actorUserId || undefined,
+                notificationType: notifType,
+                permitStatus: stepName,
+                title,
+                message,
+                isRead: 0,
+                metadata: JSON.stringify({
+                  module: 'INCIDENTS',
+                  incidentId: incident.id,
+                  caseNumber,
+                  stepName,
+                  approverName,
+                  isClosed,
+                  isReturned: false,
+                  link: `/incident-management/details/${incident.id}`,
+                }),
+              }),
+            );
+          }
+
+          // 2. Email Dispatch with Direct Incident Link
+          if (rx.isEmailEnabled && rx.email) {
+            await this.emailService.sendEmail({
+              to: rx.email,
+              subject: emailSubject,
+              text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nReviewed By: ${approverName}\n\nView Incident Details:\n${incidentLink}`,
+              html: emailHtml,
+            }).catch(err => {
+              console.error(`[Notification] Failed to send Group 2 approval email to ${rx.email}:`, err);
+            });
+          }
+
+          // 3. SMS Dispatch (if enabled)
+          if (rx.isSmsEnabled && rx.phone) {
+            const smsText = `${message} Link: ${incidentLink}`;
+            await this.smsService.sendSms(rx.phone, smsText).catch(err => {
+              console.error(`[Notification] Failed to send Group 2 approval SMS to ${rx.phone}:`, err);
+            });
+          }
+        }
+      }
+
+      // Also notify Submitter(s) / Contractor(s) for the incident
       const contractorUsers = await this.getContractorUsersForIncident(incident, stepName);
-      if (!contractorUsers || contractorUsers.length === 0) {
-        console.warn(`[Notification] Could not find contractor submitter user to notify for incident ${caseNumber}`);
-        return;
-      }
-
-      console.log(`[Notification] Dispatching Incident status update (${notifType}) to ${contractorUsers.length} contractor user(s).`);
+      console.log(`[Notification] Found ${contractorUsers.length} submitter recipient(s) for incident ${incident.id} (step: ${stepName}, isReturned: ${isReturned})`);
 
       for (const contractorUser of contractorUsers) {
-        if (actorUserId && contractorUser.id === actorUserId) {
+        if (contractorUser.id === null || contractorUser.id === undefined || isNaN(Number(contractorUser.id))) {
           continue;
         }
+        const uId = Number(contractorUser.id);
+
+        if (!isReturned) {
+          if (notifiedUserIds.has(uId)) {
+            continue;
+          }
+          if (actorUserId !== undefined && actorUserId !== null && uId === Number(actorUserId)) {
+            continue;
+          }
+        } else {
+          // For return to revision, the submitter who submitted the incident MUST ALWAYS receive SMS, Email, and In-App notification
+          // Do not skip if uId === actorUserId (especially during testing or single-admin operations)
+        }
+        notifiedUserIds.add(uId);
+
+        console.log(`[Notification] Dispatching ${isReturned ? 'RETURN TO REVISION' : 'APPROVAL'} alert to submitter user ${contractorUser.name} (ID: ${uId}, Email: ${contractorUser.email || 'none'}, Phone: ${contractorUser.phone || 'none'})`);
 
         // 1. In-App Notification
-        if (contractorUser.id) {
-          await this.notificationRepo.save(
-            this.notificationRepo.create({
-              receiverUserId: contractorUser.id,
-              senderUserId: actorUserId || undefined,
-              notificationType: notifType,
-              permitStatus: stepName,
-              title,
-              message,
-              isRead: 0,
-              metadata: JSON.stringify({
-                module: 'INCIDENTS',
-                incidentId: incident.id,
-                caseNumber,
-                stepName,
-                approverName,
-                isClosed,
-                isReturned,
-                returnReason,
-              }),
+        await this.notificationRepo.save(
+          this.notificationRepo.create({
+            receiverUserId: uId,
+            senderUserId: actorUserId !== undefined && actorUserId !== null ? Number(actorUserId) : undefined,
+            notificationType: notifType,
+            permitStatus: stepName,
+            title,
+            message,
+            isRead: 0,
+            metadata: JSON.stringify({
+              module: 'INCIDENTS',
+              incidentId: incident.id,
+              caseNumber,
+              stepName,
+              approverName,
+              isClosed,
+              isReturned,
+              returnReason,
+              link: `/incident-management/details/${incident.id}`,
             }),
-          );
-        }
+          }),
+        ).catch(err => {
+          console.error(`[Notification] Failed to save in-app notification for submitter ${uId}:`, err);
+        });
 
-        // SMS & Email Dispatch for incident approval / revision / closure
-        // NOTE: Temporarily disabled for Incident Module (in-app notifications only). Code preserved for future re-enablement.
-        /*
-        // 2. SMS Dispatch
-        if (contractorUser.phone) {
-          await this.smsService.sendSms(contractorUser.phone, message);
-        }
-
-        // 3. Email Dispatch
+        // 2. Email Dispatch to Submitter with Direct Incident Link
         if (contractorUser.email) {
-          const emailSubject = isReturned
-            ? `Incident Revision Required: ${caseNumber} - ${stepName}`
-            : isClosed
-            ? `Incident Closed: ${caseNumber}`
-            : `Incident Report Approved: ${caseNumber} - ${stepName}`;
-
           await this.emailService.sendEmail({
             to: contractorUser.email,
             subject: emailSubject,
-            text: message,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-                <h3 style="color: ${isReturned ? '#b91c1c' : '#065f46'}; margin-top: 0;">${title}</h3>
-                <p style="font-size: 15px; line-height: 1.6; color: #334155;">
-                  ${message}
-                </p>
-                <div style="margin-top: 16px; padding: 12px 16px; background-color: ${isReturned ? '#fef2f2' : '#f0fdf4'}; border-left: 4px solid ${isReturned ? '#ef4444' : '#10b981'}; border-radius: 4px; font-size: 14px;">
-                  <div><strong>Case Number:</strong> ${caseNumber}</div>
-                  <div><strong>Step:</strong> ${stepName}</div>
-                  <div><strong>Reviewed By:</strong> ${approverName}</div>
-                  ${isReturned && returnReason ? `<div><strong>Reason:</strong> ${returnReason}</div>` : ''}
-                </div>
-              </div>
-            `,
+            text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nReviewed By: ${approverName}${isReturned && returnReason ? `\nReason: ${returnReason}` : ''}\n\nView Incident Details:\n${incidentLink}`,
+            html: emailHtml,
+          }).catch(err => {
+            console.error(`[Notification] Failed to send ${isReturned ? 'revision' : 'approval'} email to submitter ${contractorUser.email}:`, err);
           });
+        } else {
+          console.warn(`[Notification] No email address found for submitter user ${contractorUser.name} (ID: ${uId})`);
         }
-        */
+
+        // 3. SMS Dispatch to Submitter
+        if (contractorUser.phone) {
+          const smsText = `${message} Link: ${incidentLink}`;
+          await this.smsService.sendSms(contractorUser.phone, smsText).catch(err => {
+            console.error(`[Notification] Failed to send ${isReturned ? 'revision' : 'approval'} SMS to submitter ${contractorUser.phone}:`, err);
+          });
+        } else {
+          console.warn(`[Notification] No phone number found for submitter user ${contractorUser.name} (ID: ${uId})`);
+        }
       }
     } catch (err) {
       console.error('[Notification] Error in triggerIncidentApprovalNotification:', err);
