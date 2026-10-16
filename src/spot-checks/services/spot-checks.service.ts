@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SpotCheck, SpotCheckStatus } from '../entities/spot-check.entity';
@@ -126,6 +126,11 @@ export class SpotChecksService implements OnModuleInit {
    * Create a new Spot Check entry
    */
   async create(dto: CreateSpotCheckDto, user?: any): Promise<SpotCheck> {
+    const userRoleStr = String(user?.role || dto.createdByRole || '').toUpperCase();
+    if (userRoleStr.includes('CONTRACTOR') || userRoleStr.includes('SUBCONTRACTOR')) {
+      throw new ForbiddenException('Contractors cannot create spot checks');
+    }
+
     const spotCheckRef = dto.spotCheckRef && dto.spotCheckRef.trim() !== ''
       ? dto.spotCheckRef.trim()
       : await this.generateSpotCheckRef();

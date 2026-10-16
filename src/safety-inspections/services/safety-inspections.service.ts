@@ -410,6 +410,11 @@ export class SafetyInspectionsService implements OnModuleInit {
    * Create a new Safety Inspection record with all 21 checklist items
    */
   async create(dto: CreateSafetyInspectionDto, user?: any): Promise<SafetyInspection> {
+    const roleStr = String(user?.role || dto.createdByRole || '').toUpperCase();
+    if (roleStr.includes('CONTRACTOR') || roleStr.includes('SUBCONTRACTOR')) {
+      throw new ForbiddenException('Contractors are not permitted to access Safety Inspection');
+    }
+
     const inspectionNumber = await this.generateInspectionNumber();
 
     const selectedRooms = this.parseJsonField<string[]>(dto.selectedRooms, []);

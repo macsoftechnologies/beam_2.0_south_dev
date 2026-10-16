@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Res, UseInterceptors, UploadedFiles, BadRequestException, NotFoundException, HttpStatus, OnModuleInit } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Res, UseInterceptors, UploadedFiles, BadRequestException, NotFoundException, ForbiddenException, HttpStatus, OnModuleInit } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import 'multer';
@@ -157,7 +157,11 @@ export class SafetyInspectionsController implements OnModuleInit {
    * POST /safety-inspections
    */
   @Post()
-  async create(@Body() dto: CreateSafetyInspectionDto) {
+  async create(@Body() dto: CreateSafetyInspectionDto, @Query('userRole') userRole?: string) {
+    const roleStr = String(userRole || dto.createdByRole || '').toUpperCase();
+    if (roleStr.includes('CONTRACTOR') || roleStr.includes('SUBCONTRACTOR')) {
+      throw new ForbiddenException('Contractors are not permitted to access Safety Inspection');
+    }
     return await this.siService.create(dto);
   }
 
@@ -166,7 +170,10 @@ export class SafetyInspectionsController implements OnModuleInit {
    * GET /safety-inspections/stats
    */
   @Get('stats')
-  async getStats() {
+  async getStats(@Query('userRole') userRole?: string) {
+    if (userRole && (userRole.toUpperCase().includes('CONTRACTOR') || userRole.toUpperCase().includes('SUBCONTRACTOR'))) {
+      throw new ForbiddenException('Contractors are not permitted to access Safety Inspection');
+    }
     return await this.siService.getStats();
   }
 
@@ -186,7 +193,11 @@ export class SafetyInspectionsController implements OnModuleInit {
     @Query('contractor') contractor?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('userRole') userRole?: string,
   ) {
+    if (userRole && (userRole.toUpperCase().includes('CONTRACTOR') || userRole.toUpperCase().includes('SUBCONTRACTOR'))) {
+      throw new ForbiddenException('Contractors are not permitted to access Safety Inspection');
+    }
     return await this.siService.findAll({
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 10,

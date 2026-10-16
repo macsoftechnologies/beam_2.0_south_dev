@@ -17,8 +17,8 @@ export class SpotChecksController {
    * POST /spot-checks
    */
   @Post()
-  async create(@Body() dto: CreateSpotCheckDto) {
-    return await this.scService.create(dto);
+  async create(@Body() dto: CreateSpotCheckDto, @Query('userRole') userRole?: string) {
+    return await this.scService.create(dto, { role: userRole });
   }
 
   /**
