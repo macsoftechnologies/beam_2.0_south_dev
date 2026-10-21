@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Notification } from './entities/notification.entity';
 import { NotificationSetting } from './entities/notification-setting.entity';
@@ -11,6 +11,7 @@ import { Subcontractor } from '../subcontractor/entities/subcontractor.entity';
 import { Department } from '../department/entities/department.entity';
 import { RequestEntity } from '../requests/entities/request.entity';
 import { RedisModule } from '../redis/redis.module';
+import { IncidentsModule } from '../incidents/incidents.module';
 
 import { EmailService } from './services/email.service';
 import { SmsService } from './services/sms.service';
@@ -28,6 +29,7 @@ import { SmsService } from './services/sms.service';
       RequestEntity,
     ]),
     RedisModule,
+    forwardRef(() => IncidentsModule),
   ],
   controllers: [NotificationsController],
   providers: [NotificationsService, EmailService, SmsService],

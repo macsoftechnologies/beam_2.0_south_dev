@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Incident } from './entities/incident.entity';
 import { IncidentHeadsUp } from './entities/incident-headsup.entity';
@@ -21,7 +21,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       IncidentInvestigation,
       IncidentActionItem,
     ]),
-    NotificationsModule,
+    forwardRef(() => NotificationsModule),
   ],
   controllers: [IncidentsController],
   providers: [IncidentsService, IncidentSlaService, IncidentPdfService],

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, In, Brackets } from 'typeorm';
 import { Incident, IncidentStage, InvestigationLevel } from '../entities/incident.entity';
@@ -30,6 +30,7 @@ export class IncidentsService implements OnModuleInit {
     private readonly investigationRepo: Repository<IncidentInvestigation>,
     @InjectRepository(IncidentActionItem)
     private readonly actionItemRepo: Repository<IncidentActionItem>,
+    @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
   ) {}
 

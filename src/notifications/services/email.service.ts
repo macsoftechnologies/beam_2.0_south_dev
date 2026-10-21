@@ -46,8 +46,15 @@ export class EmailService {
     subject: string;
     text: string;
     html?: string;
+    attachments?: Array<{
+      filename: string;
+      content?: any;
+      path?: string;
+      contentType?: string;
+      encoding?: string;
+    }>;
   }): Promise<boolean> {
-    const { to, subject, text, html } = options;
+    const { to, subject, text, html, attachments } = options;
     const recipients = Array.isArray(to) ? to.join(', ') : to;
 
     if (!recipients || !recipients.trim()) {
@@ -56,18 +63,19 @@ export class EmailService {
     }
 
     if (!this.transporter) {
-      this.logger.log(`[Email Dispatched (Dev Fallback Log)] To: ${recipients} | Subject: "${subject}" | Content: ${text}`);
+      this.logger.log(`[Email Dispatched (Dev Fallback Log)] To: ${recipients} | Subject: "${subject}" | Attachments: ${attachments?.length || 0} | Content: ${text}`);
       return true;
     }
 
     try {
-      this.logger.log(`[EmailService] Dispatching email to: ${recipients} | Subject: "${subject}"`);
+      this.logger.log(`[EmailService] Dispatching email to: ${recipients} | Subject: "${subject}" | Attachments: ${attachments?.length || 0}`);
       const info = await this.transporter.sendMail({
         from: `"BEAM Incident Alerts" <${this.fromEmail}>`,
         to: recipients,
         subject,
         text,
         html: html || `<div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b;"><p>${text}</p></div>`,
+        attachments,
       });
       this.logger.log(`[EmailService] Email sent successfully to ${recipients}. Response: ${info.response || info.messageId}`);
       return true;

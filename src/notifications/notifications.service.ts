@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Notification } from './entities/notification.entity';
@@ -13,6 +13,8 @@ import { RedisCacheService } from '../redis/redid-cache.service';
 
 import { EmailService } from './services/email.service';
 import { SmsService } from './services/sms.service';
+import { IncidentPdfService } from '../incidents/services/incident-pdf.service';
+import { IncidentsService } from '../incidents/services/incidents.service';
 
 @Injectable()
 export class NotificationsService {
@@ -36,6 +38,12 @@ export class NotificationsService {
     private readonly redisCacheService: RedisCacheService,
     private readonly emailService: EmailService,
     private readonly smsService: SmsService,
+    @Inject(forwardRef(() => IncidentPdfService))
+    @Optional()
+    private readonly incidentPdfService?: IncidentPdfService,
+    @Inject(forwardRef(() => IncidentsService))
+    @Optional()
+    private readonly incidentsService?: IncidentsService,
   ) { }
 
   /**
@@ -65,6 +73,13 @@ export class NotificationsService {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       `);
       console.log('[Notification] Checked/Created table: incident_notification_group_members');
+      try {
+        await this.notificationRepo.query(`
+          ALTER TABLE \`incident_notification_group_members\` ADD COLUMN \`groupKey\` VARCHAR(50) NOT NULL DEFAULT 'GROUP_1'
+        `);
+      } catch (_) {
+        // column already exists
+      }
     } catch (err) {
       console.error('[Notification] Error creating incident_notification_group_members table:', err);
     }
@@ -1488,6 +1503,69 @@ export class NotificationsService {
   }
 
   /**
+   * Determine the incident PDF form type and filename suffix based on the current step.
+   */
+  private determineIncidentFormType(stepName?: string, isClosed?: boolean): { formType: string; suffix: string } {
+    if (isClosed) {
+      return { formType: 'all', suffix: '_All_Forms_Report' };
+    }
+    const lower = (stepName || '').toLowerCase();
+    if (lower.includes('head') || lower.includes('step 1') || lower.includes('form 1')) {
+      return { formType: 'headsUp', suffix: '_Form1_HeadsUp' };
+    }
+    if (lower.includes('init') || lower.includes('step 2') || lower.includes('form 2')) {
+      return { formType: 'initialReport', suffix: '_Form2_InitialReport' };
+    }
+    if (lower.includes('invest') || lower.includes('step 3') || lower.includes('form 3')) {
+      return { formType: 'investigation', suffix: '_Form3_Investigation' };
+    }
+    return { formType: 'all', suffix: '_All_Forms_Report' };
+  }
+
+  /**
+   * Generates the incident PDF report buffer and formats it as an email attachment.
+   */
+  private async generateIncidentPdfAttachment(
+    incidentId: number,
+    stepName?: string,
+    isClosed?: boolean,
+    caseNumber?: string,
+  ): Promise<Array<{ filename: string; content: Buffer; contentType: string }> | undefined> {
+    try {
+      if (!this.incidentPdfService || !this.incidentsService) {
+        console.warn('[Notification] IncidentPdfService or IncidentsService not injected. Skipping PDF attachment generation.');
+        return undefined;
+      }
+      const details = await this.incidentsService.getIncidentDetails(incidentId);
+      if (!details) {
+        console.warn(`[Notification] Incident details not found for ID: ${incidentId}`);
+        return undefined;
+      }
+      const { formType, suffix } = this.determineIncidentFormType(stepName, isClosed);
+      const pdfPromise = this.incidentPdfService.generate3In1Pdf(details, formType, {
+        includeWitnesses: true,
+        includeAttachments: true,
+      });
+      const timeoutPromise = new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('PDF generation timed out after 30s')), 30000),
+      );
+      const pdfBuffer = await Promise.race([pdfPromise, timeoutPromise]);
+      if (pdfBuffer && (pdfBuffer as Buffer).length > 0) {
+        const safeCase = caseNumber || details.incident?.caseNumber || `INC-${incidentId}`;
+        const filename = `${safeCase}${suffix}.pdf`;
+        return [{
+          filename,
+          content: pdfBuffer as Buffer,
+          contentType: 'application/pdf',
+        }];
+      }
+    } catch (err) {
+      console.error(`[Notification] Failed to generate incident PDF report for incident ID ${incidentId}:`, err);
+    }
+    return undefined;
+  }
+
+  /**
    * Trigger notifications when a contractor submits an incident step report or resubmits after revision.
    * Sends to Notification Group 1 (GROUP_1):
    * 1. In-App Notification to configured group members (isInAppEnabled !== false).
@@ -1577,6 +1655,19 @@ export class NotificationsService {
         ],
       });
 
+      // If sending to GROUP_2, generate and attach the incident report PDF
+      let group2SubmissionAttachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined = undefined;
+      if (groupKey === 'GROUP_2') {
+        try {
+          group2SubmissionAttachments = await this.generateIncidentPdfAttachment(incident.id, stepName, false, caseNumber);
+          if (group2SubmissionAttachments && group2SubmissionAttachments.length > 0) {
+            console.log(`[Notification] Generated PDF attachment for Group 2 submission email: ${group2SubmissionAttachments[0].filename} (${group2SubmissionAttachments[0].content?.length || 0} bytes)`);
+          }
+        } catch (pdfErr) {
+          console.error('[Notification] Error preparing Group 2 submission PDF attachment:', pdfErr);
+        }
+      }
+
       for (const rx of recipientMap.values()) {
         if (actorUserId !== undefined && actorUserId !== null && rx.userId === actorUserId) {
           continue;
@@ -1607,13 +1698,14 @@ export class NotificationsService {
           );
         }
 
-        // 2. Email Dispatch (with Incident Direct Link)
+        // 2. Email Dispatch (with Incident Direct Link and PDF attachment if Group 2)
         if (rx.isEmailEnabled && rx.email) {
           await this.emailService.sendEmail({
             to: rx.email,
             subject: emailSubject,
             text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nContractor: ${cName}\n\nView Incident Details:\n${incidentLink}`,
             html: emailHtml,
+            attachments: group2SubmissionAttachments,
           }).catch(err => {
             console.error(`[Notification] Failed to send submission email to ${rx.email}:`, err);
           });
@@ -1636,6 +1728,7 @@ export class NotificationsService {
    * Trigger notifications when Department / Department1 / Admin reviews & approves an incident step, returns it for revision, or closes the incident.
    * Rules:
    * 1. On Review OK / Approval of Step 1, Step 2, Step 3, or Closure: Dispatches to Notification Group 2 (GROUP_2) & contractor users.
+   *    Attaches the incident report PDF to the email sent to GROUP 2.
    * 2. On Return to Revision: Dispatches to the contractor user(s) with revision reason.
    * 3. Direct Incident link is always included in the emails.
    */
@@ -1694,142 +1787,82 @@ export class NotificationsService {
         ],
       });
 
-      // Track already notified user IDs to prevent duplicate alerts
-      const notifiedUserIds = new Set<number>();
+      // Target group is GROUP_1 for return to review (revision), and GROUP_2 for review OK / approval / closure
+      const targetGroupKey = isReturned ? 'GROUP_1' : 'GROUP_2';
+      const targetGroupUsers = await this.getIncidentNotificationGroupUsers(targetGroupKey);
+      console.log(`[Notification] Dispatching ${isReturned ? 'Return to Review' : 'Review OK / Approval'} (${stepName}) to ${targetGroupUsers.length} member(s) in ${targetGroupKey}.`);
 
-      // Rule C: On Step 1, Step 2, or Step 3 review ok (and closure), send notification to GROUP 2
-      if (!isReturned) {
-        const group2Users = await this.getIncidentNotificationGroupUsers('GROUP_2');
-        console.log(`[Notification] Dispatching Review OK / Approval (${stepName}) to ${group2Users.length} member(s) in GROUP_2.`);
-
-        for (const rx of group2Users) {
-          if (rx.userId === null || rx.userId === undefined) continue;
-          const uId = Number(rx.userId);
-          if (isNaN(uId)) continue;
-          if (actorUserId && uId === actorUserId) continue;
-
-          notifiedUserIds.add(uId);
-
-          // 1. In-App Notification
-          if (rx.isInAppEnabled !== false) {
-            await this.notificationRepo.save(
-              this.notificationRepo.create({
-                receiverUserId: uId,
-                senderUserId: actorUserId || undefined,
-                notificationType: notifType,
-                permitStatus: stepName,
-                title,
-                message,
-                isRead: 0,
-                metadata: JSON.stringify({
-                  module: 'INCIDENTS',
-                  incidentId: incident.id,
-                  caseNumber,
-                  stepName,
-                  approverName,
-                  isClosed,
-                  isReturned: false,
-                  link: `/incident-management/details/${incident.id}`,
+      // Step 1: In-App notifications sent immediately to target group members
+      for (const rx of targetGroupUsers) {
+        const uId = rx.userId !== null && rx.userId !== undefined ? Number(rx.userId) : undefined;
+        if (uId !== undefined && !isNaN(uId)) {
+          if (actorUserId && uId === actorUserId) {
+            // Skip in-app alert for self if actor is the same user
+          } else {
+            if (rx.isInAppEnabled !== false) {
+              await this.notificationRepo.save(
+                this.notificationRepo.create({
+                  receiverUserId: uId,
+                  senderUserId: actorUserId || undefined,
+                  notificationType: notifType,
+                  permitStatus: stepName,
+                  title,
+                  message,
+                  isRead: 0,
+                  metadata: JSON.stringify({
+                    module: 'INCIDENTS',
+                    incidentId: incident.id,
+                    caseNumber,
+                    stepName,
+                    approverName,
+                    isClosed,
+                    isReturned,
+                    returnReason,
+                    link: `/incident-management/details/${incident.id}`,
+                  }),
                 }),
-              }),
-            );
-          }
-
-          // 2. Email Dispatch with Direct Incident Link
-          if (rx.isEmailEnabled && rx.email) {
-            await this.emailService.sendEmail({
-              to: rx.email,
-              subject: emailSubject,
-              text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nReviewed By: ${approverName}\n\nView Incident Details:\n${incidentLink}`,
-              html: emailHtml,
-            }).catch(err => {
-              console.error(`[Notification] Failed to send Group 2 approval email to ${rx.email}:`, err);
-            });
-          }
-
-          // 3. SMS Dispatch (if enabled)
-          if (rx.isSmsEnabled && rx.phone) {
-            const smsText = `${message} Link: ${incidentLink}`;
-            await this.smsService.sendSms(rx.phone, smsText).catch(err => {
-              console.error(`[Notification] Failed to send Group 2 approval SMS to ${rx.phone}:`, err);
-            });
+              ).catch(err => {
+                console.error(`[Notification] Failed to save in-app alert for ${targetGroupKey} user ${uId}:`, err);
+              });
+            }
           }
         }
       }
 
-      // Also notify Submitter(s) / Contractor(s) for the incident
-      const contractorUsers = await this.getContractorUsersForIncident(incident, stepName);
-      console.log(`[Notification] Found ${contractorUsers.length} submitter recipient(s) for incident ${incident.id} (step: ${stepName}, isReturned: ${isReturned})`);
-
-      for (const contractorUser of contractorUsers) {
-        if (contractorUser.id === null || contractorUser.id === undefined || isNaN(Number(contractorUser.id))) {
-          continue;
-        }
-        const uId = Number(contractorUser.id);
-
-        if (!isReturned) {
-          if (notifiedUserIds.has(uId)) {
-            continue;
+      // Step 2: Generate PDF report attachment for emails (attached to Group 2 approval emails)
+      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined = undefined;
+      if (!isReturned) {
+        try {
+          pdfAttachments = await this.generateIncidentPdfAttachment(incident.id, stepName, isClosed, caseNumber);
+          if (pdfAttachments && pdfAttachments.length > 0) {
+            console.log(`[Notification] Generated PDF attachment for ${targetGroupKey} email: ${pdfAttachments[0].filename} (${pdfAttachments[0].content?.length || 0} bytes)`);
           }
-          if (actorUserId !== undefined && actorUserId !== null && uId === Number(actorUserId)) {
-            continue;
-          }
-        } else {
-          // For return to revision, the submitter who submitted the incident MUST ALWAYS receive SMS, Email, and In-App notification
-          // Do not skip if uId === actorUserId (especially during testing or single-admin operations)
+        } catch (pdfErr) {
+          console.error(`[Notification] Error preparing ${targetGroupKey} PDF attachment:`, pdfErr);
         }
-        notifiedUserIds.add(uId);
+      }
 
-        console.log(`[Notification] Dispatching ${isReturned ? 'RETURN TO REVISION' : 'APPROVAL'} alert to submitter user ${contractorUser.name} (ID: ${uId}, Email: ${contractorUser.email || 'none'}, Phone: ${contractorUser.phone || 'none'})`);
-
-        // 1. In-App Notification
-        await this.notificationRepo.save(
-          this.notificationRepo.create({
-            receiverUserId: uId,
-            senderUserId: actorUserId !== undefined && actorUserId !== null ? Number(actorUserId) : undefined,
-            notificationType: notifType,
-            permitStatus: stepName,
-            title,
-            message,
-            isRead: 0,
-            metadata: JSON.stringify({
-              module: 'INCIDENTS',
-              incidentId: incident.id,
-              caseNumber,
-              stepName,
-              approverName,
-              isClosed,
-              isReturned,
-              returnReason,
-              link: `/incident-management/details/${incident.id}`,
-            }),
-          }),
-        ).catch(err => {
-          console.error(`[Notification] Failed to save in-app notification for submitter ${uId}:`, err);
-        });
-
-        // 2. Email Dispatch to Submitter with Direct Incident Link
-        if (contractorUser.email) {
+      // Step 3: Dispatch Email and SMS to all configured members of the target group
+      for (const rx of targetGroupUsers) {
+        // Email Dispatch
+        if (rx.isEmailEnabled && rx.email) {
           await this.emailService.sendEmail({
-            to: contractorUser.email,
+            to: rx.email,
             subject: emailSubject,
             text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nReviewed By: ${approverName}${isReturned && returnReason ? `\nReason: ${returnReason}` : ''}\n\nView Incident Details:\n${incidentLink}`,
             html: emailHtml,
+            attachments: pdfAttachments,
           }).catch(err => {
-            console.error(`[Notification] Failed to send ${isReturned ? 'revision' : 'approval'} email to submitter ${contractorUser.email}:`, err);
+            console.error(`[Notification] Failed to send ${targetGroupKey} email to ${rx.email}:`, err);
           });
-        } else {
-          console.warn(`[Notification] No email address found for submitter user ${contractorUser.name} (ID: ${uId})`);
         }
 
-        // 3. SMS Dispatch to Submitter
-        if (contractorUser.phone) {
+        // SMS Dispatch
+        if (rx.isSmsEnabled && rx.phone) {
           const smsText = `${message} Link: ${incidentLink}`;
-          await this.smsService.sendSms(contractorUser.phone, smsText).catch(err => {
-            console.error(`[Notification] Failed to send ${isReturned ? 'revision' : 'approval'} SMS to submitter ${contractorUser.phone}:`, err);
+          await this.smsService.sendSms(rx.phone, smsText).catch(err => {
+            console.error(`[Notification] Failed to send ${targetGroupKey} SMS to ${rx.phone}:`, err);
           });
-        } else {
-          console.warn(`[Notification] No phone number found for submitter user ${contractorUser.name} (ID: ${uId})`);
         }
       }
     } catch (err) {
