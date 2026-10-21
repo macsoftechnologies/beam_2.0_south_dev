@@ -1725,6 +1725,138 @@ export class NotificationsService {
   }
 
   /**
+   * Trigger notifications when an Incident is reopened.
+   * Sends notifications strictly to Notification Group 1 (GROUP_1):
+   * 1. In-App Notification with REOPENED metadata and direct link.
+   * 2. Email with rich card, direct incident link, reopen details (reopenedBy, role, stage, reason), and attached report PDF.
+   * 3. SMS notification with direct link.
+   */
+  async triggerIncidentReopenedNotification(
+    incident: any,
+    reopenedBy: string,
+    reason: string,
+    stageReopenedTo?: string,
+    role?: string,
+    actorUserId?: number,
+  ): Promise<void> {
+    try {
+      const caseNumber = incident.caseNumber || `INC-${incident.id}`;
+      const categoryName = Array.isArray(incident.categories) && incident.categories.length > 0
+        ? incident.categories.join(', ')
+        : (incident.category || incident.type || 'Incident');
+      const incidentLink = this.getIncidentDirectLink(incident.id);
+
+      const stageLabel = stageReopenedTo === 'HEADS_UP'
+        ? 'Heads-Up Notification'
+        : stageReopenedTo === 'INITIAL_REPORT'
+        ? 'Initial Incident Report'
+        : 'Incident Investigation Report';
+
+      const title = `Incident Reopened: ${caseNumber}`;
+      const message = `Incident ${caseNumber} (${categoryName}) has been reopened by ${reopenedBy || 'Department User'} to ${stageLabel} stage. Reason: ${reason || 'N/A'}`;
+      const emailSubject = `Incident Alert: ${caseNumber} - Reopened`;
+
+      // Fetch configured members for Group 1 ONLY
+      const groupUsers = await this.getIncidentNotificationGroupUsers('GROUP_1');
+      if (!groupUsers || groupUsers.length === 0) {
+        console.log('[Notification] No members configured in GROUP_1. Skipping incident reopened notification.');
+        return;
+      }
+
+      console.log(`[Notification] Dispatching Incident REOPENED alert to ${groupUsers.length} member(s) in GROUP_1 for ${caseNumber}.`);
+
+      const emailHtml = this.buildIncidentEmailHtml({
+        title,
+        message,
+        caseNumber,
+        stepName: `Reopened to ${stageLabel}`,
+        categoryName,
+        incidentId: incident.id,
+        badgeText: 'Incident Reopened',
+        badgeColor: '#fef3c7',
+        badgeTextColor: '#92400e',
+        borderColor: '#f59e0b',
+        extraRows: [
+          { label: 'Reopened By', value: reopenedBy || 'Department User' },
+          { label: 'User Role', value: role || 'Department User / HSE' },
+          { label: 'Reopened Stage', value: stageLabel },
+          { label: 'Reopen Reason', value: reason || 'N/A' },
+        ],
+      });
+
+      // Try generating PDF report attachment
+      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> | undefined = undefined;
+      try {
+        pdfAttachments = await this.generateIncidentPdfAttachment(incident.id, stageLabel, false, caseNumber);
+        if (pdfAttachments && pdfAttachments.length > 0) {
+          console.log(`[Notification] Generated PDF attachment for GROUP_1 reopen email: ${pdfAttachments[0].filename} (${pdfAttachments[0].content?.length || 0} bytes)`);
+        }
+      } catch (pdfErr) {
+        console.error('[Notification] Error preparing reopen PDF attachment:', pdfErr);
+      }
+
+      for (const rx of groupUsers) {
+        const uId = rx.userId !== null && rx.userId !== undefined ? Number(rx.userId) : undefined;
+
+        // 1. In-App Notification
+        if (uId !== undefined && !isNaN(uId)) {
+          if (actorUserId && uId === actorUserId) {
+            // Skip self in-app notification if actor is the same
+          } else if (rx.isInAppEnabled !== false) {
+            await this.notificationRepo.save(
+              this.notificationRepo.create({
+                receiverUserId: uId,
+                senderUserId: actorUserId || undefined,
+                notificationType: 'INCIDENT_REOPENED',
+                permitStatus: stageLabel,
+                title,
+                message,
+                isRead: 0,
+                metadata: JSON.stringify({
+                  module: 'INCIDENTS',
+                  incidentId: incident.id,
+                  caseNumber,
+                  stageReopenedTo,
+                  stageLabel,
+                  reopenedBy,
+                  role,
+                  reason,
+                  link: `/incident-management/details/${incident.id}`,
+                }),
+              }),
+            ).catch(err => {
+              console.error(`[Notification] Failed to save in-app reopen alert for GROUP_1 user ${uId}:`, err);
+            });
+          }
+        }
+
+        // 2. Email Dispatch
+        if (rx.isEmailEnabled && rx.email) {
+          await this.emailService.sendEmail({
+            to: rx.email,
+            subject: emailSubject,
+            text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nReopened To: ${stageLabel}\nReopened By: ${reopenedBy}\nReason: ${reason}\n\nView Incident Details:\n${incidentLink}`,
+            html: emailHtml,
+            attachments: pdfAttachments,
+          }).catch(err => {
+            console.error(`[Notification] Failed to send reopen email to GROUP_1 member ${rx.email}:`, err);
+          });
+        }
+
+        // 3. SMS Dispatch
+        if (rx.isSmsEnabled && rx.phone) {
+          const smsText = `${message} Link: ${incidentLink}`;
+          await this.smsService.sendSms(rx.phone, smsText).catch(err => {
+            console.error(`[Notification] Failed to send reopen SMS to GROUP_1 member ${rx.phone}:`, err);
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Notification] Error in triggerIncidentReopenedNotification:', err);
+    }
+  }
+
+  /**
    * Trigger notifications when Department / Department1 / Admin reviews & approves an incident step, returns it for revision, or closes the incident.
    * Rules:
    * 1. On Review OK / Approval of Step 1, Step 2, Step 3, or Closure: Dispatches to Notification Group 2 (GROUP_2) & contractor users.

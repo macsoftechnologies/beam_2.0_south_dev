@@ -1204,6 +1204,7 @@ export class IncidentsService implements OnModuleInit {
   async reopenIncident(
     incidentId: number,
     dto: { reopenedBy: string; reason: string; role?: string; signature?: string; stageReopenedTo?: string },
+    actorUserId?: number,
   ): Promise<{ success: boolean; message: string; incident: Incident; log: any }> {
     const incident = await this.incidentRepo.findOne({ where: { id: incidentId } });
     if (!incident) {
@@ -1402,6 +1403,16 @@ export class IncidentsService implements OnModuleInit {
     incident.updatedTime = new Date();
 
     const saved = await this.incidentRepo.save(incident);
+
+    // Notify Group 1 members that the incident has been reopened
+    this.notificationsService.triggerIncidentReopenedNotification(
+      saved,
+      dto.reopenedBy || 'Department User',
+      dto.reason,
+      targetStage,
+      dto.role,
+      actorUserId,
+    ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Incident reopened notification:', err));
 
     return {
       success: true,

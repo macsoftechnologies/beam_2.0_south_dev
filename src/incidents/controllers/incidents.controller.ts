@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Res, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Res, ParseIntPipe, UseInterceptors, UploadedFiles, UploadedFile, BadRequestException, Request } from '@nestjs/common';
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import 'multer';
 import type { Response } from 'express';
@@ -201,8 +201,12 @@ export class IncidentsController {
    * POST /incidents/:id/reopen
    */
   @Post(':id/reopen')
-  async reopenIncident(@Param('id', ParseIntPipe) id: number, @Body() dto: ReopenIncidentDto) {
-    return await this.incidentsService.reopenIncident(id, dto);
+  async reopenIncident(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReopenIncidentDto,
+    @Request() req?: any,
+  ) {
+    return await this.incidentsService.reopenIncident(id, dto, req?.user?.userId);
   }
 
   /**
