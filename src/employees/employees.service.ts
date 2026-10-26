@@ -128,7 +128,16 @@ export class EmployeesService {
     if (dto.roleId !== undefined && dto.roleId !== null) existing.roleId = Number(dto.roleId);
     if (dto.departId !== undefined) existing.departId = dto.departId ? Number(dto.departId) : null as any;
     if (dto.subContId !== undefined) existing.subContId = dto.subContId ? Number(dto.subContId) : null as any;
-    if (dto.obserId !== undefined) existing.obserId = dto.obserId ? Number(dto.obserId) : null as any;
+    if (dto.obserId !== undefined) {
+      existing.obserId = dto.obserId ? Number(dto.obserId) : null as any;
+    } else if (
+      (dto.userType && String(dto.userType).includes('Observer')) ||
+      (dto.moduleAccess && String(dto.moduleAccess).includes('Observer'))
+    ) {
+      if (!existing.obserId) {
+        existing.obserId = dto.departId ? Number(dto.departId) : 1;
+      }
+    }
     if (dto.badgeId !== undefined) existing.badgeId = dto.badgeId;
     if (dto.employeeName !== undefined && dto.employeeName !== null) existing.employeeName = dto.employeeName;
     if (dto.companyName !== undefined) existing.companyName = dto.companyName;
@@ -160,7 +169,7 @@ export class EmployeesService {
 
   private async syncUserForEmployee(employee: Employee, dto: any, userType?: string) {
     try {
-      if (dto.username || dto.password || userType || dto.departId || dto.subContId || dto.obserId) {
+      if (dto.username || dto.password || userType || dto.departId || dto.subContId || dto.obserId || employee.obserId) {
         let user = await this.userRepo.findOne({ where: { empId: employee.id } });
         if (!user) {
           user = this.userRepo.create({
@@ -180,7 +189,13 @@ export class EmployeesService {
         if (dto.departId) user.typeId = dto.departId;
         else if (dto.subContId) user.typeId = dto.subContId;
         else if (dto.obserId) user.typeId = dto.obserId;
-        if (dto.otp) user.otp = dto.otp;
+        else if (employee.departId) user.typeId = employee.departId;
+        else if (employee.subContId) user.typeId = employee.subContId;
+        else if (employee.obserId) user.typeId = employee.obserId;
+        else if (userType?.toLowerCase().includes('observer')) user.typeId = 1;
+        else if (user.typeId === undefined || user.typeId === null) user.typeId = 0;
+
+        if (dto.otp !== undefined) user.otp = dto.otp;
         await this.userRepo.save(user);
       }
     } catch (err) {
@@ -463,8 +478,14 @@ export class EmployeesService {
       return { statusCode: HttpStatus.BAD_REQUEST, message: validation.message! };
     }
 
+    const isObserver = (dto.userType && String(dto.userType).includes('Observer')) ||
+      (dto.moduleAccess && String(dto.moduleAccess).includes('Observer')) ||
+      Boolean(dto.obserId);
+    const resolvedObserId = dto.obserId ? Number(dto.obserId) : (isObserver ? (dto.departId ? Number(dto.departId) : 1) : undefined);
+
     const employee = this.employeeRepo.create({
       ...dto,
+      obserId: resolvedObserId,
       phonenumber: dto.phonenumber ? `+${dto.phonenumber}` : undefined,
       password: dto.password ? encodePassword(dto.password) : undefined,
       otpNotificationType: this.normalizeOtpNotificationType(dto.otpNotificationType),
@@ -477,7 +498,7 @@ export class EmployeesService {
     if (!userType) {
       if (dto.subContId) userType = 'Subcontractor';
       else if (dto.departId) userType = 'Department';
-      else if (dto.obserId) userType = 'Observer';
+      else if (dto.obserId || isObserver) userType = 'Observer';
       else userType = 'Admin';
     }
 
