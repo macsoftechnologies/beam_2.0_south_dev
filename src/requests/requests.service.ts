@@ -644,9 +644,311 @@ export class RequestsService implements OnModuleInit {
       safetyPrecautions: dto.Safety_Precautions,
     };
 
-    const requestObj = this.requestRepo.create(requestData);
-    const savedRequest = await this.requestRepo.save(requestObj);
-    const requestId = savedRequest.id;
+    const savedRequest = await this.requestRepo.manager.transaction(async (manager) => {
+      const requestObj = manager.create(RequestEntity, requestData);
+      const saved = await manager.save(requestObj);
+      const requestId = saved.id;
+
+      // 2. Insert into all 13 sub-tables
+      await manager.save(
+        manager.create(RequestChemicalHazard, {
+          requestId,
+          workingHazardiousSubsten: dto.working_hazardious_substen || 0,
+          relevantMal: dto.relevant_mal || 0,
+          msds: dto.msds || 0,
+          equipmentTakenAccount: dto.equipment_taken_account || 0,
+          ventilation: dto.ventilation || 0,
+          hazardousSubstances: dto.hazardous_substances || 0,
+          storageAndDisposal: dto.storage_and_disposal || 0,
+          reachableCase: dto.reachable_case || 0,
+          checicalRiskAssessment: dto.checical_risk_assessment || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestConfined, {
+          requestId,
+          workingConfinedSpaces: dto.working_confined_spaces || 0,
+          vapoursGases: dto.vapours_gases || 0,
+          lelMeasurement: dto.lel_measurement || 0,
+          allEquipment: dto.all_equipment || 0,
+          exitConditions: dto.exit_conditions || 0,
+          communicationEmergency: dto.communication_emergency || 0,
+          rescueEquipments: dto.rescue_equipments || 0,
+          spaceVentilation: dto.space_ventilation || 0,
+          oxygenMeter: dto.oxygen_meter || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestElectrical, {
+          requestId,
+          workingOnElectricalSystem: dto.working_on_electrical_system || 0,
+          responsibleForTheInformed: dto.responsible_for_the_informed || 0,
+          deEnergized: dto.de_energized || 0,
+          ifNotLoto: dto.if_not_loto || 0,
+          doRiskAssessment: dto.do_risk_assessment || 0,
+          electricityHaveIsulation: dto.electricity_have_isulation || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestEnergisingElectrical, {
+          requestId,
+          powerOn: dto.power_on || 0,
+          energisingEquipment: dto.energising_equipment || 0,
+          isolatingLive: dto.isolating_live || 0,
+          workingNearLive: dto.working_near_live || 0,
+          responsibleForTheArea: dto.responsible_for_the_area || '',
+          riskAssessmentDone: dto.risk_assessment_done || 0,
+          barriersSignage: dto.barriers_signage || 0,
+          arcFlash: dto.arc_flash || 0,
+          energizedBeenTested: dto.energized_been_tested || 0,
+          punchesBeenClosed: dto.punches_been_closed || 0,
+          toctChecklist: dto.toct_checklist || 0,
+          informedAligned: dto.informed_aligned || 0,
+          isolatingResponsible:
+            dto.isolating_responsible !== undefined
+              ? dto.isolating_responsible
+              : dto.isolating_resposible || 0,
+          isolatingRiskAssessment: dto.isolating_risk_assessment || 0,
+          cqInformed: dto.cq_informed || 0,
+          cqProvided: dto.cq_provided || 0,
+          deEnergisationRequest: dto.de_energisation_request || 0,
+          ppePrepared: dto.ppe_prepared || 0,
+          absenceOfVoltage: dto.absence_of_voltage || 0,
+          storedEnergy: dto.stored_energy || 0,
+          backupPower: dto.backup_power || 0,
+          unavoidable: dto.unavoidable || 0,
+          reasonablyPracticable: dto.reasonably_practicable || 0,
+          workAuthorised: dto.work_authorised || 0,
+          workingRiskAssessment: dto.working_risk_assessment || 0,
+          workingArcBoundary: dto.working_arc_boundary || 0,
+          workingBarriers: dto.working_barriers || 0,
+          insulatedTools: dto.insulated_tools || 0,
+          eventOfEmergency: dto.event_of_emergency || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestEnergisingMechanical, {
+          requestId,
+          pressurization: dto.pressurization || 0,
+          performedApproved: dto.performed_approved || 0,
+          flushingApproved: dto.flushing_approved || 0,
+          mcApproved: dto.mc_approved || 0,
+          visualInspection: dto.visual_inspection || 0,
+          lotoPlanApproved: dto.loto_plan_approved || 0,
+          followMediaCode: dto.follow_media_code || 0,
+          cqSafetySigns: dto.cq_safety_signs || 0,
+          mcNumberText: dto.mc_number_text || '',
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestExcavation, {
+          requestId,
+          excavationShoring: dto.excavation_shoring || 0,
+          excavationSegregated: dto.excavation_segregated || 0,
+          nnStandards: dto.nn_standards || 0,
+          danishRegulation: dto.danish_regulation || 0,
+          safeAccessAndEgress: dto.safe_access_and_egress || 0,
+          correctlySloped: dto.correctly_sloped || 0,
+          inspectionDates: dto.inspection_dates || 0,
+          markedDrawings: dto.marked_drawings || 0,
+          undergroundAreasCleared: dto.underground_areas_cleared || 0,
+          excavationWorks: dto.excavation_works || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestExtraMisc, {
+          requestId,
+          tools: dto.Tools || dto.tools || '',
+          machinery: dto.Machinery || dto.machinery || '',
+          descriptionOfActivity: dto.description_of_activity || '',
+          mechanicalWorks: dto.mechanical_works || '',
+          electricalWorks: dto.electrical_works || '',
+          conMInitials: dto.ConM_initials || '',
+          conMInitials1: dto.ConM_initials1 || '',
+          coMMInitials: dto.CoMM_initials || '',
+          rejectReason: dto.reject_reason || '',
+          cancelReason: dto.cancel_reason || '',
+          closeNote: dto.close_note || '',
+          newSubContractor: dto.new_sub_contractor || '',
+          workType: dto.work_type || '',
+          ramsNumber: dto.rams_number,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestFireHotwork, {
+          requestId,
+          hotWork: dto.Hot_work || 0,
+          fireWatchEstablish: dto.fire_watch_establish || 0,
+          combustibleMaterial: dto.combustible_material || 0,
+          safetyMeasures: dto.safety_measures || 0,
+          extinguishersAndFireBlanket: dto.extinguishers_and_fire_blanket || 0,
+          weldingActivity:
+            dto.welding_activity !== undefined
+              ? dto.welding_activity
+              : dto.welding_activitiy || 0,
+          heatTreatment: dto.heat_treatment || 0,
+          airExtractionBeEstablished: dto.air_extraction_be_established || 0,
+          nameOfTheFireWatcher: dto.name_of_the_fire_watcher || '',
+          phoneNumberOfTheFireWatcher: dto.phone_number_of_the_fire_watcher || '',
+          fireGuardPresent: dto.fire_guard_present || '',
+          lowRiskHotwork: dto.low_risk_hotwork || '',
+          highRiskHotwork: dto.high_risk_hotwork || '',
+          hotWorkChecklistFilled: dto.hot_work_checklist_filled || '',
+          hHeatSource: dto.h_heat_source || '',
+          hWorkplaceCheck: dto.h_workplace_check || '',
+          hFireDetectors: dto.h_fire_detectors || '',
+          hStartTime: dto.h_start_time || '',
+          hEndTime: dto.h_end_time || '',
+          fireImage: dto.fire_image || '',
+          tasksInProgressInTheArea: dto.tasks_in_progress_in_the_area || 0,
+          accountDuringTheWork: dto.account_during_the_work || 0,
+          lightingSufficiently: dto.lighting_sufficiently || 0,
+          specificRisksBasedOnTask: dto.specific_risks_based_on_task || 0,
+          workEnvironmentSafetyEnsured: dto.work_environment_safety_ensured || 0,
+          courseOfActionInEmergencies: dto.course_of_action_in_emergencies || 0,
+          ifNoLoto: dto.if_no_loto,
+          hazardausSubstances: dto.hazardaus_substances,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestGeneral, {
+          requestId,
+          affectingOtherContractors: dto.affecting_other_contractors || 0,
+          otherConditions: dto.other_conditions || 0,
+          otherConditionsInput: dto.other_conditions_input || '',
+          lightingBeginWork: dto.lighting_begin_work || 0,
+          specificRisks: dto.specific_risks || 0,
+          environmentEnsured: dto.environment_ensured || 0,
+          courseOfActions:
+            dto.course_of_actions !== undefined
+              ? dto.course_of_actions
+              : dto.course_of_action || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestHeight, {
+          requestId,
+          workingAtHeight: dto.working_at_height || 0,
+          segragatedDemarkated: dto.segragated_demarkated || 0,
+          lanyardAttachments: dto.lanyard_attachments || 0,
+          rescuePlan: dto.rescue_plan || 0,
+          avoidHazards: dto.avoid_hazards || 0,
+          heightTraining: dto.height_training || 0,
+          heightEquipments: dto.height_equipments || 0,
+          supervision: dto.supervision || 0,
+          shockAbsorbing: dto.shock_absorbing || 0,
+          verticalLife: dto.vertical_life || 0,
+          securedFalling: dto.secured_falling || 0,
+          droppedObjects: dto.dropped_objects || 0,
+          safeAcces: dto.safe_acces || 0,
+          weatherAcceptable: dto.weather_acceptable || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestLifting, {
+          requestId,
+          usingCranesOrLifting: dto.using_cranes_or_lifting || 0,
+          appointedPerson: dto.appointed_person || 0,
+          vendorSupplies: dto.vendor_supplies || 0,
+          liftPlan: dto.lift_plan || 0,
+          suppliedAndInspected: dto.supplied_and_inspected || 0,
+          legalRequiredCertificates: dto.legal_required_certificates || 0,
+          praparedLifting: dto.prapared_lifting || 0,
+          liftingTaskFenced: dto.lifting_task_fenced || 0,
+          overheadRisks: dto.overhead_risks || 0,
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestPpe, {
+          requestId,
+          specificGloves: dto.specific_gloves || 0,
+          eyeProtection: dto.eye_protection || 0,
+          fallProtection: dto.fall_protection || 0,
+          hearingProtection: dto.hearing_protection || 0,
+          respiratoryProtection: dto.respiratory_protection || 0,
+          otherPpe: dto.other_ppe || '',
+        }),
+      );
+
+      await manager.save(
+        manager.create(RequestPressureTesting, {
+          requestId,
+          pressureTestingOfEquipment: dto.pressure_testing_of_equipment || 0,
+          lineWalk: dto.line_walk || 0,
+          pressureTestCoordinated: dto.pressure_test_coordinated || 0,
+          pipeworkMic: dto.pipework_mic || 0,
+          lotoPlanAttached: dto.loto_plan_attached || 0,
+          exclusionZoneCalculated: dto.exclusion_zone_calculated || 0,
+          pnematicHydrostatic:
+            dto.pnematic_hydrostatic !== undefined
+              ? dto.pnematic_hydrostatic
+              : dto.pneumatic_hydrostatic || 0,
+          pressureOfTheTest: dto.pressure_of_the_test || '',
+          safetyValvesCalibrated: dto.safety_valves_calibrated || 0,
+          pressurePneumatic: dto.pressure_pneumatic || '',
+          pressureHydrostatic: dto.pressure_hydrostatic || '',
+        }),
+      );
+
+      // 3. Save files
+      if (files && files.length > 0) {
+        for (const file of files) {
+          await manager.insert(RamsFile, {
+            requestId,
+            ramsFile: file.path.replace(/\\/g, '/'),
+            status: 1,
+            createdAt: new Date(),
+            userId: dto.userId || 0,
+          });
+        }
+      }
+
+      // 4. Create logs
+      const logEntry = manager.create(RequestLog, {
+        requestId,
+        userId: dto.userId || 0,
+        requestType: dto.Request_status || 'Pending',
+        createdTime: new Date(),
+        permitNo,
+        system: 0,
+      });
+      await manager.save(logEntry);
+
+      // 5. Add note if provided in create DTO
+      if (dto.notes && dto.notes.trim() !== '') {
+        let noteUsername = 'System';
+        if (dto.userId) {
+          const user = await this.userRepo.findOne({ where: { id: dto.userId } });
+          if (user && user.username) {
+            noteUsername = user.username;
+          }
+        }
+
+        await manager.save(
+          manager.create(RequestNote, {
+            requestId,
+            permitNo,
+            userId: dto.userId || 0,
+            username: noteUsername,
+            note: dto.notes,
+            createdTime: new Date(),
+          }),
+        );
+      }
+
+      return saved;
+    });
 
     if (savedRequest.requestStatus) {
       this.notificationsService.triggerNotification(
@@ -657,309 +959,12 @@ export class RequestsService implements OnModuleInit {
       ).catch((err) => console.error('Notification error:', err));
     }
 
-    // 2. Insert into all 13 sub-tables
-    await this.chemicalRepo.save(
-      this.chemicalRepo.create({
-        requestId,
-        workingHazardiousSubsten: dto.working_hazardious_substen || 0,
-        relevantMal: dto.relevant_mal || 0,
-        msds: dto.msds || 0,
-        equipmentTakenAccount: dto.equipment_taken_account || 0,
-        ventilation: dto.ventilation || 0,
-        hazardousSubstances: dto.hazardous_substances || 0,
-        storageAndDisposal: dto.storage_and_disposal || 0,
-        reachableCase: dto.reachable_case || 0,
-        checicalRiskAssessment: dto.checical_risk_assessment || 0,
-      }),
-    );
-
-    await this.confinedRepo.save(
-      this.confinedRepo.create({
-        requestId,
-        workingConfinedSpaces: dto.working_confined_spaces || 0,
-        vapoursGases: dto.vapours_gases || 0,
-        lelMeasurement: dto.lel_measurement || 0,
-        allEquipment: dto.all_equipment || 0,
-        exitConditions: dto.exit_conditions || 0,
-        communicationEmergency: dto.communication_emergency || 0,
-        rescueEquipments: dto.rescue_equipments || 0,
-        spaceVentilation: dto.space_ventilation || 0,
-        oxygenMeter: dto.oxygen_meter || 0,
-      }),
-    );
-
-    await this.electricalRepo.save(
-      this.electricalRepo.create({
-        requestId,
-        workingOnElectricalSystem: dto.working_on_electrical_system || 0,
-        responsibleForTheInformed: dto.responsible_for_the_informed || 0,
-        deEnergized: dto.de_energized || 0,
-        ifNotLoto: dto.if_not_loto || 0,
-        doRiskAssessment: dto.do_risk_assessment || 0,
-        electricityHaveIsulation: dto.electricity_have_isulation || 0,
-      }),
-    );
-
-    await this.energisingElecRepo.save(
-      this.energisingElecRepo.create({
-        requestId,
-        powerOn: dto.power_on || 0,
-        energisingEquipment: dto.energising_equipment || 0,
-        isolatingLive: dto.isolating_live || 0,
-        workingNearLive: dto.working_near_live || 0,
-        responsibleForTheArea: dto.responsible_for_the_area || '',
-        riskAssessmentDone: dto.risk_assessment_done || 0,
-        barriersSignage: dto.barriers_signage || 0,
-        arcFlash: dto.arc_flash || 0,
-        energizedBeenTested: dto.energized_been_tested || 0,
-        punchesBeenClosed: dto.punches_been_closed || 0,
-        toctChecklist: dto.toct_checklist || 0,
-        informedAligned: dto.informed_aligned || 0,
-        isolatingResponsible:
-          dto.isolating_responsible !== undefined
-            ? dto.isolating_responsible
-            : dto.isolating_resposible || 0,
-        isolatingRiskAssessment: dto.isolating_risk_assessment || 0,
-        cqInformed: dto.cq_informed || 0,
-        cqProvided: dto.cq_provided || 0,
-        deEnergisationRequest: dto.de_energisation_request || 0,
-        ppePrepared: dto.ppe_prepared || 0,
-        absenceOfVoltage: dto.absence_of_voltage || 0,
-        storedEnergy: dto.stored_energy || 0,
-        backupPower: dto.backup_power || 0,
-        unavoidable: dto.unavoidable || 0,
-        reasonablyPracticable: dto.reasonably_practicable || 0,
-        workAuthorised: dto.work_authorised || 0,
-        workingRiskAssessment: dto.working_risk_assessment || 0,
-        workingArcBoundary: dto.working_arc_boundary || 0,
-        workingBarriers: dto.working_barriers || 0,
-        insulatedTools: dto.insulated_tools || 0,
-        eventOfEmergency: dto.event_of_emergency || 0,
-      }),
-    );
-
-    await this.energisingMechRepo.save(
-      this.energisingMechRepo.create({
-        requestId,
-        pressurization: dto.pressurization || 0,
-        performedApproved: dto.performed_approved || 0,
-        flushingApproved: dto.flushing_approved || 0,
-        mcApproved: dto.mc_approved || 0,
-        visualInspection: dto.visual_inspection || 0,
-        lotoPlanApproved: dto.loto_plan_approved || 0,
-        followMediaCode: dto.follow_media_code || 0,
-        cqSafetySigns: dto.cq_safety_signs || 0,
-        mcNumberText: dto.mc_number_text || '',
-      }),
-    );
-
-    await this.excavationRepo.save(
-      this.excavationRepo.create({
-        requestId,
-        excavationShoring: dto.excavation_shoring || 0,
-        excavationSegregated: dto.excavation_segregated || 0,
-        nnStandards: dto.nn_standards || 0,
-        danishRegulation: dto.danish_regulation || 0,
-        safeAccessAndEgress: dto.safe_access_and_egress || 0,
-        correctlySloped: dto.correctly_sloped || 0,
-        inspectionDates: dto.inspection_dates || 0,
-        markedDrawings: dto.marked_drawings || 0,
-        undergroundAreasCleared: dto.underground_areas_cleared || 0,
-        excavationWorks: dto.excavation_works || 0,
-      }),
-    );
-
-    await this.extraMiscRepo.save(
-      this.extraMiscRepo.create({
-        requestId,
-        tools: dto.Tools || dto.tools || '',
-        machinery: dto.Machinery || dto.machinery || '',
-        descriptionOfActivity: dto.description_of_activity || '',
-        mechanicalWorks: dto.mechanical_works || '',
-        electricalWorks: dto.electrical_works || '',
-        conMInitials: dto.ConM_initials || '',
-        conMInitials1: dto.ConM_initials1 || '',
-        coMMInitials: dto.CoMM_initials || '',
-        rejectReason: dto.reject_reason || '',
-        cancelReason: dto.cancel_reason || '',
-        closeNote: dto.close_note || '',
-        newSubContractor: dto.new_sub_contractor || '',
-        workType: dto.work_type || '',
-        ramsNumber: dto.rams_number,
-      }),
-    );
-
-    await this.fireHotworkRepo.save(
-      this.fireHotworkRepo.create({
-        requestId,
-        hotWork: dto.Hot_work || 0,
-        fireWatchEstablish: dto.fire_watch_establish || 0,
-        combustibleMaterial: dto.combustible_material || 0,
-        safetyMeasures: dto.safety_measures || 0,
-        extinguishersAndFireBlanket: dto.extinguishers_and_fire_blanket || 0,
-        weldingActivity:
-          dto.welding_activity !== undefined
-            ? dto.welding_activity
-            : dto.welding_activitiy || 0,
-        heatTreatment: dto.heat_treatment || 0,
-        airExtractionBeEstablished: dto.air_extraction_be_established || 0,
-        nameOfTheFireWatcher: dto.name_of_the_fire_watcher || '',
-        phoneNumberOfTheFireWatcher: dto.phone_number_of_the_fire_watcher || '',
-        fireGuardPresent: dto.fire_guard_present || '',
-        lowRiskHotwork: dto.low_risk_hotwork || '',
-        highRiskHotwork: dto.high_risk_hotwork || '',
-        hotWorkChecklistFilled: dto.hot_work_checklist_filled || '',
-        hHeatSource: dto.h_heat_source || '',
-        hWorkplaceCheck: dto.h_workplace_check || '',
-        hFireDetectors: dto.h_fire_detectors || '',
-        hStartTime: dto.h_start_time || '',
-        hEndTime: dto.h_end_time || '',
-        fireImage: dto.fire_image || '',
-        tasksInProgressInTheArea: dto.tasks_in_progress_in_the_area || 0,
-        accountDuringTheWork: dto.account_during_the_work || 0,
-        lightingSufficiently: dto.lighting_sufficiently || 0,
-        specificRisksBasedOnTask: dto.specific_risks_based_on_task || 0,
-        workEnvironmentSafetyEnsured: dto.work_environment_safety_ensured || 0,
-        courseOfActionInEmergencies: dto.course_of_action_in_emergencies || 0,
-        ifNoLoto: dto.if_no_loto,
-        hazardausSubstances: dto.hazardaus_substances,
-      }),
-    );
-
-    await this.generalRepo.save(
-      this.generalRepo.create({
-        requestId,
-        affectingOtherContractors: dto.affecting_other_contractors || 0,
-        otherConditions: dto.other_conditions || 0,
-        otherConditionsInput: dto.other_conditions_input || '',
-        lightingBeginWork: dto.lighting_begin_work || 0,
-        specificRisks: dto.specific_risks || 0,
-        environmentEnsured: dto.environment_ensured || 0,
-        courseOfActions:
-          dto.course_of_actions !== undefined
-            ? dto.course_of_actions
-            : dto.course_of_action || 0,
-      }),
-    );
-
-    await this.heightRepo.save(
-      this.heightRepo.create({
-        requestId,
-        workingAtHeight: dto.working_at_height || 0,
-        segragatedDemarkated: dto.segragated_demarkated || 0,
-        lanyardAttachments: dto.lanyard_attachments || 0,
-        rescuePlan: dto.rescue_plan || 0,
-        avoidHazards: dto.avoid_hazards || 0,
-        heightTraining: dto.height_training || 0,
-        heightEquipments: dto.height_equipments || 0,
-        supervision: dto.supervision || 0,
-        shockAbsorbing: dto.shock_absorbing || 0,
-        verticalLife: dto.vertical_life || 0,
-        securedFalling: dto.secured_falling || 0,
-        droppedObjects: dto.dropped_objects || 0,
-        safeAcces: dto.safe_acces || 0,
-        weatherAcceptable: dto.weather_acceptable || 0,
-      }),
-    );
-
-    await this.liftingRepo.save(
-      this.liftingRepo.create({
-        requestId,
-        usingCranesOrLifting: dto.using_cranes_or_lifting || 0,
-        appointedPerson: dto.appointed_person || 0,
-        vendorSupplies: dto.vendor_supplies || 0,
-        liftPlan: dto.lift_plan || 0,
-        suppliedAndInspected: dto.supplied_and_inspected || 0,
-        legalRequiredCertificates: dto.legal_required_certificates || 0,
-        praparedLifting: dto.prapared_lifting || 0,
-        liftingTaskFenced: dto.lifting_task_fenced || 0,
-        overheadRisks: dto.overhead_risks || 0,
-      }),
-    );
-
-    await this.ppeRepo.save(
-      this.ppeRepo.create({
-        requestId,
-        specificGloves: dto.specific_gloves || 0,
-        eyeProtection: dto.eye_protection || 0,
-        fallProtection: dto.fall_protection || 0,
-        hearingProtection: dto.hearing_protection || 0,
-        respiratoryProtection: dto.respiratory_protection || 0,
-        otherPpe: dto.other_ppe || '',
-      }),
-    );
-
-    await this.pressureTestingRepo.save(
-      this.pressureTestingRepo.create({
-        requestId,
-        pressureTestingOfEquipment: dto.pressure_testing_of_equipment || 0,
-        lineWalk: dto.line_walk || 0,
-        pressureTestCoordinated: dto.pressure_test_coordinated || 0,
-        pipeworkMic: dto.pipework_mic || 0,
-        lotoPlanAttached: dto.loto_plan_attached || 0,
-        exclusionZoneCalculated: dto.exclusion_zone_calculated || 0,
-        pnematicHydrostatic:
-          dto.pnematic_hydrostatic !== undefined
-            ? dto.pnematic_hydrostatic
-            : dto.pneumatic_hydrostatic || 0,
-        pressureOfTheTest: dto.pressure_of_the_test || '',
-        safetyValvesCalibrated: dto.safety_valves_calibrated || 0,
-        pressurePneumatic: dto.pressure_pneumatic || '',
-        pressureHydrostatic: dto.pressure_hydrostatic || '',
-      }),
-    );
-
-    // 3. Save files
-    if (files && files.length > 0) {
-      for (const file of files) {
-        await this.ramsFileRepo.insert({
-          requestId,
-          ramsFile: file.path.replace(/\\/g, '/'),
-          status: 1,
-          createdAt: new Date(),
-          userId: dto.userId || 0,
-        });
-      }
-    }
-
-    // 4. Create logs
-    await this.createLogs(
-      requestId,
-      dto.userId || 0,
-      dto.Request_status || 'Pending',
-      new Date(),
-      [],
-      0,
-    );
-
-    // 5. Add note if provided in create DTO
-    if (dto.notes && dto.notes.trim() !== '') {
-      let noteUsername = 'System';
-      if (dto.userId) {
-        const user = await this.userRepo.findOne({ where: { id: dto.userId } });
-        if (user && user.username) {
-          noteUsername = user.username;
-        }
-      }
-
-      await this.noteRepo.save(
-        this.noteRepo.create({
-          requestId,
-          permitNo,
-          userId: dto.userId || 0,
-          username: noteUsername,
-          note: dto.notes,
-          createdTime: new Date(),
-        }),
-      );
-    }
-
     await this.redisCacheService.deleteByPattern('requests:*');
 
     return {
       status: 200,
       message: 'Request created successfully',
-      request_id: requestId,
+      request_id: savedRequest.id,
       PermitNo: permitNo,
       username: dto.Foreman || 'System',
     };
@@ -5613,6 +5618,8 @@ export class RequestsService implements OnModuleInit {
         'other_conditions',
         subTables?.gen?.otherConditions,
       );
+      checkCheckbox('affecting_other_contractors', subTables?.gen?.affectingOtherContractors);
+      checkCheckbox('other_conditions', subTables?.gen?.otherConditions);
       if (Number(otherConditions) === 1) {
         checkRequired(
           'other_conditions_input',
@@ -5854,6 +5861,61 @@ export class RequestsService implements OnModuleInit {
       this.ramsFileRepo.find({ where: { requestId: originalId, status: 1 } }),
     ]);
 
+    const targetStatus = (originalRequest.requestStatus || '').toLowerCase().trim() === 'draft' ? 'Draft' : 'Hold';
+    if (targetStatus === 'Hold') {
+      this.validateMandatoryFields(
+        {
+          ...originalRequest,
+          Request_status: 'Hold',
+          Working_Date: originalRequest.workingDate,
+          Start_Time: originalRequest.startTime,
+          End_Time: originalRequest.endTime,
+          Building_Id: originalRequest.buildingId,
+          Floor_Id: originalRequest.floorId,
+          Zone_Id: originalRequest.zoneId,
+          Foreman: originalRequest.foreman,
+          Foreman_Phone_Number: originalRequest.foremanPhoneNumber,
+          Activity: originalRequest.activity,
+          Type_Of_Activity_Id: originalRequest.typeOfActivityId,
+          Company_Name: originalRequest.companyName,
+          Sub_Contractor_Id: originalRequest.subContractorId,
+          Room_Nos: originalRequest.roomNos,
+          Room_Type: originalRequest.roomType,
+          Number_Of_Workers: originalRequest.numberOfWorkers,
+          Site_Id: originalRequest.siteId,
+          permit_type: originalRequest.permitType,
+          permit_under: originalRequest.permitUnder,
+          Tools: origExt?.tools,
+          Machinery: origExt?.machinery,
+          description_of_activity: origExt?.descriptionOfActivity,
+          affecting_other_contractors: origGen?.affectingOtherContractors,
+          other_conditions: origGen?.otherConditions,
+          other_conditions_input: origGen?.otherConditionsInput,
+          lighting_begin_work: origGen?.lightingBeginWork,
+          specific_risks: origGen?.specificRisks,
+          environment_ensured: origGen?.environmentEnsured,
+          course_of_action: origGen?.courseOfActions,
+          other_ppe: origPpe?.otherPpe,
+        } as any,
+        null as any,
+        {
+          chem: origChem,
+          conf: origConf,
+          elec: origElec,
+          energElec: origEnergElec,
+          energMech: origEnergMech,
+          exc: origExc,
+          ext: origExt,
+          fire: origFire,
+          gen: origGen,
+          hgt: origHgt,
+          lift: origLift,
+          ppe: origPpe,
+          press: origPress,
+        },
+      );
+    }
+
     // 6. Resolve loop count and start date
     const assignStartDate = dto.Assign_Start_Date || new Date().toISOString().split('T')[0];
     const [sYear, sMonth, sDay] = assignStartDate.split('-').map(Number);
@@ -5943,7 +6005,7 @@ export class RequestsService implements OnModuleInit {
         newEndTime: dto.New_End_Time ?? originalRequest.newEndTime,
         nightShift: isNightShift ? '1' : '0',
         numberOfWorkers: dto.Number_Of_Workers ?? originalRequest.numberOfWorkers,
-        safetyPrecautions: '',
+        safetyPrecautions: originalRequest.safetyPrecautions || '',
       });
 
       const saved = await this.requestRepo.save(newRequest);
