@@ -5861,61 +5861,6 @@ export class RequestsService implements OnModuleInit {
       this.ramsFileRepo.find({ where: { requestId: originalId, status: 1 } }),
     ]);
 
-    const targetStatus = (originalRequest.requestStatus || '').toLowerCase().trim() === 'draft' ? 'Draft' : 'Hold';
-    if (targetStatus === 'Hold') {
-      this.validateMandatoryFields(
-        {
-          ...originalRequest,
-          Request_status: 'Hold',
-          Working_Date: originalRequest.workingDate,
-          Start_Time: originalRequest.startTime,
-          End_Time: originalRequest.endTime,
-          Building_Id: originalRequest.buildingId,
-          Floor_Id: originalRequest.floorId,
-          Zone_Id: originalRequest.zoneId,
-          Foreman: originalRequest.foreman,
-          Foreman_Phone_Number: originalRequest.foremanPhoneNumber,
-          Activity: originalRequest.activity,
-          Type_Of_Activity_Id: originalRequest.typeOfActivityId,
-          Company_Name: originalRequest.companyName,
-          Sub_Contractor_Id: originalRequest.subContractorId,
-          Room_Nos: originalRequest.roomNos,
-          Room_Type: originalRequest.roomType,
-          Number_Of_Workers: originalRequest.numberOfWorkers,
-          Site_Id: originalRequest.siteId,
-          permit_type: originalRequest.permitType,
-          permit_under: originalRequest.permitUnder,
-          Tools: origExt?.tools,
-          Machinery: origExt?.machinery,
-          description_of_activity: origExt?.descriptionOfActivity,
-          affecting_other_contractors: origGen?.affectingOtherContractors,
-          other_conditions: origGen?.otherConditions,
-          other_conditions_input: origGen?.otherConditionsInput,
-          lighting_begin_work: origGen?.lightingBeginWork,
-          specific_risks: origGen?.specificRisks,
-          environment_ensured: origGen?.environmentEnsured,
-          course_of_action: origGen?.courseOfActions,
-          other_ppe: origPpe?.otherPpe,
-        } as any,
-        null as any,
-        {
-          chem: origChem,
-          conf: origConf,
-          elec: origElec,
-          energElec: origEnergElec,
-          energMech: origEnergMech,
-          exc: origExc,
-          ext: origExt,
-          fire: origFire,
-          gen: origGen,
-          hgt: origHgt,
-          lift: origLift,
-          ppe: origPpe,
-          press: origPress,
-        },
-      );
-    }
-
     // 6. Resolve loop count and start date
     const assignStartDate = dto.Assign_Start_Date || new Date().toISOString().split('T')[0];
     const [sYear, sMonth, sDay] = assignStartDate.split('-').map(Number);
