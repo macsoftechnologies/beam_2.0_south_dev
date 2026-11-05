@@ -3,9 +3,10 @@ import {
   Injectable,
   NotFoundException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like, FindOptionsWhere } from 'typeorm';
+import { Repository, Like, FindOptionsWhere, SelectQueryBuilder } from 'typeorm';
 import { Employee } from './entities/employee.entity';
 import { CreateDepEmployeeDto, CreateEmpDto, CreateEmployeeDto, CreateSubEmployeeDto, CreateUserLogDto, SearchEmployeeDto, UpdateDepEmployeeDto, UpdateEmpDto, UpdateEmployeeDto, UpdateSubEmployeeDto, SubContEmployeesQueryDto, EmpListByDeptDto } from './dtos/employee.dto';
 import { UserLog } from './entities/userlog.entity';
@@ -50,7 +51,7 @@ const CACHE_KEYS = {
 };
 
 @Injectable()
-export class EmployeesService {
+export class EmployeesService implements OnModuleInit {
   private readonly logger = new Logger(EmployeesService.name);
 
   constructor(
@@ -68,6 +69,24 @@ export class EmployeesService {
 
     private readonly cache: RedisCacheService,
   ) { }
+
+  async onModuleInit() {
+    await this.cache.deleteByPattern('employees:*');
+  }
+
+  /**
+   * Restricts admin user records from employee query results.
+   * Admins are defined as:
+   * 1. Any employee linked to a user whose userType contains 'admin' or 'superadmin'
+   * 2. Any employee with roleId = 0
+   * 3. System employee id = 0
+   */
+  private applyNonAdminFilter(qb: SelectQueryBuilder<Employee>, alias = 'employee'): void {
+    qb.andWhere(
+      `(${alias}.id NOT IN (SELECT u.empId FROM users u WHERE u.empId IS NOT NULL AND (LOWER(u.userType) LIKE :adminPattern OR LOWER(u.userType) LIKE :superAdminPattern)) AND (${alias}.roleId != 0 OR ${alias}.roleId IS NULL) AND ${alias}.id != 0)`,
+      { adminPattern: '%admin%', superAdminPattern: '%superadmin%' },
+    );
+  }
 
   private async invalidateAfterWrite(options: {
     employeeId?: number;
@@ -212,17 +231,20 @@ export class EmployeesService {
     return this.cache.getOrSet(
       cacheKey,
       async () => {
-        const findOptions: any = {
-          order: { createdTime: 'DESC' },
-        };
+        const qb = this.employeeRepo.createQueryBuilder('employee');
+        this.applyNonAdminFilter(qb, 'employee');
+
         if (subContId) {
-          findOptions.where = { subContId };
+          qb.andWhere('employee.subContId = :subContId', { subContId });
         }
+
+        qb.orderBy('employee.createdTime', 'DESC');
+
         if (!isExport) {
-          findOptions.take = limit;
-          findOptions.skip = (page - 1) * limit;
+          qb.skip((page - 1) * limit).take(limit);
         }
-        const [employees, total] = await this.employeeRepo.findAndCount(findOptions);
+
+        const [employees, total] = await qb.getManyAndCount();
         const mappedData = await this.mapSubContractorAndUserType(employees);
         if (mappedData.length > 0) {
           return {
@@ -277,15 +299,17 @@ export class EmployeesService {
     return this.cache.getOrSet(
       `employees:list:subcont:${subContId}:${isExport}:${page}:${limit}`,
       async () => {
-        const findOptions: any = {
-          where: { subContId },
-          order: { createdTime: 'DESC' },
-        };
+        const qb = this.employeeRepo.createQueryBuilder('employee');
+        this.applyNonAdminFilter(qb, 'employee');
+        qb.andWhere('employee.subContId = :subContId', { subContId });
+
+        qb.orderBy('employee.createdTime', 'DESC');
+
         if (!isExport) {
-          findOptions.take = limit;
-          findOptions.skip = (page - 1) * limit;
+          qb.skip((page - 1) * limit).take(limit);
         }
-        const [employees, total] = await this.employeeRepo.findAndCount(findOptions);
+
+        const [employees, total] = await qb.getManyAndCount();
         const mappedData = await this.mapSubContractorAndUserType(employees);
         if (mappedData.length > 0) {
           return {
@@ -313,15 +337,17 @@ export class EmployeesService {
     return this.cache.getOrSet(
       `employees:list:dept:${departId}:${isExport}:${page}:${limit}`,
       async () => {
-        const findOptions: any = {
-          where: { departId },
-          order: { createdTime: 'DESC' },
-        };
+        const qb = this.employeeRepo.createQueryBuilder('employee');
+        this.applyNonAdminFilter(qb, 'employee');
+        qb.andWhere('employee.departId = :departId', { departId });
+
+        qb.orderBy('employee.createdTime', 'DESC');
+
         if (!isExport) {
-          findOptions.take = limit;
-          findOptions.skip = (page - 1) * limit;
+          qb.skip((page - 1) * limit).take(limit);
         }
-        const [employees, total] = await this.employeeRepo.findAndCount(findOptions);
+
+        const [employees, total] = await qb.getManyAndCount();
         const mappedData = await this.mapSubContractorAndUserType(employees);
         if (mappedData.length > 0) {
           return {
@@ -390,52 +416,32 @@ export class EmployeesService {
         const { page = 1, limit = 10, isExport = false } = dto;
         const skip = (page - 1) * limit;
 
-        let where: FindOptionsWhere<Employee> | FindOptionsWhere<Employee>[];
+        const qb = this.employeeRepo.createQueryBuilder('employee');
+        this.applyNonAdminFilter(qb, 'employee');
 
-        if (dto.search) {
-          const searchPattern = Like(`%${dto.search}%`);
-          if (subContId) {
-            where = [
-              { employeeName: searchPattern, subContId },
-              { email: searchPattern, subContId },
-              { badgeId: searchPattern, subContId },
-              { username: searchPattern, subContId },
-              { companyName: searchPattern, subContId },
-              { designation: searchPattern, subContId },
-            ];
-          } else {
-            where = [
-              { employeeName: searchPattern },
-              { email: searchPattern },
-              { badgeId: searchPattern },
-              { username: searchPattern },
-              { companyName: searchPattern },
-              { designation: searchPattern },
-            ];
-          }
-          if (dto.companyName) {
-            if (Array.isArray(where)) {
-              where = where.map(w => ({ ...w, companyName: dto.companyName }));
-            }
-          }
-        } else {
-          const baseWhere: any = {};
-          if (subContId) baseWhere.subContId = subContId;
-          if (dto.companyName) baseWhere.companyName = dto.companyName;
-          where = baseWhere;
+        if (subContId) {
+          qb.andWhere('employee.subContId = :subContId', { subContId });
         }
 
-        const findOptions: any = {
-          where,
-          order: { createdTime: 'DESC' },
-        };
+        if (dto.companyName) {
+          qb.andWhere('employee.companyName = :companyName', { companyName: dto.companyName });
+        }
+
+        if (dto.search && dto.search.trim()) {
+          const searchPattern = `%${dto.search.trim()}%`;
+          qb.andWhere(
+            '(employee.employeeName LIKE :searchPattern OR employee.email LIKE :searchPattern OR employee.badgeId LIKE :searchPattern OR employee.username LIKE :searchPattern OR employee.companyName LIKE :searchPattern OR employee.designation LIKE :searchPattern)',
+            { searchPattern },
+          );
+        }
+
+        qb.orderBy('employee.createdTime', 'DESC');
 
         if (!isExport) {
-          findOptions.take = limit;
-          findOptions.skip = skip;
+          qb.skip(skip).take(limit);
         }
 
-        const [data, total] = await this.employeeRepo.findAndCount(findOptions);
+        const [data, total] = await qb.getManyAndCount();
 
         const mappedData = await this.mapSubContractorAndUserType(data);
         if (mappedData.length > 0) {
