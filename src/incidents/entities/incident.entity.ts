@@ -106,6 +106,12 @@ export class Incident {
   @Column({ name: 'sla_investigation_due', type: 'datetime', nullable: true })
   slaInvestigationDue?: Date;
 
+  @Column({ name: 'reporter_email', type: 'varchar', length: 255, nullable: true })
+  reporterEmail?: string;
+
+  @Column({ name: 'reporter_id', type: 'int', nullable: true })
+  reporterId?: number;
+
   @Column({ name: 'closed_by', type: 'varchar', length: 255, nullable: true })
   closedBy?: string;
 

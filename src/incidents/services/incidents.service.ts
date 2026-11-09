@@ -353,6 +353,8 @@ export class IncidentsService implements OnModuleInit {
       slaHeadsUpDue,
       slaInitialDue,
       slaInvestigationDue,
+      reporterId: dto.submittedById ? Number(dto.submittedById) : undefined,
+      reporterEmail: dto.submittedByEmail || undefined,
     });
 
     if (dto.locationMapImage) {
@@ -373,6 +375,9 @@ export class IncidentsService implements OnModuleInit {
       spillSystemEntered: dto.spillSystemEntered,
       immediateActions: dto.immediateActions,
       submittedBy: dto.submittedBy,
+      submittedById: dto.submittedById ? Number(dto.submittedById) : undefined,
+      submittedByEmail: dto.submittedByEmail || undefined,
+      lateSubmissionReason: dto.lateSubmissionReason || undefined,
       signature: dto.signature ? saveBase64Signature(dto.signature, `sig_headsup_${savedIncident.id}`) : undefined,
       noFurtherInvestigation: dto.noFurtherInvestigation || false,
     });
@@ -404,6 +409,22 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
+    // Check if Heads-Up submission exceeded the 2-hour deadline
+    const now = new Date();
+    const isHuLate = (now.getTime() > slaHeadsUpDue.getTime()) || Boolean(dto.lateSubmissionReason);
+    if (isHuLate && dto.lateSubmissionReason) {
+      this.notificationsService.triggerIncidentLateSubmissionNotification({
+        incident: savedIncident,
+        stepName: 'Heads-Up Notification (2hr)',
+        deadlineDate: slaHeadsUpDue,
+        submissionDate: now,
+        lateReason: dto.lateSubmissionReason,
+        submitterName: dto.submittedBy || 'Incident Reporter',
+        submitterEmail: dto.submittedByEmail || savedIncident.reporterEmail,
+        submitterUserId: dto.submittedById ? Number(dto.submittedById) : undefined,
+      }).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up late notification:', err));
+    }
+
     // Trigger incident submission notification to Notification Group 1 (unless skipped e.g. when escalated from Observation)
     if (!dto.skipNotification && !dto.origin?.startsWith('SO-') && !dto.origin?.startsWith('OBS-')) {
       this.notificationsService.triggerIncidentSubmissionNotification(
@@ -413,6 +434,7 @@ export class IncidentsService implements OnModuleInit {
         undefined,
         'GROUP_1',
         false,
+        dto.lateSubmissionReason,
       ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Heads-Up submission notification:', err));
     }
 
@@ -498,6 +520,9 @@ export class IncidentsService implements OnModuleInit {
     if (dto.spillSystemEntered !== undefined) headsUp.spillSystemEntered = dto.spillSystemEntered;
     if (dto.immediateActions !== undefined) headsUp.immediateActions = dto.immediateActions;
     if (dto.submittedBy !== undefined) headsUp.submittedBy = dto.submittedBy;
+    if (dto.submittedByEmail !== undefined) headsUp.submittedByEmail = dto.submittedByEmail;
+    if (dto.submittedById !== undefined) headsUp.submittedById = Number(dto.submittedById);
+    if (dto.lateSubmissionReason !== undefined) headsUp.lateSubmissionReason = dto.lateSubmissionReason;
     if (dto.noFurtherInvestigation !== undefined) {
       headsUp.noFurtherInvestigation = dto.noFurtherInvestigation;
       incident.noFurtherInvestigation = dto.noFurtherInvestigation;
@@ -689,6 +714,9 @@ export class IncidentsService implements OnModuleInit {
     initialReport.injuryTypes = dto.injuryTypes || [];
     initialReport.injuryOtherText = dto.injuryOtherText;
     initialReport.bodyPartsInjured = dto.bodyPartsInjured;
+    if (dto.lateSubmissionReason !== undefined) initialReport.lateSubmissionReason = dto.lateSubmissionReason;
+    if (dto.submittedByEmail) initialReport.submittedByEmail = dto.submittedByEmail;
+    if (dto.submittedById) initialReport.submittedById = Number(dto.submittedById);
 
     initialReport.injuredPersonName = dto.injuredPersonName;
     initialReport.injuredPersonCompany = dto.injuredPersonCompany;
@@ -698,6 +726,7 @@ export class IncidentsService implements OnModuleInit {
     initialReport.experienceInRole = dto.experienceInRole;
     initialReport.workerActivity = dto.workerActivity;
     initialReport.medicalTreatmentClass = dto.medicalTreatmentClass;
+    if (dto.easyCode !== undefined) (initialReport as any).easyCode = dto.easyCode;
     initialReport.initialRootCause = dto.initialRootCause;
     initialReport.environmentalConditions = dto.environmentalConditions;
     initialReport.equipmentInvolved = dto.equipmentInvolved;
@@ -737,6 +766,22 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
+    // Check if Initial Report submission exceeded the 24-hour deadline
+    const now = new Date();
+    const isIrLate = (savedIncident.slaInitialDue && now.getTime() > new Date(savedIncident.slaInitialDue).getTime()) || Boolean(dto.lateSubmissionReason);
+    if (isIrLate && dto.lateSubmissionReason) {
+      this.notificationsService.triggerIncidentLateSubmissionNotification({
+        incident: savedIncident,
+        stepName: 'Initial Incident Report (24hr)',
+        deadlineDate: savedIncident.slaInitialDue || new Date(savedIncident.createdTime.getTime() + 24 * 60 * 60 * 1000),
+        submissionDate: now,
+        lateReason: dto.lateSubmissionReason,
+        submitterName: dto.submittedBy || initialReport.submittedBy || 'Contractor / HSE Lead',
+        submitterEmail: dto.submittedByEmail || initialReport.submittedByEmail,
+        submitterUserId: dto.submittedById ? Number(dto.submittedById) : undefined,
+      }).catch(err => this.logger.error('[IncidentsService] Failed to trigger Initial Report late notification:', err));
+    }
+
     // Trigger incident submission notification to Notification Group 1
     const isIrResubmission = Boolean(
       savedReport.editHistory &&
@@ -750,6 +795,7 @@ export class IncidentsService implements OnModuleInit {
       undefined,
       'GROUP_1',
       isIrResubmission,
+      dto.lateSubmissionReason,
     ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Initial Report submission notification:', err));
 
     return { incident: savedIncident, initialReport: savedReport };
@@ -888,8 +934,12 @@ export class IncidentsService implements OnModuleInit {
     if (dto.rootCauses !== undefined) investigation.rootCauses = dto.rootCauses;
     if (dto.contributingFactors !== undefined) investigation.contributingFactors = dto.contributingFactors;
     if (dto.mandatoryAttachments !== undefined) investigation.mandatoryAttachments = dto.mandatoryAttachments;
+    if (dto.easyCode !== undefined) (investigation as any).easyCode = dto.easyCode;
     if (dto.environmentalDetails !== undefined) investigation.environmentalDetails = dto.environmentalDetails;
     if (dto.propertyDamageDetails !== undefined) investigation.propertyDamageDetails = dto.propertyDamageDetails;
+    if (dto.lateSubmissionReason !== undefined) investigation.lateSubmissionReason = dto.lateSubmissionReason;
+    if (dto.submittedByEmail !== undefined) investigation.submittedByEmail = dto.submittedByEmail;
+    if (dto.submittedById !== undefined) investigation.submittedById = Number(dto.submittedById);
     if (dto.team !== undefined) (investigation as any).team = dto.team;
     if (dto.witnesses !== undefined) (investigation as any).witnesses = dto.witnesses;
     if (dto.effectDescription !== undefined || dto.effect !== undefined) {
@@ -903,7 +953,7 @@ export class IncidentsService implements OnModuleInit {
     if (dto.postSeverity !== undefined || dto.severityAfter !== undefined) {
       investigation.postSeverity = dto.postSeverity !== undefined ? Number(dto.postSeverity) : Number(dto.severityAfter);
     }
-    if (dto.photos !== undefined) {
+    if (dto.photos !== undefined && Array.isArray(dto.photos) && dto.photos.length > 0) {
       const incomingPhotos = Array.isArray(dto.photos) ? dto.photos : [dto.photos];
       investigation.photos = incomingPhotos
         .map((p: any, idx: number) => {
@@ -913,6 +963,11 @@ export class IncidentsService implements OnModuleInit {
           return p;
         })
         .filter(Boolean);
+    } else if (!investigation.photos || (Array.isArray(investigation.photos) && investigation.photos.length === 0)) {
+      const ir = await this.initialReportRepo.findOne({ where: { incidentId } });
+      if (ir?.photos && Array.isArray(ir.photos) && ir.photos.length > 0) {
+        investigation.photos = ir.photos;
+      }
     }
 
     const savedInvestigation = await this.investigationRepo.save(investigation);
@@ -935,6 +990,23 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(correctiveEntities);
     }
 
+    // Check if Investigation submission exceeded the 7-day deadline
+    const now = new Date();
+    const isInvLate = (savedIncident.slaInvestigationDue && now.getTime() > new Date(savedIncident.slaInvestigationDue).getTime()) || Boolean(dto.lateSubmissionReason);
+    if (isInvLate && dto.lateSubmissionReason) {
+      const invSubmitterName = (dto.signatures && dto.signatures.length > 0) ? dto.signatures[0].name : (dto.editedBy || 'Investigator');
+      this.notificationsService.triggerIncidentLateSubmissionNotification({
+        incident: savedIncident,
+        stepName: 'Incident Investigation Report (7 days)',
+        deadlineDate: savedIncident.slaInvestigationDue || new Date(savedIncident.createdTime.getTime() + 7 * 24 * 60 * 60 * 1000),
+        submissionDate: now,
+        lateReason: dto.lateSubmissionReason,
+        submitterName: invSubmitterName,
+        submitterEmail: dto.submittedByEmail || investigation.submittedByEmail,
+        submitterUserId: dto.submittedById ? Number(dto.submittedById) : undefined,
+      }).catch(err => this.logger.error('[IncidentsService] Failed to trigger Investigation late notification:', err));
+    }
+
     // Trigger incident submission notification to Notification Group 1
     const isInvResubmission = Boolean(
       savedInvestigation.editHistory &&
@@ -948,6 +1020,7 @@ export class IncidentsService implements OnModuleInit {
       undefined,
       'GROUP_1',
       isInvResubmission,
+      dto.lateSubmissionReason,
     ).catch(err => this.logger.error('[IncidentsService] Failed to trigger Investigation submission notification:', err));
 
     return { incident: savedIncident, investigation: savedInvestigation };
@@ -1456,7 +1529,8 @@ export class IncidentsService implements OnModuleInit {
     page?: number;
     limit?: number;
     statusChip?: string;
-    stage?: IncidentStage;
+    stage?: string;
+    status?: string;
     isHipo?: boolean;
     category?: string;
     building?: string;
@@ -1475,7 +1549,9 @@ export class IncidentsService implements OnModuleInit {
   }) {
     const qb = this.incidentRepo.createQueryBuilder('incident');
 
-    if (query.statusChip) {
+    const filterStage = query.stage || query.status;
+
+    if (query.statusChip && !filterStage) {
       if (query.statusChip === 'open') {
         qb.andWhere('incident.stage != :closedStage', { closedStage: 'CLOSED' });
       } else if (query.statusChip === 'closed') {
@@ -1485,8 +1561,19 @@ export class IncidentsService implements OnModuleInit {
       }
     }
 
-    if (query.stage) {
-      qb.andWhere('incident.stage = :stage', { stage: query.stage });
+    if (filterStage) {
+      const s = String(filterStage).toUpperCase();
+      if (s === 'OPEN') {
+        qb.andWhere('incident.stage != :closedStage', { closedStage: 'CLOSED' });
+      } else if (s === 'CLOSED') {
+        qb.andWhere('incident.stage = :closedStage', { closedStage: 'CLOSED' });
+      } else if (s === 'REOPENED') {
+        qb.andWhere("incident.stage != 'CLOSED' AND incident.reopenLogs IS NOT NULL AND incident.reopenLogs != '[]'");
+      } else if (['HEADS_UP', 'INITIAL_REPORT', 'INVESTIGATION'].includes(s)) {
+        qb.andWhere('incident.stage = :stage', { stage: s });
+      } else {
+        qb.andWhere('incident.stage = :stage', { stage: filterStage });
+      }
     }
     if (query.isHipo !== undefined) {
       qb.andWhere('incident.isHipo = :isHipo', { isHipo: query.isHipo });

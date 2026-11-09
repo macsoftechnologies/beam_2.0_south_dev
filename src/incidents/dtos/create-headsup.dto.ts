@@ -145,6 +145,17 @@ export class CreateHeadsUpDto {
 
   @IsString()
   @IsOptional()
+  submittedByEmail?: string;
+
+  @IsOptional()
+  submittedById?: number;
+
+  @IsString()
+  @IsOptional()
+  lateSubmissionReason?: string;
+
+  @IsString()
+  @IsOptional()
   signature?: string;
 
   @IsBoolean()

@@ -156,14 +156,25 @@ export class IncidentPdfService {
       });
     }
 
-    if (Array.isArray(inv.photos)) {
-      inv.photos.forEach((p: any) => addUrl(p));
-    }
+    const parseRawPhotos = (raw: any): string[] => {
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw.filter((p) => typeof p === 'string' && p.trim().length > 0);
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === 'string' && p.trim().length > 0);
+        } catch {
+          if (raw.trim().length > 0) return [raw.trim()];
+        }
+      }
+      return [];
+    };
+
+    parseRawPhotos(inv.photos).forEach((p: any) => addUrl(p));
 
     const initial = details.initialReport || {};
-    if (Array.isArray(initial.photos)) {
-      initial.photos.forEach((p: any) => addUrl(p));
-    }
+    parseRawPhotos(initial.photos).forEach((p: any) => addUrl(p));
+    parseRawPhotos(details.incident?.photos).forEach((p: any) => addUrl(p));
 
     await Promise.all(
       Array.from(urlsToFetch).map(async (u) => {
@@ -726,6 +737,25 @@ export class IncidentPdfService {
     const rawMapImage = inc.locationMapImage || details.locationMapImage || (headsUp && headsUp.locationMapImage);
     const locationMapBase64 = rawMapImage ? resolveImageDataUri(rawMapImage) : null;
 
+    const formatTimestamp = (dStr: any): string => {
+      if (!dStr) return '—';
+      try {
+        const d = new Date(dStr);
+        if (isNaN(d.getTime())) return String(dStr).replace('T', ' ');
+        return d.toLocaleString('en-GB', {
+          timeZone: 'Europe/Copenhagen',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        }).replace(',', '');
+      } catch (e) {
+        return String(dStr);
+      }
+    };
+
     // Helper to render signature images
     const renderSignature = (sigData: string | null | undefined, name: string) => {
       const uri = resolveImageDataUri(sigData);
@@ -765,21 +795,73 @@ export class IncidentPdfService {
       `;
     };
 
-    // Collect all initial & investigation report photos
-    let rawPhotos: string[] = [];
-    if (initial.photos && Array.isArray(initial.photos)) rawPhotos.push(...initial.photos);
-    if (inv.photos && Array.isArray(inv.photos)) rawPhotos.push(...inv.photos);
-    if (inc.photos && Array.isArray(inc.photos)) rawPhotos.push(...inc.photos);
+    // Helper to safely parse photo collections
+    const parsePhotosList = (raw: any): string[] => {
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw.filter((p) => typeof p === 'string' && p.trim().length > 0);
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed.filter((p) => typeof p === 'string' && p.trim().length > 0);
+        } catch {
+          if (raw.trim().length > 0) return [raw.trim()];
+        }
+      }
+      return [];
+    };
 
-    const resolvedPhotos = rawPhotos
-      .map((p) => resolveImageDataUri(p))
-      .filter((p): p is string => p !== null);
+    // Helper to strictly deduplicate photos based on normalized filename or data URI content
+    const deduplicatePhotos = (photosList: (string | null | undefined)[]): string[] => {
+      const seen = new Set<string>();
+      const result: string[] = [];
 
-    const renderPhotosGrid = () => {
-      if (resolvedPhotos.length > 0) {
+      for (const p of photosList) {
+        if (!p || typeof p !== 'string') continue;
+        const trimmed = p.trim();
+        if (!trimmed) continue;
+
+        let key = trimmed;
+        if (trimmed.startsWith('data:image')) {
+          key = `data_${trimmed.length}_${trimmed.substring(0, 100)}`;
+        } else {
+          const clean = trimmed.split('?')[0].replace(/\\/g, '/');
+          const filename = clean.split('/').filter(Boolean).pop() || clean;
+          key = filename.toLowerCase();
+        }
+
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(trimmed);
+        }
+      }
+      return result;
+    };
+
+    // Form 2 Initial Report photos: only initial report photos without repetition
+    const rawInitialPhotos: string[] = [
+      ...parsePhotosList(initial.photos),
+      ...parsePhotosList(inc.photos),
+    ];
+    const uniqueInitialPhotos = deduplicatePhotos(rawInitialPhotos);
+    const resolvedInitialPhotos = deduplicatePhotos(
+      uniqueInitialPhotos.map((p) => resolveImageDataUri(p)).filter((p): p is string => p !== null)
+    );
+
+    // Form 3 Final Investigation photos: investigation photos (which include inherited initial photos), strictly deduplicated
+    const rawInvPhotos: string[] = [
+      ...parsePhotosList(inv.photos),
+      ...uniqueInitialPhotos,
+    ];
+    const uniqueInvPhotos = deduplicatePhotos(rawInvPhotos);
+    const resolvedInvPhotos = deduplicatePhotos(
+      uniqueInvPhotos.map((p) => resolveImageDataUri(p)).filter((p): p is string => p !== null)
+    );
+
+    const renderPhotosGrid = (photosToRender: string[]) => {
+      if (photosToRender && photosToRender.length > 0) {
         return `
           <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
-            ${resolvedPhotos.map((imgUri, i) => `
+            ${photosToRender.map((imgUri, i) => `
               <div style="border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; background: #fff; text-align: center;">
                 <img src="${imgUri}" style="width: 145px; height: 95px; object-fit: cover; border-radius: 3px;" alt="Incident Photo ${i+1}" />
                 <div style="font-size: 8px; font-weight: 600; color: #334155; margin-top: 3px;">Photo ${i+1}: Incident Location Evidence</div>
@@ -986,11 +1068,10 @@ export class IncidentPdfService {
           <table style="width: 100%; border-collapse: collapse; font-size: 8px;">
             <thead>
               <tr style="background: #f8fafc; border-bottom: 1px solid #cbd5e1; color: #475569;">
-                <th style="padding: 4px 6px; text-align: left; width: 20%; font-weight: 700;">Lifecycle Event</th>
-                <th style="padding: 4px 6px; text-align: left; width: 22%; font-weight: 700;">Performed By (Role)</th>
-                <th style="padding: 4px 6px; text-align: left; width: 30%; font-weight: 700;">Reason / Closure Remarks</th>
-                <th style="padding: 4px 6px; text-align: left; width: 14%; font-weight: 700;">Date &amp; Time</th>
-                <th style="padding: 4px 6px; text-align: left; width: 14%; font-weight: 700;">Signature</th>
+                <th style="padding: 4px 6px; text-align: left; width: 22%; font-weight: 700;">Lifecycle Event</th>
+                <th style="padding: 4px 6px; text-align: left; width: 24%; font-weight: 700;">Performed By (Role)</th>
+                <th style="padding: 4px 6px; text-align: left; width: 38%; font-weight: 700;">Reason / Closure Remarks</th>
+                <th style="padding: 4px 6px; text-align: left; width: 16%; font-weight: 700;">Date &amp; Time</th>
               </tr>
             </thead>
             <tbody>
@@ -1007,12 +1088,6 @@ export class IncidentPdfService {
                   </td>
                   <td style="padding: 4px 6px; color: #334155;">${item.remarks}</td>
                   <td style="padding: 4px 6px; color: #64748b;">${formatDt(item.timestamp)}</td>
-                  <td style="padding: 4px 6px;">
-                    ${item.eventType === 'REOPENED'
-                      ? (item.signature ? renderSignature(item.signature, item.userName) : '<span style="font-size: 7.5px; color: #94a3b8; font-style: italic;">No signature</span>')
-                      : '<span style="font-size: 7.5px; color: #94a3b8; font-style: italic;">—</span>'
-                    }
-                  </td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1756,19 +1831,28 @@ export class IncidentPdfService {
         { keys: ["permitsToWork", "permitToWork", "ptw", "permit"], label: "Permit to Work (PTW)", match: "permit", idx: 4 },
         { keys: ["safePlanOfAction", "spa", "tsti", "preTaskBriefing"], label: "Safe Plan of Action (SPA)", match: "spa", idx: 3 },
         { keys: ["evidenceForActionsTaken", "evidenceActions", "actionsEvidence"], label: "Evidence for Actions Taken", match: "evidence", idx: 7 },
-        { keys: ["wasteDisposalInvoice", "wasteDisposal", "wasteInvoice"], label: "Waste Disposal Invoice (if applicable)", match: "waste", idx: 8 },
+        { keys: ["equipmentDataSheets", "equipmentSheets", "equipmentData"], label: "Equipment Data Sheets (when applicable)", match: "equipment", idx: 8 },
+        { keys: ["easyDocument", "easyCodeDocument", "easyReport", "easyCodeNumbering"], label: "EASY Document / EASY Code", match: "easy", idx: 9, isEasy: true },
+        { keys: ["otherRelevantDocumentation", "otherDocumentation", "otherDocuments"], label: "Other Relevant Documentation (when applicable)", match: "other", idx: 10 },
+        { keys: ["wasteDisposalInvoice", "wasteDisposal", "wasteInvoice"], label: "Waste Disposal Invoice (when applicable)", match: "waste", idx: 11 },
+        { keys: ["safetyDataSheet", "sds", "safetyDataSheets"], label: "Safety Data Sheet (SDS) (when applicable)", match: "sds", idx: 12 },
+        { keys: ["soilAnalysisReports", "soilAnalysis", "soilReports"], label: "Soil Analysis Reports (when applicable)", match: "soil", idx: 13 },
+        { keys: ["waterAnalysisReports", "waterAnalysis", "waterReports"], label: "Water Analysis Reports (when applicable)", match: "water", idx: 14 }
       ];
 
       const missingExplain = att.missingExplanation || att.missingAttachmentsExplanation || inv.missingExplain || 'All mandatory attachments collected and uploaded.';
 
       const rowsHtml = items.map(item => {
         const info = getAttachmentInfo(item.keys, item.match || item.label, item.idx);
-        const isAttached = info.checked || !!info.fileUrl;
+        const easyNum = inv.easyCode || initial.easyCode || att.easyCode || '';
+        const isAttached = info.checked || !!info.fileUrl || (item.isEasy && !!easyNum);
         const displayFileName = info.fileName || '';
+        const easySubText = (item.isEasy && easyNum) ? `<div style="font-size: 8px; color: #0284c7; font-weight: 600; margin-top: 2px;">EASY Code / Number: <strong>${easyNum}</strong></div>` : '';
         return `
         <tr>
           <td style="width: 70%; font-weight: 600;">
             ${item.label}
+            ${easySubText}
             ${displayFileName ? `<div style="font-size: 8px; color: #2563eb; font-weight: normal; margin-top: 2px;">📎 Attached: <strong>${displayFileName}</strong></div>` : ''}
           </td>
           <td style="text-align: center; width: 30%;">
@@ -2125,9 +2209,9 @@ export class IncidentPdfService {
                 <td class="val" colspan="3"><strong>${title}</strong></td>
               </tr>
               <tr>
-                <td class="lbl">Date (YYYY-MM-DD):</td>
+                <td class="lbl">Date of Incident / Occurrence (YYYY-MM-DD):</td>
                 <td class="val">${date}</td>
-                <td class="lbl">Time (24hr):</td>
+                <td class="lbl">Time of Incident / Occurrence (24hr):</td>
                 <td class="val">${time}</td>
               </tr>
               <tr>
@@ -2209,6 +2293,10 @@ export class IncidentPdfService {
           <div class="comment-box">${description}</div>
           <div class="sub-hdr-bar">What is the consequence of this incident?</div>
           <div class="comment-box">${consequence}</div>
+          ${headsUp.lateSubmissionReason ? `
+          <div class="sub-hdr-bar" style="background: #fee2e2; color: #991b1b; font-weight: 700;">Reason for Late Submission (Exceeded 2-Hour SLA Deadline)</div>
+          <div class="comment-box" style="border-left: 3px solid #dc2626; color: #991b1b; font-weight: 600;">${headsUp.lateSubmissionReason}</div>
+          ` : ''}
 
           ${(isCat('Environmental') || hasEnvData) ? `
           <div class="section-hdr">4. Environmental Incident Details</div>
@@ -2289,23 +2377,30 @@ export class IncidentPdfService {
             </tbody>
           </table>
 
-          <div class="section-hdr">Notification Signatures & Sign-Off</div>
+          <div class="section-hdr">Notification Sign-Off</div>
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td class="lbl" style="width: 22%;">Submitted By:</td>
-                <td class="val" style="width: 28%;"><strong>${headsUpSubmitter}</strong></td>
-                <td class="lbl" style="width: 18%;">Digital Signature:</td>
-                <td class="val" style="width: 32%;">${renderSignature(headsUpSig, headsUpSubmitter)}</td>
+                <td class="lbl" style="width: 25%;">Submitted By:</td>
+                <td class="val" style="width: 25%;"><strong>${headsUpSubmitter}</strong></td>
+                <td class="lbl" style="width: 25%;">Submission Date &amp; Time:</td>
+                <td class="val" style="width: 25%;">${formatTimestamp(headsUp.submittedTime || headsUp.createdAt || inc.createdTime)}</td>
               </tr>
-              ${headsUpApprSig ? `
+              ${(headsUpApprName && headsUpApprName !== 'Site HSE Manager') || headsUpApprSig || headsUp.approvedTime ? `
               <tr>
-                <td class="lbl">Reviewed & Approved By:</td>
-                <td class="val" style="width: 28%;"><strong>${headsUpApprName}</strong></td>
-                <td class="lbl">Approver Signature:</td>
-                <td class="val" style="width: 32%;">${renderSignature(headsUpApprSig, headsUpApprName)}</td>
+                <td class="lbl" style="width: 25%;">Reviewed &amp; Approved By:</td>
+                <td class="val" style="width: 25%;"><strong>${headsUpApprName}</strong></td>
+                <td class="lbl" style="width: 25%;">Approval Date &amp; Time:</td>
+                <td class="val" style="width: 25%;">${formatTimestamp(headsUp.approvedTime || inc.headsUpApprovedTime || inc.updatedTime)}</td>
               </tr>
-              ` : ''}
+              ` : `
+              <tr>
+                <td class="lbl" style="width: 25%;">Reviewed &amp; Approved By:</td>
+                <td class="val" style="width: 25%;"><strong>${headsUpApprName || 'Site HSE Manager'}</strong></td>
+                <td class="lbl" style="width: 25%;">Approval Status:</td>
+                <td class="val" style="width: 25%;"><span style="color: #16a34a; font-weight: 700;">Verified &amp; Approved</span></td>
+              </tr>
+              `}
             </tbody>
           </table>
 
@@ -2341,9 +2436,9 @@ export class IncidentPdfService {
                 <td class="val" colspan="3"><strong>${title}</strong></td>
               </tr>
               <tr>
-                <td class="lbl">Date (YYYY-MM-DD):</td>
+                <td class="lbl">Date of Incident / Occurrence (YYYY-MM-DD):</td>
                 <td class="val">${date}</td>
-                <td class="lbl">Time (24hr):</td>
+                <td class="lbl">Time of Incident / Occurrence (24hr):</td>
                 <td class="val">${time}</td>
               </tr>
               <tr>
@@ -2494,9 +2589,13 @@ export class IncidentPdfService {
 
           <div class="section-hdr">Section D. Incident Description</div>
           <div class="comment-box">${initial.description || description}</div>
+          ${initial.lateSubmissionReason ? `
+          <div class="sub-hdr-bar" style="background: #fee2e2; color: #991b1b; font-weight: 700;">Reason for Late Submission (Exceeded 24-Hour SLA Deadline)</div>
+          <div class="comment-box" style="border-left: 3px solid #dc2626; color: #991b1b; font-weight: 600;">${initial.lateSubmissionReason}</div>
+          ` : ''}
 
           <div class="section-hdr">Section E. Photos from Incident Location</div>
-          ${renderPhotosGrid()}
+          ${renderPhotosGrid(resolvedInitialPhotos)}
 
           ${(!isEnv && !isPropertyDamage) ? `
           <div class="section-hdr">Section G. Injury / Illness Information</div>
@@ -2512,6 +2611,12 @@ export class IncidentPdfService {
                 <td class="lbl" style="width: 22%;">Anticipated Absence:</td>
                 <td class="val" style="width: 28%;">${anticipatedAbsence}</td>
               </tr>
+              ${(initial.easyCode || inv.easyCode) ? `
+              <tr>
+                <td class="lbl" style="width: 22%;">EASY Code / Number:</td>
+                <td class="val" colspan="3"><strong>${initial.easyCode || inv.easyCode}</strong></td>
+              </tr>
+              ` : ''}
             </tbody>
           </table>
 
@@ -2646,23 +2751,30 @@ export class IncidentPdfService {
             </tbody>
           </table>
 
-          <div class="section-hdr">Section M. Submitter & Approver Signatures</div>
+          <div class="section-hdr">Section M. Submitter &amp; Approver Sign-Off</div>
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td class="lbl" style="width: 22%;">Submitted By:</td>
-                <td class="val" style="width: 28%;"><strong>${initialSubmitter}</strong></td>
-                <td class="lbl" style="width: 18%;">Digital Signature:</td>
-                <td class="val" style="width: 32%;">${renderSignature(initialSig, initialSubmitter)}</td>
+                <td class="lbl" style="width: 25%;">Submitted By:</td>
+                <td class="val" style="width: 25%;"><strong>${initialSubmitter}</strong></td>
+                <td class="lbl" style="width: 25%;">Submission Date &amp; Time:</td>
+                <td class="val" style="width: 25%;">${formatTimestamp(initial.submittedTime || initial.createdAt)}</td>
               </tr>
-              ${initialApprSig ? `
+              ${(initialApprName && initialApprName !== 'Site HSE Manager') || initialApprSig || initial.approvedTime ? `
               <tr>
-                <td class="lbl">Approved By:</td>
-                <td class="val" style="width: 28%;"><strong>${initialApprName}</strong></td>
-                <td class="lbl">Approver Signature:</td>
-                <td class="val" style="width: 32%;">${renderSignature(initialApprSig, initialApprName)}</td>
+                <td class="lbl" style="width: 25%;">Approved By:</td>
+                <td class="val" style="width: 25%;"><strong>${initialApprName}</strong></td>
+                <td class="lbl" style="width: 25%;">Approval Date &amp; Time:</td>
+                <td class="val" style="width: 25%;">${formatTimestamp(initial.approvedTime || inc.initialReportApprovedTime || inc.updatedTime)}</td>
               </tr>
-              ` : ''}
+              ` : `
+              <tr>
+                <td class="lbl" style="width: 25%;">Approved By:</td>
+                <td class="val" style="width: 25%;"><strong>${initialApprName || 'Site HSE Manager'}</strong></td>
+                <td class="lbl" style="width: 25%;">Approval Status:</td>
+                <td class="val" style="width: 25%;"><span style="color: #16a34a; font-weight: 700;">Verified &amp; Approved</span></td>
+              </tr>
+              `}
             </tbody>
           </table>
 
@@ -2737,6 +2849,10 @@ export class IncidentPdfService {
           <div class="section-hdr">2. Investigation Details</div>
           <div class="sub-hdr-bar">Description of process, timelines, tools, parties involved, systems reviewed, equipment, and findings.</div>
           <div class="comment-box">${inv.investigationDetails || inv.investigation_details || description || 'Detailed investigation process completed covering timeline, tools, equipment inspection, interviews, and system review.'}</div>
+          ${inv.lateSubmissionReason ? `
+          <div class="sub-hdr-bar" style="background: #fee2e2; color: #991b1b; font-weight: 700;">Reason for Late Submission (Exceeded 7-Day SLA Deadline)</div>
+          <div class="comment-box" style="border-left: 3px solid #dc2626; color: #991b1b; font-weight: 600;">${inv.lateSubmissionReason}</div>
+          ` : ''}
 
           ${includeWitnesses ? `
           <div class="section-hdr">3. Witness Statements</div>
@@ -2856,7 +2972,7 @@ export class IncidentPdfService {
           <div class="comment-box">${inv.lessonsLearned || inv.lessons_learned || inv.lessons || 'Ensure pre-task risk assessments explicitly include site safety controls and risk mitigation measures.'}</div>
 
           <div class="section-hdr">13. Photos from Incident Location</div>
-          ${renderPhotosGrid()}
+          ${renderPhotosGrid(resolvedInvPhotos)}
 
           ${includeAttachments ? `
           <div class="section-hdr">14. Mandatory Attachments Checklist</div>
@@ -2864,21 +2980,23 @@ export class IncidentPdfService {
           ${renderMandatoryAttachmentsTable()}
           ` : ''}
 
-          <div class="section-hdr">17. Signatures & Distribution Sign-Off</div>
+          <div class="section-hdr">17. Distribution &amp; Approval Sign-Off</div>
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td class="lbl" style="width: 22%;">HSE Investigator Name:</td>
-                <td class="val" style="width: 28%;"><strong>${investigatorName}</strong></td>
-                <td class="lbl" style="width: 18%;">Digital Signature:</td>
-                <td class="val" style="width: 32%;">${renderSignature(investigatorSig, investigatorName)}</td>
+                <td class="lbl" style="width: 25%;">HSE Investigator Name:</td>
+                <td class="val" style="width: 25%;"><strong>${investigatorName}</strong></td>
+                <td class="lbl" style="width: 25%;">Role / Title:</td>
+                <td class="val" style="width: 25%;">Site HSE Investigator</td>
               </tr>
+              ${reviewerName ? `
               <tr>
-                <td class="lbl">Reviewer Name:</td>
-                <td class="val" style="width: 28%;"><strong>${reviewerName}</strong></td>
-                <td class="lbl">Digital Signature:</td>
-                <td class="val" style="width: 32%;">${renderSignature(reviewerSig, reviewerName)}</td>
+                <td class="lbl" style="width: 25%;">Reviewer Name:</td>
+                <td class="val" style="width: 25%;"><strong>${reviewerName}</strong></td>
+                <td class="lbl" style="width: 25%;">Reviewer Role:</td>
+                <td class="val" style="width: 25%;">Site HSE Lead / Reviewer</td>
               </tr>
+              ` : ''}
             </tbody>
           </table>
 

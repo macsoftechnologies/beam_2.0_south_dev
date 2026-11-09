@@ -75,6 +75,9 @@ export class IncidentInitialReport {
   @Column({ name: 'medical_treatment_class', type: 'varchar', length: 255, nullable: true })
   medicalTreatmentClass?: string;
 
+  @Column({ name: 'easy_code', type: 'varchar', length: 100, nullable: true })
+  easyCode?: string;
+
   @Column({ name: 'initial_root_cause', type: 'text', nullable: true })
   initialRootCause?: string;
 
@@ -95,6 +98,15 @@ export class IncidentInitialReport {
 
   @Column({ name: 'submitted_by', type: 'varchar', length: 255, nullable: true })
   submittedBy?: string;
+
+  @Column({ name: 'submitted_by_email', type: 'varchar', length: 255, nullable: true })
+  submittedByEmail?: string;
+
+  @Column({ name: 'submitted_by_id', type: 'int', nullable: true })
+  submittedById?: number;
+
+  @Column({ name: 'late_submission_reason', type: 'text', nullable: true })
+  lateSubmissionReason?: string;
 
   @Column({ name: 'signature', type: 'text', nullable: true })
   signature?: string;

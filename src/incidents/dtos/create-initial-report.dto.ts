@@ -206,6 +206,10 @@ export class CreateInitialReportDto {
 
   @IsString()
   @IsOptional()
+  easyCode?: string;
+
+  @IsString()
+  @IsOptional()
   initialRootCause?: string;
 
   @IsString()
@@ -260,6 +264,17 @@ export class CreateInitialReportDto {
   @IsString()
   @IsOptional()
   submittedBy?: string;
+
+  @IsString()
+  @IsOptional()
+  submittedByEmail?: string;
+
+  @IsOptional()
+  submittedById?: number;
+
+  @IsString()
+  @IsOptional()
+  lateSubmissionReason?: string;
 
   @IsString()
   @IsOptional()

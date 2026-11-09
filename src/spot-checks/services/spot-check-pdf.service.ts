@@ -794,10 +794,10 @@ export class SpotCheckPdfService {
         </div>
 
         <!-- ==========================================
-             PAGE 3: 3 | SUMMARY - SIGNATURES AND EVIDENCE
+             PAGE 3: 3 | SUMMARY - SIGN-OFF AND EVIDENCE
         =========================================== -->
         <div class="pdf-page">
-          <div class="section-hdr">SUMMARY - SIGNATURES AND EVIDENCE</div>
+          <div class="section-hdr">SUMMARY - SIGN-OFF AND EVIDENCE</div>
           
           <div style="font-weight: 700; font-size: 9.5px; margin: 8px 0 4px 0;">Foreman / Supervisor Details</div>
           <table class="sc-grid">
@@ -809,12 +809,10 @@ export class SpotCheckPdfService {
                 <td class="val" style="width: 32%;">${sc.foremanCompany || '-'}</td>
               </tr>
               <tr>
-                <td class="lbl">Signature</td>
-                <td class="val">
-                  ${renderSignature(sc.foremanSignature, sc.foremanName || 'Foreman')}
-                </td>
                 <td class="lbl">Date</td>
                 <td class="val">${this.formatDate(sc.foremanDate)}</td>
+                <td class="lbl">Status</td>
+                <td class="val"><span style="color: #16a34a; font-weight: 700;">Acknowledged &amp; Signed Off</span></td>
               </tr>
             </tbody>
           </table>
@@ -826,7 +824,7 @@ export class SpotCheckPdfService {
             <thead>
               <tr class="chk-table-hdr">
                 <th style="width: 42px; text-align: center;">No.</th>
-                <th style="text-align: left;">Description / reference</th>
+                <th style="text-align: left;">Photograph / Attachment</th>
                 <th style="width: 140px; text-align: center;">Attached</th>
               </tr>
             </thead>
@@ -838,7 +836,7 @@ export class SpotCheckPdfService {
                     <tr>
                       <td class="lbl" style="text-align: center;"><b>${idx + 1}</b></td>
                       <td>
-                        <b>${att.desc || att.description || `Attachment ${idx + 1}`}</b>
+                        <b>${att.desc || att.description || att.fileName || `Attachment ${idx + 1}`}</b>
                         ${att.fileName ? `<div style="font-size: 8.5px; color: #475569; margin-top: 2px;">File: ${att.fileName} ${att.fileSize ? `(${att.fileSize})` : ''}</div>` : ''}
                       </td>
                       <td style="text-align: center;">
@@ -897,12 +895,10 @@ export class SpotCheckPdfService {
                 <td class="val" style="width: 32%;">${sc.inspectorCompany || 'NNE'}</td>
               </tr>
               <tr>
-                <td class="lbl">Signature</td>
-                <td class="val">
-                  ${renderSignature(sc.inspectorSignature, sc.inspectorName || 'Inspector')}
-                </td>
                 <td class="lbl">Date</td>
                 <td class="val">${this.formatDate(sc.inspectorDate || sc.createdTime)}</td>
+                <td class="lbl">Status</td>
+                <td class="val"><span style="color: #16a34a; font-weight: 700;">Verified &amp; Signed Off</span></td>
               </tr>
             </tbody>
           </table>

@@ -1566,6 +1566,210 @@ export class NotificationsService {
   }
 
   /**
+   * Helper to resolve the user who originally submitted/reported the incident.
+   */
+  async findIncidentSubmitterUser(incident: any): Promise<{ email?: string; userId?: number; name?: string } | null> {
+    if (!incident) return null;
+
+    // 1. Direct email and reporter ID on incident
+    if (incident.reporterEmail && typeof incident.reporterEmail === 'string' && incident.reporterEmail.includes('@')) {
+      return {
+        email: incident.reporterEmail.trim(),
+        userId: incident.reporterId ? Number(incident.reporterId) : undefined,
+        name: incident.reportedBy || incident.reporterName,
+      };
+    }
+
+    // 2. Direct email and submitter ID on headsUp
+    if (incident.headsUp?.submittedByEmail && typeof incident.headsUp.submittedByEmail === 'string' && incident.headsUp.submittedByEmail.includes('@')) {
+      return {
+        email: incident.headsUp.submittedByEmail.trim(),
+        userId: incident.headsUp.submittedById ? Number(incident.headsUp.submittedById) : undefined,
+        name: incident.headsUp.submittedBy,
+      };
+    }
+
+    // 3. By reporterId or submittedById
+    const targetUserId = incident.reporterId || incident.headsUp?.submittedById;
+    if (targetUserId) {
+      const contactMap = await this.resolveLiveUserContacts([targetUserId]);
+      const userContact = contactMap.get(Number(targetUserId));
+      if (userContact && userContact.email) {
+        return {
+          email: userContact.email,
+          userId: Number(targetUserId),
+          name: userContact.name || userContact.username,
+        };
+      }
+    }
+
+    // 4. By username or employee name
+    const submitterStr = incident.headsUp?.submittedBy || incident.reportedBy || incident.reporterName;
+    if (submitterStr && typeof submitterStr === 'string') {
+      if (submitterStr.includes('@')) {
+        return { email: submitterStr.trim(), name: submitterStr.trim() };
+      }
+      try {
+        const rawUser = await this.userRepo.createQueryBuilder('user')
+          .leftJoin('employees', 'emp', '(user.empId = emp.id OR user.username = emp.username)')
+          .select(['user.id AS id', 'user.username AS username', 'emp.email AS empEmail', 'emp.employeeName AS employeeName'])
+          .where('user.username = :str OR emp.employeeName = :str OR emp.email = :str', { str: submitterStr })
+          .getRawOne();
+        if (rawUser) {
+          const email = rawUser.empEmail || (rawUser.username && rawUser.username.includes('@') ? rawUser.username : undefined);
+          if (email) {
+            return {
+              email,
+              userId: Number(rawUser.id),
+              name: rawUser.employeeName || rawUser.username,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('[Notification] Error looking up incident submitter by name:', err);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Trigger late submission notification directly to the user who submits the incident.
+   * Required when a form is filled/submitted past its SLA deadline.
+   */
+  async triggerIncidentLateSubmissionNotification(options: {
+    incident: any;
+    stepName: string;
+    deadlineDate: Date | string;
+    submissionDate?: Date | string;
+    lateReason: string;
+    submitterName?: string;
+    submitterEmail?: string;
+    submitterUserId?: number;
+  }): Promise<void> {
+    try {
+      const { incident, stepName, deadlineDate, submissionDate, lateReason, submitterName, submitterEmail, submitterUserId } = options;
+      const caseNumber = incident.caseNumber || `INC-${incident.id}`;
+      const categoryName = Array.isArray(incident.categories) && incident.categories.length > 0
+        ? incident.categories.join(', ')
+        : (incident.category || incident.type || 'Incident');
+      const incidentLink = this.getIncidentDirectLink(incident.id);
+
+      const formatDt = (d: any) => {
+        if (!d) return '-';
+        const parsed = new Date(d);
+        if (isNaN(parsed.getTime())) return String(d);
+        return parsed.toLocaleString('en-GB', {
+          timeZone: 'Europe/Copenhagen',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).replace(',', '');
+      };
+
+      const deadlineStr = formatDt(deadlineDate);
+      const submittedStr = formatDt(submissionDate || new Date());
+
+      // Resolve the original incident submitter
+      const originalSubmitter = await this.findIncidentSubmitterUser(incident);
+
+      // Collect target recipients (both the original incident submitter and current submitter if available)
+      const recipientEmails = new Set<string>();
+      const recipientUserIds = new Set<number>();
+
+      if (originalSubmitter?.email && originalSubmitter.email.includes('@')) {
+        recipientEmails.add(originalSubmitter.email.trim());
+      }
+      if (originalSubmitter?.userId) {
+        recipientUserIds.add(originalSubmitter.userId);
+      }
+
+      if (submitterEmail && typeof submitterEmail === 'string' && submitterEmail.includes('@')) {
+        recipientEmails.add(submitterEmail.trim());
+      }
+      if (submitterUserId) {
+        recipientUserIds.add(submitterUserId);
+      }
+
+      console.log(`[Notification] Late submission detected for Incident ${caseNumber} (${stepName}). Found ${recipientEmails.size} recipient email(s): ${Array.from(recipientEmails).join(', ')}`);
+
+      const title = `Late Form Submission: ${stepName}`;
+      const message = `The ${stepName} for incident ${caseNumber} (${categoryName}) was submitted after the scheduled deadline (${deadlineStr}). The reason provided for the late submission is recorded below.`;
+      const emailSubject = `Late Submission Alert: ${caseNumber} - ${stepName}`;
+
+      const emailHtml = this.buildIncidentEmailHtml({
+        title,
+        message,
+        caseNumber,
+        stepName,
+        categoryName,
+        incidentId: incident.id,
+        badgeText: 'Deadline Exceeded',
+        badgeColor: '#fee2e2',
+        badgeTextColor: '#991b1b',
+        borderColor: '#dc2626',
+        extraRows: [
+          { label: 'Scheduled Deadline', value: `<span style="color: #dc2626; font-weight: 600;">${deadlineStr}</span>` },
+          { label: 'Submitted At', value: submittedStr },
+          { label: 'Submitted By', value: submitterName || originalSubmitter?.name || 'User' },
+          {
+            label: 'Late Reason',
+            value: `<div style="margin-top: 4px; padding: 10px 14px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 6px; color: #9f1239; font-weight: 600; line-height: 1.5;">${lateReason}</div>`,
+          },
+        ],
+      });
+
+      // 1. Send In-App notification to the recipient user(s)
+      for (const uId of recipientUserIds) {
+        await this.notificationRepo.save(
+          this.notificationRepo.create({
+            receiverUserId: uId,
+            senderUserId: submitterUserId || undefined,
+            notificationType: 'INCIDENT_LATE_SUBMISSION',
+            permitStatus: stepName,
+            title,
+            message: `${message} Reason: ${lateReason}`,
+            isRead: 0,
+            metadata: JSON.stringify({
+              module: 'INCIDENTS',
+              incidentId: incident.id,
+              caseNumber,
+              stepName,
+              deadlineStr,
+              submittedStr,
+              lateReason,
+              link: `/incident-management/details/${incident.id}`,
+            }),
+          }),
+        ).catch(err => {
+          console.error(`[Notification] Failed to save late submission in-app notification for user ${uId}:`, err);
+        });
+      }
+
+      // 2. Dispatch Email directly to the user who submits the incident
+      if (recipientEmails.size > 0) {
+        for (const email of recipientEmails) {
+          await this.emailService.sendEmail({
+            to: email,
+            subject: emailSubject,
+            text: `${title}\n\n${message}\n\nCase Number: ${caseNumber}\nIncident Type: ${categoryName}\nStep: ${stepName}\nDeadline: ${deadlineStr}\nSubmitted At: ${submittedStr}\nLate Reason: ${lateReason}\n\nView Incident Details:\n${incidentLink}`,
+            html: emailHtml,
+          }).catch(err => {
+            console.error(`[Notification] Failed to send late submission email to ${email}:`, err);
+          });
+        }
+      } else {
+        console.warn(`[Notification] No email address could be resolved for the incident submitter of ${caseNumber}. Checked reporterEmail, headsUp.submittedByEmail, and DB.`);
+      }
+    } catch (err) {
+      console.error('[Notification] Error in triggerIncidentLateSubmissionNotification:', err);
+    }
+  }
+
+  /**
    * Trigger notifications when a contractor submits an incident step report or resubmits after revision.
    * Sends to Notification Group 1 (GROUP_1):
    * 1. In-App Notification to configured group members (isInAppEnabled !== false).
@@ -1579,6 +1783,7 @@ export class NotificationsService {
     actorUserId?: number,
     groupKey: string = 'GROUP_1',
     isResubmission: boolean = false,
+    lateReason?: string,
   ): Promise<void> {
     try {
       const cName = contractorName || incident.contractorsInvolved || incident.contractorName || 'Contractor';
@@ -1652,6 +1857,10 @@ export class NotificationsService {
         extraRows: [
           { label: 'Contractor', value: cName },
           { label: 'Submission Type', value: isResubmission ? 'Return to Revision Resubmission' : 'Initial Submission' },
+          ...(lateReason ? [
+            { label: 'SLA Status', value: '<span style="color: #dc2626; font-weight: 700;">Deadline Exceeded</span>' },
+            { label: 'Late Submission Reason', value: lateReason },
+          ] : []),
         ],
       });
 

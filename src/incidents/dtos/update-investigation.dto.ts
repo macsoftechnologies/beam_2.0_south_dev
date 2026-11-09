@@ -68,6 +68,10 @@ export class UpdateInvestigationDto {
   @IsOptional()
   preventativeMeasures?: string;
 
+  @IsString()
+  @IsOptional()
+  easyCode?: string;
+
   @IsOptional()
   preSeverity?: number;
 
@@ -107,4 +111,15 @@ export class UpdateInvestigationDto {
   @IsString()
   @IsOptional()
   changes?: string;
+
+  @IsString()
+  @IsOptional()
+  submittedByEmail?: string;
+
+  @IsOptional()
+  submittedById?: number;
+
+  @IsString()
+  @IsOptional()
+  lateSubmissionReason?: string;
 }

@@ -40,7 +40,14 @@ export interface MandatoryAttachmentChecklist {
   safePlanOfAction?: boolean | MandatoryAttachmentItem;
   photos?: boolean | MandatoryAttachmentItem;
   evidenceForActionsTaken?: boolean | MandatoryAttachmentItem;
+  equipmentDataSheets?: boolean | MandatoryAttachmentItem;
+  easyDocument?: boolean | MandatoryAttachmentItem;
+  otherRelevantDocumentation?: boolean | MandatoryAttachmentItem;
   wasteDisposalInvoice?: boolean | MandatoryAttachmentItem;
+  safetyDataSheet?: boolean | MandatoryAttachmentItem;
+  soilAnalysisReports?: boolean | MandatoryAttachmentItem;
+  waterAnalysisReports?: boolean | MandatoryAttachmentItem;
+  easyCode?: string;
   other?: string | MandatoryAttachmentItem;
   items?: MandatoryAttachmentItem[];
   missingExplanation?: string;
@@ -119,8 +126,20 @@ export class IncidentInvestigation {
   @Column({ name: 'post_severity', type: 'int', nullable: true })
   postSeverity?: number;
 
+  @Column({ name: 'easy_code', type: 'varchar', length: 100, nullable: true })
+  easyCode?: string;
+
   @CreateDateColumn({ name: 'completed_time', type: 'datetime' })
   completedTime: Date;
+
+  @Column({ name: 'submitted_by_email', type: 'varchar', length: 255, nullable: true })
+  submittedByEmail?: string;
+
+  @Column({ name: 'submitted_by_id', type: 'int', nullable: true })
+  submittedById?: number;
+
+  @Column({ name: 'late_submission_reason', type: 'text', nullable: true })
+  lateSubmissionReason?: string;
 
   @Column({ name: 'reviewed_by', type: 'varchar', length: 255, nullable: true })
   reviewedBy?: string;

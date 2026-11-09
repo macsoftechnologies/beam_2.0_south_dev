@@ -43,6 +43,15 @@ export class IncidentHeadsUp {
   @Column({ name: 'submitted_by', type: 'varchar', length: 255, nullable: true })
   submittedBy?: string;
 
+  @Column({ name: 'submitted_by_email', type: 'varchar', length: 255, nullable: true })
+  submittedByEmail?: string;
+
+  @Column({ name: 'submitted_by_id', type: 'int', nullable: true })
+  submittedById?: number;
+
+  @Column({ name: 'late_submission_reason', type: 'text', nullable: true })
+  lateSubmissionReason?: string;
+
   @Column({ name: 'signature', type: 'text', nullable: true })
   signature?: string;
 
