@@ -209,6 +209,10 @@ export class IncidentsService implements OnModuleInit {
         `ALTER TABLE \`incidents\` ADD COLUMN \`location_map_image\` TEXT NULL`,
         `ALTER TABLE \`incident_headsup\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
         `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`no_further_investigation\` TINYINT(1) NOT NULL DEFAULT 0`,
+        `ALTER TABLE \`incident_headsup\` ADD COLUMN \`categories\` JSON NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`categories\` JSON NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`easy_code\` VARCHAR(100) NULL`,
+        `ALTER TABLE \`incident_initial_reports\` ADD COLUMN \`anticipated_absence\` VARCHAR(255) NULL`,
       ];
 
       for (const q of alterQueries) {
@@ -218,6 +222,26 @@ export class IncidentsService implements OnModuleInit {
           // Column may already exist, ignore duplicate column errors safely
         }
       }
+
+      // Backfill incident_headsup.categories and incident_initial_reports.categories for existing records if null
+      try {
+        await this.headsUpRepo.query(`
+          UPDATE \`incident_headsup\` h
+          JOIN \`incidents\` i ON h.incident_id = i.id
+          LEFT JOIN \`incident_initial_reports\` r ON r.incident_id = i.id
+          SET h.categories = i.categories
+          WHERE h.categories IS NULL AND i.categories IS NOT NULL AND (r.id IS NULL OR r.submitted_by IS NULL)
+        `);
+      } catch (e) {}
+
+      try {
+        await this.initialReportRepo.query(`
+          UPDATE \`incident_initial_reports\` r
+          JOIN \`incidents\` i ON r.incident_id = i.id
+          SET r.categories = i.categories
+          WHERE r.categories IS NULL AND i.categories IS NOT NULL AND r.submitted_by IS NOT NULL
+        `);
+      } catch (e) {}
 
       // Clean up existing database signatures by stripping 'uploads/signatures/', '/uploads/signatures/', 'uploads/', '/uploads/'
       const cleanupSignatureQueries = [
@@ -310,7 +334,7 @@ export class IncidentsService implements OnModuleInit {
   }
 
   /**
-   * Stage 1: Submit Heads-Up Notification (within 2 hours)
+   * Stage 1: Submit Heads-Up Notification (within 1 hour)
    */
   async submitHeadsUp(dto: CreateHeadsUpDto): Promise<{ incident: Incident; headsUp: IncidentHeadsUp }> {
     const caseNumber = await this.generateCaseNumber();
@@ -320,8 +344,8 @@ export class IncidentsService implements OnModuleInit {
     const incidentTimestamp = new Date(incidentDateTimeStr);
     const validTimestamp = isNaN(incidentTimestamp.getTime()) ? new Date() : incidentTimestamp;
 
-    // SLAs: 2h, 24h, 7d
-    const slaHeadsUpDue = new Date(validTimestamp.getTime() + 2 * 60 * 60 * 1000);
+    // SLAs: 1h, 24h, 7d
+    const slaHeadsUpDue = new Date(validTimestamp.getTime() + 1 * 60 * 60 * 1000);
     const slaInitialDue = new Date(validTimestamp.getTime() + 24 * 60 * 60 * 1000);
     const slaInvestigationDue = new Date(validTimestamp.getTime() + 7 * 24 * 60 * 60 * 1000);
 
@@ -365,6 +389,7 @@ export class IncidentsService implements OnModuleInit {
 
     const headsUp = this.headsUpRepo.create({
       incidentId: savedIncident.id,
+      categories: dto.categories || [],
       descriptionWhatHappened: dto.descriptionWhatHappened,
       descriptionConsequence: dto.descriptionConsequence,
       isEnvironmental: dto.isEnvironmental || false,
@@ -409,13 +434,13 @@ export class IncidentsService implements OnModuleInit {
       await this.actionItemRepo.save(actionEntities);
     }
 
-    // Check if Heads-Up submission exceeded the 2-hour deadline
+    // Check if Heads-Up submission exceeded the 1-hour deadline
     const now = new Date();
     const isHuLate = (now.getTime() > slaHeadsUpDue.getTime()) || Boolean(dto.lateSubmissionReason);
     if (isHuLate && dto.lateSubmissionReason) {
       this.notificationsService.triggerIncidentLateSubmissionNotification({
         incident: savedIncident,
-        stepName: 'Heads-Up Notification (2hr)',
+        stepName: 'Heads-Up Notification (1hr)',
         deadlineDate: slaHeadsUpDue,
         submissionDate: now,
         lateReason: dto.lateSubmissionReason,
@@ -482,7 +507,15 @@ export class IncidentsService implements OnModuleInit {
       incident.locationMapImage = dto.locationMapImage ? saveBase64LocationMap(dto.locationMapImage, `inc_map_${incidentId}`) : incident.locationMapImage;
     }
     if (dto.contractorsInvolved !== undefined) incident.contractorsInvolved = dto.contractorsInvolved;
-    if (dto.categories !== undefined) incident.categories = Array.isArray(dto.categories) ? dto.categories : [dto.categories];
+    if (dto.categories !== undefined) {
+      const cats = Array.isArray(dto.categories) ? dto.categories : [dto.categories];
+      headsUp.categories = cats;
+      const irExists = await this.initialReportRepo.findOne({ where: { incidentId } });
+      const hasInitialReport = Boolean(irExists && (irExists.submittedBy || irExists.submittedTime));
+      if (!hasInitialReport) {
+        incident.categories = cats;
+      }
+    }
     if (dto.actualSeverity !== undefined) incident.actualSeverity = dto.actualSeverity ? Number(dto.actualSeverity) : undefined;
     if (dto.potentialSeverity !== undefined) incident.potentialSeverity = dto.potentialSeverity ? Number(dto.potentialSeverity) : undefined;
     if (dto.isHipo !== undefined) incident.isHipo = dto.isHipo;
@@ -497,7 +530,7 @@ export class IncidentsService implements OnModuleInit {
       const parsed = new Date(`${d}T${t}:00`);
       if (!isNaN(parsed.getTime())) {
         incident.incidentTimestamp = parsed;
-        incident.slaHeadsUpDue = new Date(parsed.getTime() + 2 * 60 * 60 * 1000);
+        incident.slaHeadsUpDue = new Date(parsed.getTime() + 1 * 60 * 60 * 1000);
         incident.slaInitialDue = new Date(parsed.getTime() + 24 * 60 * 60 * 1000);
         incident.slaInvestigationDue = new Date(parsed.getTime() + 7 * 24 * 60 * 60 * 1000);
       }
@@ -650,6 +683,13 @@ export class IncidentsService implements OnModuleInit {
     incident.isHipo = dto.isHipo !== undefined ? dto.isHipo : isHipo;
     incident.investigationLevel = investigationLevel;
     incident.stage = IncidentStage.INITIAL_REPORT;
+
+    // Preserve Heads-Up's original categories if not already explicitly set
+    if (headsUp && (!headsUp.categories || headsUp.categories.length === 0) && incident.categories && incident.categories.length > 0) {
+      headsUp.categories = incident.categories;
+      await this.headsUpRepo.save(headsUp);
+    }
+
     if (dto.categories && Array.isArray(dto.categories) && dto.categories.length > 0) {
       incident.categories = dto.categories;
     }
@@ -664,6 +704,19 @@ export class IncidentsService implements OnModuleInit {
     }
     if (!initialReport) {
       initialReport = this.initialReportRepo.create({ incidentId });
+    }
+
+    const isLostTimeBackend = (dto.categories && Array.isArray(dto.categories) && dto.categories.some(c => String(c).toLowerCase().includes('lost time'))) ||
+      (dto.treatmentPrescribed && String(dto.treatmentPrescribed).toLowerCase().includes('lost time')) ||
+      (Array.isArray(dto.treatmentProvided) && dto.treatmentProvided.some(t => String(t).toLowerCase().includes('lost time')));
+
+    if (isLostTimeBackend) {
+      if (!dto.anticipatedAbsence || !String(dto.anticipatedAbsence).trim()) {
+        throw new BadRequestException('Anticipated absence from work is required for Lost Time Injury.');
+      }
+      if (!dto.easyCode || !String(dto.easyCode).trim()) {
+        throw new BadRequestException('EASY Code / Number is required for Lost Time Injury.');
+      }
     }
 
     // Reopened incident validation: only Department and Admin users can edit
@@ -705,6 +758,7 @@ export class IncidentsService implements OnModuleInit {
     }
 
     initialReport.photos = dto.photos || [];
+    if (dto.categories && Array.isArray(dto.categories)) initialReport.categories = dto.categories;
     initialReport.hasInjuryIllness = dto.hasInjuryIllness || false;
     initialReport.natureOfInjury = dto.natureOfInjury;
     initialReport.treatmentPrescribed = dto.treatmentPrescribed;
@@ -1508,6 +1562,13 @@ export class IncidentsService implements OnModuleInit {
     const initialReport = await this.initialReportRepo.findOne({ where: { incidentId: id } });
     const investigation = await this.investigationRepo.findOne({ where: { incidentId: id } });
     const actionItems = await this.actionItemRepo.find({ where: { incidentId: id } });
+
+    if (headsUp && (!headsUp.categories || headsUp.categories.length === 0)) {
+      const hasInitial = Boolean(initialReport && (initialReport.submittedBy || initialReport.submittedTime));
+      if (!hasInitial && incident.categories) {
+        headsUp.categories = incident.categories;
+      }
+    }
 
     return {
       incident,

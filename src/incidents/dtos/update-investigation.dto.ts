@@ -104,9 +104,8 @@ export class UpdateInvestigationDto {
   @IsOptional()
   editReason?: string;
 
-  @IsString()
   @IsOptional()
-  editorSignature?: string;
+  editorSignature?: any;
 
   @IsString()
   @IsOptional()

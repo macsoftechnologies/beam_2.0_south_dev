@@ -20,7 +20,7 @@ export class IncidentSlaService {
   async checkSlaBreaches() {
     const now = new Date();
 
-    // 1. Stage 1 (Heads-Up) SLA Check (< 2 hours)
+    // 1. Stage 1 (Heads-Up) SLA Check (< 1 hour)
     const pendingHeadsUp = await this.incidentRepo.find({
       where: {
         stage: IncidentStage.HEADS_UP,
@@ -29,7 +29,7 @@ export class IncidentSlaService {
     });
 
     for (const inc of pendingHeadsUp) {
-      this.logger.warn(`[SLA BREACH - Stage 1] Incident ${inc.caseNumber} exceeded 2-hour Heads-Up Notification deadline!`);
+      this.logger.warn(`[SLA BREACH - Stage 1] Incident ${inc.caseNumber} exceeded 1-hour Heads-Up Notification deadline!`);
     }
 
     // 2. Stage 2 (Initial Report) SLA Check (< 24 hours)

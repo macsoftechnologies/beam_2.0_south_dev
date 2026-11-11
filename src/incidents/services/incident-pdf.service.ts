@@ -571,70 +571,6 @@ export class IncidentPdfService {
     const building = inc.buildingName || inc.location || 'Main Site Road';
     const specificLoc = inc.specificLocation || 'Entry Point';
     const contractor = inc.contractorsInvolved || inc.contractor || headsUp.contractorsInvolved || 'Give Steel / ATEA';
-    // Collect all categories across sub-forms
-    const allCategoriesList: string[] = [];
-    if (Array.isArray(inc.categories)) allCategoriesList.push(...inc.categories);
-    else if (inc.categories) allCategoriesList.push(String(inc.categories));
-    if (inc.category) allCategoriesList.push(String(inc.category));
-    if (Array.isArray(headsUp.categories)) allCategoriesList.push(...headsUp.categories);
-    else if (headsUp.categories) allCategoriesList.push(String(headsUp.categories));
-    if (headsUp.category) allCategoriesList.push(String(headsUp.category));
-    if (Array.isArray(initial.categories)) allCategoriesList.push(...initial.categories);
-    if (Array.isArray(initial.accidentCategories)) allCategoriesList.push(...initial.accidentCategories);
-
-    // Initial Report Treatment inference
-    const flatTreatments: string[] = [];
-    if (Array.isArray(initial.treatmentProvided)) {
-      initial.treatmentProvided.forEach((t: any) => {
-        if (Array.isArray(t)) flatTreatments.push(...t.map(String));
-        else if (t) flatTreatments.push(String(t));
-      });
-    }
-    if (initial.treatmentPrescribed) flatTreatments.push(String(initial.treatmentPrescribed));
-    if (initial.medicalTreatmentClass) flatTreatments.push(String(initial.medicalTreatmentClass));
-
-    flatTreatments.forEach((t: string) => {
-      const lowerT = t.toLowerCase();
-      if (lowerT.includes('medical treatment') || lowerT === 'treatment') allCategoriesList.push('Medical Treatment Injury');
-      if (lowerT.includes('first aid')) allCategoriesList.push('First Aid Injury');
-      if (lowerT.includes('hospitalization') || lowerT.includes('lost time')) allCategoriesList.push('Loss Time Injury');
-      if (lowerT.includes('no treatment')) allCategoriesList.push('No Treatment Injury');
-      if (lowerT.includes('restricted work')) allCategoriesList.push('Restricted Work Injury');
-    });
-
-    const hasEnvData = Boolean(
-      headsUp.isEnvironmental ||
-      (Array.isArray(headsUp.spillType) && headsUp.spillType.length > 0) ||
-      (typeof headsUp.spillType === 'string' && headsUp.spillType.trim().length > 0) ||
-      (headsUp.spillSubstance && String(headsUp.spillSubstance).trim().length > 0) ||
-      (headsUp.spillCause && String(headsUp.spillCause).trim().length > 0) ||
-      (initial.environmentalDetails && typeof initial.environmentalDetails === 'object' && Object.keys(initial.environmentalDetails).length > 0)
-    );
-    if (hasEnvData) {
-      allCategoriesList.push('Environmental Incident');
-    }
-
-    const hasPropData = Boolean(
-      headsUp.propertyDamaged ||
-      (initial.propertyDamageDetails && typeof initial.propertyDamageDetails === 'object' && Object.keys(initial.propertyDamageDetails).length > 0)
-    );
-    if (hasPropData) {
-      allCategoriesList.push('Property Damage');
-    }
-
-    const uniqueCategories = Array.from(new Set(allCategoriesList.filter(Boolean)));
-    const category = uniqueCategories.length > 0 ? uniqueCategories.join(', ') : (inc.category || 'Safety Observation / Incident');
-
-    const allCategoriesStr = uniqueCategories.join(' , ').toLowerCase();
-
-    const isCat = (catName: string) => {
-      const lower = catName.toLowerCase();
-      if (lower === 'loss time' || lower === 'lost time') {
-        return allCategoriesStr.includes('loss time') || allCategoriesStr.includes('lost time') || allCategoriesStr.includes('lti');
-      }
-      return allCategoriesStr.includes(lower);
-    };
-
     const standardCats = [
       'near miss',
       'no treatment',
@@ -650,11 +586,140 @@ export class IncidentPdfService {
       'property damage'
     ];
 
+    // 1. Stage 1: Heads-Up Form 1 Specific Categories
+    const headsUpCategoriesList: string[] = [];
+    if (Array.isArray(headsUp.categories) && headsUp.categories.length > 0) {
+      headsUpCategoriesList.push(...headsUp.categories);
+    } else if (headsUp.categories) {
+      headsUpCategoriesList.push(String(headsUp.categories));
+    } else if (headsUp.category) {
+      headsUpCategoriesList.push(String(headsUp.category));
+    } else if (!initial.submittedBy && !initial.categories) {
+      if (Array.isArray(inc.categories)) headsUpCategoriesList.push(...inc.categories);
+      else if (inc.categories) headsUpCategoriesList.push(String(inc.categories));
+      else if (inc.category) headsUpCategoriesList.push(String(inc.category));
+    }
+
+    const hasEnvDataHeadsUp = Boolean(
+      headsUp.isEnvironmental ||
+      (Array.isArray(headsUp.spillType) && headsUp.spillType.length > 0) ||
+      (typeof headsUp.spillType === 'string' && headsUp.spillType.trim().length > 0) ||
+      (headsUp.spillSubstance && String(headsUp.spillSubstance).trim().length > 0) ||
+      (headsUp.spillCause && String(headsUp.spillCause).trim().length > 0)
+    );
+    if (hasEnvDataHeadsUp) {
+      headsUpCategoriesList.push('Environmental Incident');
+    }
+
+    const hasPropDataHeadsUp = Boolean(headsUp.propertyDamaged);
+    if (hasPropDataHeadsUp) {
+      headsUpCategoriesList.push('Property Damage');
+    }
+
+    const uniqueHeadsUpCats = Array.from(new Set(headsUpCategoriesList.filter(Boolean)));
+    const headsUpCatsStr = uniqueHeadsUpCats.join(' , ').toLowerCase();
+
+    const isHeadsUpCat = (catName: string) => {
+      const lower = catName.toLowerCase();
+      if (lower === 'loss time' || lower === 'lost time') {
+        return headsUpCatsStr.includes('loss time') || headsUpCatsStr.includes('lost time') || headsUpCatsStr.includes('lti');
+      }
+      return headsUpCatsStr.includes(lower);
+    };
+
+    const headsUpOtherCustomCats = uniqueHeadsUpCats.filter(c => {
+      const lower = String(c).toLowerCase().trim();
+      if (!lower) return false;
+      return !standardCats.some(std => lower.includes(std));
+    });
+
+    // 2. Stage 2: Initial Report Form 2 Specific Categories
+    const initialCategoriesList: string[] = [];
+    if (Array.isArray(initial.categories) && initial.categories.length > 0) {
+      initialCategoriesList.push(...initial.categories);
+    } else if (initial.categories) {
+      initialCategoriesList.push(String(initial.categories));
+    } else if (initial.category) {
+      initialCategoriesList.push(String(initial.category));
+    } else if (Array.isArray(inc.categories)) {
+      initialCategoriesList.push(...inc.categories);
+    } else if (inc.category) {
+      initialCategoriesList.push(String(inc.category));
+    }
+
+    // Initial Report Treatment inference
+    const flatTreatments: string[] = [];
+    if (Array.isArray(initial.treatmentProvided)) {
+      initial.treatmentProvided.forEach((t: any) => {
+        if (Array.isArray(t)) flatTreatments.push(...t.map(String));
+        else if (t) flatTreatments.push(String(t));
+      });
+    }
+    if (initial.treatmentPrescribed) flatTreatments.push(String(initial.treatmentPrescribed));
+    if (initial.medicalTreatmentClass) flatTreatments.push(String(initial.medicalTreatmentClass));
+
+    flatTreatments.forEach((t: string) => {
+      const lowerT = t.toLowerCase();
+      if (lowerT.includes('medical treatment') || lowerT === 'treatment') initialCategoriesList.push('Medical Treatment Injury');
+      if (lowerT.includes('first aid')) initialCategoriesList.push('First Aid Injury');
+      if (lowerT.includes('hospitalization') || lowerT.includes('lost time')) initialCategoriesList.push('Loss Time Injury');
+      if (lowerT.includes('no treatment')) initialCategoriesList.push('No Treatment Injury');
+      if (lowerT.includes('restricted work')) initialCategoriesList.push('Restricted Work Injury');
+    });
+
+    const hasEnvDataInitial = Boolean(
+      initial.environmentalDetails && typeof initial.environmentalDetails === 'object' && Object.keys(initial.environmentalDetails).length > 0
+    );
+    if (hasEnvDataInitial) {
+      initialCategoriesList.push('Environmental Incident');
+    }
+
+    const hasPropDataInitial = Boolean(
+      initial.propertyDamageDetails && typeof initial.propertyDamageDetails === 'object' && Object.keys(initial.propertyDamageDetails).length > 0
+    );
+    if (hasPropDataInitial) {
+      initialCategoriesList.push('Property Damage');
+    }
+
+    const uniqueInitialCats = Array.from(new Set(initialCategoriesList.filter(Boolean)));
+    const initialCatsStr = uniqueInitialCats.join(' , ').toLowerCase();
+
+    const isInitialCat = (catName: string) => {
+      const lower = catName.toLowerCase();
+      if (lower === 'loss time' || lower === 'lost time') {
+        return initialCatsStr.includes('loss time') || initialCatsStr.includes('lost time') || initialCatsStr.includes('lti');
+      }
+      return initialCatsStr.includes(lower);
+    };
+
+    const initialOtherCustomCats = uniqueInitialCats.filter(c => {
+      const lower = String(c).toLowerCase().trim();
+      if (!lower) return false;
+      return !standardCats.some(std => lower.includes(std));
+    });
+
+    // Overview category for Form 3
+    const allCategoriesList: string[] = [...uniqueInitialCats, ...uniqueHeadsUpCats];
+    const uniqueCategories = Array.from(new Set(allCategoriesList.filter(Boolean)));
+    const category = uniqueInitialCats.length > 0
+      ? uniqueInitialCats.join(', ')
+      : (uniqueHeadsUpCats.length > 0 ? uniqueHeadsUpCats.join(', ') : (inc.category || 'Safety Observation / Incident'));
+
+    const allCategoriesStr = uniqueCategories.join(' , ').toLowerCase();
+    const isCat = (catName: string) => {
+      const lower = catName.toLowerCase();
+      if (lower === 'loss time' || lower === 'lost time') {
+        return allCategoriesStr.includes('loss time') || allCategoriesStr.includes('lost time') || allCategoriesStr.includes('lti');
+      }
+      return allCategoriesStr.includes(lower);
+    };
     const otherCustomCats = uniqueCategories.filter(c => {
       const lower = String(c).toLowerCase().trim();
       if (!lower) return false;
       return !standardCats.some(std => lower.includes(std));
     });
+    const hasEnvData = hasEnvDataHeadsUp || hasEnvDataInitial;
+    const hasPropData = hasPropDataHeadsUp || hasPropDataInitial;
 
     const reportedBy = headsUp.submittedBy || inc.reportedBy || 'Ahmed Al-Rashidi';
     const description = headsUp.descriptionWhatHappened || inc.description || 'Incident description recorded.';
@@ -1096,8 +1161,8 @@ export class IncidentPdfService {
       `;
     };
 
-    // Helper for immediate actions (Stage 1 & Stage 2)
-    const getImmediateActions = (): any[] => {
+    // Helper for immediate actions (Stage 1 & Stage 2 separated)
+    const getHeadsUpImmediateActions = (): any[] => {
       const list: any[] = [];
       let huActs = headsUp.immediateActions;
       if (typeof huActs === 'string') {
@@ -1106,38 +1171,35 @@ export class IncidentPdfService {
       if (huActs && Array.isArray(huActs)) {
         list.push(...huActs);
       }
-      let incActs = inc.immediateActions;
-      if (typeof incActs === 'string') {
-        try { incActs = JSON.parse(incActs); } catch (e) {}
+      if (list.length === 0) {
+        let incActs = inc.immediateActions;
+        if (typeof incActs === 'string') {
+          try { incActs = JSON.parse(incActs); } catch (e) {}
+        }
+        if (incActs && Array.isArray(incActs)) {
+          list.push(...incActs);
+        }
       }
-      if (incActs && Array.isArray(incActs)) {
-        incActs.forEach((act: any) => {
-          if (!list.some((existing) => (existing.action || existing.description) === (act.action || act.description))) {
-            list.push(act);
-          }
-        });
-      }
+      return list;
+    };
+
+    const getInitialImmediateActions = (): any[] => {
+      const list: any[] = [];
       let irActs = initial.immediateActions;
       if (typeof irActs === 'string') {
         try { irActs = JSON.parse(irActs); } catch (e) {}
       }
       if (irActs && Array.isArray(irActs)) {
-        irActs.forEach((act: any) => {
-          if (!list.some((existing) => (existing.action || existing.description) === (act.action || act.description))) {
-            list.push(act);
-          }
-        });
+        list.push(...irActs);
       }
-      if (actions && Array.isArray(actions)) {
-        actions.filter((a: any) => a.actionType === 'IMMEDIATE' || !a.actionType).forEach((act: any) => {
-          if (!list.some((existing) => (existing.action || existing.actionItem) === act.action)) {
-            list.push(act);
-          }
-        });
+      if (list.length === 0) {
+        return getHeadsUpImmediateActions();
       }
       return list;
     };
-    const immActionsList = getImmediateActions();
+
+    const headsUpImmActionsList = getHeadsUpImmediateActions();
+    const initialImmActionsList = getInitialImmediateActions();
 
     // Form 1 Signatures
     const headsUpSig = headsUp.signature || headsUp.submittedBySignature || headsUp.submitted_by_signature || inc.signature || null;
@@ -1159,9 +1221,9 @@ export class IncidentPdfService {
       }
     };
 
-    const renderImmediateActionsRows = () => {
-      if (immActionsList.length > 0) {
-        return immActionsList.map(a => {
+    const renderHeadsUpImmediateActionsRows = () => {
+      if (headsUpImmActionsList.length > 0) {
+        return headsUpImmActionsList.map(a => {
           const actText = a.action || a.actionItem || a.description || 'Cordon off area and perform immediate risk control.';
           const respText = a.responsible || a.owner || a.assignedTo || headsUpSubmitter;
           const dateText = formatActionDate(a.date || a.targetDate || a.incidentDate || (a.createdAt ? new Date(a.createdAt).toISOString().split('T')[0] : null));
@@ -1185,8 +1247,40 @@ export class IncidentPdfService {
         <tr>
           <td>Cordon off area and perform immediate risk control.</td>
           <td>${headsUpSubmitter}</td>
-          <td style="white-space: nowrap;">${date}</td>
-          <td style="white-space: nowrap;">Immediate</td>
+          <td>${date || '—'}</td>
+          <td>Immediate</td>
+        </tr>
+      `;
+    };
+
+    const renderInitialImmediateActionsRows = () => {
+      if (initialImmActionsList.length > 0) {
+        return initialImmActionsList.map(a => {
+          const actText = a.action || a.actionItem || a.description || 'Cordon off area and perform immediate risk control.';
+          const respText = a.responsible || a.owner || a.assignedTo || initialSubmitter;
+          const dateText = formatActionDate(a.date || a.targetDate || a.incidentDate || (a.createdAt ? new Date(a.createdAt).toISOString().split('T')[0] : null));
+          const timeText = a.timeImplemented || a.time || 'Immediate';
+          const historyHtml = renderStatusHistory(a.statusHistory);
+
+          return `
+            <tr>
+              <td>
+                <div style="font-weight: 600; color: #0f172a;">${actText}</div>
+                ${historyHtml}
+              </td>
+              <td>${respText}</td>
+              <td style="white-space: nowrap;">${dateText}</td>
+              <td style="white-space: nowrap;">${timeText}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+      return `
+        <tr>
+          <td>Cordon off area and perform immediate risk control.</td>
+          <td>${initialSubmitter}</td>
+          <td>${date || '—'}</td>
+          <td>Immediate</td>
         </tr>
       `;
     };
@@ -1292,6 +1386,13 @@ export class IncidentPdfService {
       'Transportation accidents', 'Ergonomic', ''
     ];
 
+    const normalizeCat = (str: string) =>
+      String(str || '')
+        .toLowerCase()
+        .replace(/[\u2010-\u2015\u2212]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim();
+
     const isAccidentCategory = (catName: string) => {
       if (!catName) return false;
       let accCats = initial.accidentCategories || [];
@@ -1299,14 +1400,10 @@ export class IncidentPdfService {
         try { accCats = JSON.parse(accCats); } catch (e) {}
       }
       if (!Array.isArray(accCats)) accCats = [accCats];
-      const target = catName.toLowerCase().trim();
+      const target = normalizeCat(catName);
       return accCats.some((c: any) => {
         if (!c) return false;
-        const cLower = String(c).toLowerCase().trim();
-        if (cLower === target || cLower.includes(target) || target.includes(cLower)) return true;
-        const targetWords = target.split(/[\s,\/–-]+/).filter(w => w.length > 3);
-        const cWords = cLower.split(/[\s,\/–-]+/).filter(w => w.length > 3);
-        return targetWords.length > 0 && targetWords.some(tw => cWords.includes(tw));
+        return normalizeCat(c) === target;
       });
     };
 
@@ -1344,14 +1441,10 @@ export class IncidentPdfService {
         try { types = JSON.parse(types); } catch (e) {}
       }
       if (!Array.isArray(types)) types = [types];
-      const target = type.toLowerCase().trim();
+      const target = normalizeCat(type);
       return types.some((t: any) => {
         if (!t) return false;
-        const tLower = String(t).toLowerCase().trim();
-        if (tLower === target || tLower.includes(target) || target.includes(tLower)) return true;
-        const targetWords = target.split(/[\s,\/–-]+/).filter(w => w.length > 3);
-        const tWords = tLower.split(/[\s,\/–-]+/).filter(w => w.length > 3);
-        return targetWords.length > 0 && targetWords.some(tw => tWords.includes(tw));
+        return normalizeCat(t) === target;
       });
     };
 
@@ -1780,7 +1873,7 @@ export class IncidentPdfService {
 
       return `
         <div style="border: 1px solid #cbd5e1; background: #fff; padding: 6px 10px; border-radius: 4px;">
-          <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Lessons Learned</div>
+          <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px; border-bottom: 1px dashed #cbd5e1; padding-bottom: 2px;">Incident Learning</div>
           <div style="font-size: 8px; color: #334155; line-height: 1.4;">${lessons}</div>
         </div>
       `;
@@ -2186,12 +2279,12 @@ export class IncidentPdfService {
 
         ${includeForm1 ? `
         <!-- =================================================================
-             FORM 1: HEADS-UP NOTIFICATION (2 HOURS TEMPLATE)
+             FORM 1: HEADS-UP NOTIFICATION (1 HOUR TEMPLATE)
         ================================================================== -->
         <div class="form-page">
           ${renderPageHeader(
             'Heads-up Notification',
-            `Project: ${project} &nbsp;|&nbsp; Location: ${building} &nbsp;|&nbsp; System No: ${caseNo} &nbsp;|&nbsp; Must be completed within 2 hours of occurrence`,
+            `Project: ${project} &nbsp;|&nbsp; Location: ${building} &nbsp;|&nbsp; System No: ${caseNo} &nbsp;|&nbsp; Must be completed within 1 hour of occurrence`,
             'Form 1 / Stage 1 · Controlled EHS Form'
           )}
 
@@ -2256,32 +2349,32 @@ export class IncidentPdfService {
           </div>
           ` : ''}
 
-          <div class="section-hdr">2. Incident Records & Classification</div>
+          <div class="section-hdr">2. Incident Category</div>
           <div class="sub-hdr-bar">Select all that apply. Categorisation may change following the investigation.</div>
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td style="width: 25%;">${renderCheckbox(isCat('Near Miss'), 'Near Miss')}</td>
-                <td style="width: 25%;">${renderCheckbox(isCat('No Treatment'), 'No Treatment Injury')}</td>
-                <td style="width: 25%;">${renderCheckbox(isCat('First Aid'), 'First Aid Injury')}</td>
-                <td style="width: 25%;">${renderCheckbox(isCat('Medical Treatment'), 'Medical Treatment Injury')}</td>
+                <td style="width: 25%;">${renderCheckbox(isHeadsUpCat('Near Miss'), 'Near Miss')}</td>
+                <td style="width: 25%;">${renderCheckbox(isHeadsUpCat('No Treatment'), 'No Treatment Injury')}</td>
+                <td style="width: 25%;">${renderCheckbox(isHeadsUpCat('First Aid'), 'First Aid Injury')}</td>
+                <td style="width: 25%;">${renderCheckbox(isHeadsUpCat('Medical Treatment'), 'Medical Treatment Injury')}</td>
               </tr>
               <tr>
-                <td>${renderCheckbox(isCat('Restricted Work'), 'Restricted Work Injury')}</td>
-                <td>${renderCheckbox(isCat('Loss Time'), 'Lost Time Injury')}</td>
-                <td>${renderCheckbox(isCat('Permanent Disability'), 'Permanent Disability')}</td>
-                <td>${renderCheckbox(isCat('Fatality'), 'Fatality')}</td>
+                <td>${renderCheckbox(isHeadsUpCat('Restricted Work'), 'Restricted Work Injury')}</td>
+                <td>${renderCheckbox(isHeadsUpCat('Loss Time'), 'Lost Time Injury')}</td>
+                <td>${renderCheckbox(isHeadsUpCat('Permanent Disability'), 'Permanent Disability')}</td>
+                <td>${renderCheckbox(isHeadsUpCat('Fatality'), 'Fatality')}</td>
               </tr>
               <tr>
-                <td colspan="2">${renderCheckbox(isCat('Occupational Illness'), 'Occupational Illness')}</td>
-                <td>${renderCheckbox(isCat('Environmental'), 'Environmental Incident')}</td>
-                <td>${renderCheckbox(isCat('Property Damage'), 'Property Damage')}</td>
+                <td colspan="2">${renderCheckbox(isHeadsUpCat('Occupational Illness'), 'Occupational Illness')}</td>
+                <td>${renderCheckbox(isHeadsUpCat('Environmental'), 'Environmental Incident')}</td>
+                <td>${renderCheckbox(isHeadsUpCat('Property Damage'), 'Property Damage')}</td>
               </tr>
-              ${otherCustomCats.length > 0 ? `
+              ${headsUpOtherCustomCats.length > 0 ? `
               <tr>
                 <td colspan="4" style="background: #f8fafc; padding: 4px 8px;">
                   <span class="chk-label" style="color: #475569; font-size: 8.5px; font-weight: 700; margin-right: 6px;">Hazard / Observation Category:</span>
-                  ${otherCustomCats.map(c => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${c}</span></span>`).join('')}
+                  ${headsUpOtherCustomCats.map(c => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${c}</span></span>`).join('')}
                 </td>
               </tr>
               ` : ''}
@@ -2294,11 +2387,11 @@ export class IncidentPdfService {
           <div class="sub-hdr-bar">What is the consequence of this incident?</div>
           <div class="comment-box">${consequence}</div>
           ${headsUp.lateSubmissionReason ? `
-          <div class="sub-hdr-bar" style="background: #fee2e2; color: #991b1b; font-weight: 700;">Reason for Late Submission (Exceeded 2-Hour SLA Deadline)</div>
+          <div class="sub-hdr-bar" style="background: #fee2e2; color: #991b1b; font-weight: 700;">Reason for Late Submission (Exceeded 1-Hour SLA Deadline)</div>
           <div class="comment-box" style="border-left: 3px solid #dc2626; color: #991b1b; font-weight: 600;">${headsUp.lateSubmissionReason}</div>
           ` : ''}
 
-          ${(isCat('Environmental') || hasEnvData) ? `
+          ${(isHeadsUpCat('Environmental') || hasEnvDataHeadsUp) ? `
           <div class="section-hdr">4. Environmental Incident Details</div>
           <table class="sc-grid">
             <tbody>
@@ -2334,7 +2427,7 @@ export class IncidentPdfService {
           </table>
           ` : ''}
 
-          ${(isCat('Property Damage') || hasPropData) ? `
+          ${(isHeadsUpCat('Property Damage') || hasPropDataHeadsUp) ? `
           <div class="section-hdr">5. Property Damage & Asset Details</div>
           <table class="sc-grid">
             <tbody>
@@ -2373,7 +2466,7 @@ export class IncidentPdfService {
               </tr>
             </thead>
             <tbody>
-              ${renderImmediateActionsRows()}
+              ${renderHeadsUpImmediateActionsRows()}
             </tbody>
           </table>
 
@@ -2461,7 +2554,7 @@ export class IncidentPdfService {
             <tbody>
               <tr>
                 <td class="lbl" style="width: 22%;">Type / Category:</td>
-                <td class="val" style="width: 28%;"><strong>${category}</strong></td>
+                <td class="val" style="width: 28%;"><strong>${uniqueHeadsUpCats.join(', ') || headsUp.category || 'Safety Observation / Incident'}</strong></td>
                 <td class="lbl" style="width: 22%;">Severity Assessment:</td>
                 <td class="val" style="width: 28%;">${renderSeverityBadge(inc.actualSeverity || 1)}</td>
               </tr>
@@ -2481,29 +2574,34 @@ export class IncidentPdfService {
           <table class="sc-grid">
             <tbody>
               <tr>
-                <td style="width: 25%;">${renderCheckbox(isCat('Near Miss'), 'Near Miss')}</td>
-                <td style="width: 25%;">${renderCheckbox(isCat('First Aid'), 'First Aid Injury')}</td>
-                <td style="width: 25%;">${renderCheckbox(isCat('Medical Treatment'), 'Medical Treatment Injury')}</td>
-                <td style="width: 25%;">${renderCheckbox(isCat('Restricted Work'), 'Restricted Work Injury')}</td>
+                <td style="width: 25%;">${renderCheckbox(isInitialCat('Near Miss'), 'Near Miss')}</td>
+                <td style="width: 25%;">${renderCheckbox(isInitialCat('No Treatment'), 'No Treatment Injury')}</td>
+                <td style="width: 25%;">${renderCheckbox(isInitialCat('First Aid'), 'First Aid Injury')}</td>
+                <td style="width: 25%;">${renderCheckbox(isInitialCat('Medical Treatment'), 'Medical Treatment Injury')}</td>
               </tr>
               <tr>
-                <td>${renderCheckbox(isCat('Loss Time'), 'Lost Time Injury')}</td>
-                <td>${renderCheckbox(isCat('Property Damage'), 'Property Damage')}</td>
-                <td>${renderCheckbox(isCat('Environmental'), 'Environmental Incident')}</td>
-                <td>${renderCheckbox(isCat('Occupational Illness') || (!isEnv && !isPropertyDamage), 'Personal Injury')}</td>
+                <td>${renderCheckbox(isInitialCat('Restricted Work'), 'Restricted Work Injury')}</td>
+                <td>${renderCheckbox(isInitialCat('Loss Time'), 'Lost Time Injury')}</td>
+                <td>${renderCheckbox(isInitialCat('Permanent Disability'), 'Permanent Disability')}</td>
+                <td>${renderCheckbox(isInitialCat('Fatality'), 'Fatality')}</td>
               </tr>
-              ${otherCustomCats.length > 0 ? `
+              <tr>
+                <td colspan="2">${renderCheckbox(isInitialCat('Occupational Illness'), 'Occupational Illness')}</td>
+                <td>${renderCheckbox(isInitialCat('Environmental'), 'Environmental Incident')}</td>
+                <td>${renderCheckbox(isInitialCat('Property Damage'), 'Property Damage')}</td>
+              </tr>
+              ${initialOtherCustomCats.length > 0 ? `
               <tr>
                 <td colspan="4" style="background: #f8fafc; padding: 4px 8px;">
                   <span class="chk-label" style="color: #475569; font-size: 8.5px; font-weight: 700; margin-right: 6px;">Other Categories:</span>
-                  ${otherCustomCats.map(c => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${c}</span></span>`).join('')}
+                  ${initialOtherCustomCats.map(c => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${c}</span></span>`).join('')}
                 </td>
               </tr>
               ` : ''}
             </tbody>
           </table>
 
-          ${isEnv ? `
+          ${(isInitialCat('Environmental') || hasEnvDataInitial) ? `
           <div class="section-hdr">Section C. Environmental Incident Details</div>
           <table class="sc-grid">
             <tbody>
@@ -2531,7 +2629,7 @@ export class IncidentPdfService {
               </tr>
             </tbody>
           </table>
-          ` : isPropertyDamage ? `
+          ` : (isInitialCat('Property Damage') || hasPropDataInitial) ? `
           <div class="section-hdr">Section C. Property Damage & Asset Details</div>
           <table class="sc-grid">
             <tbody>
@@ -2731,7 +2829,7 @@ export class IncidentPdfService {
               </tr>
             </thead>
             <tbody>
-              ${renderImmediateActionsRows()}
+              ${renderInitialImmediateActionsRows()}
             </tbody>
           </table>
 
@@ -2968,7 +3066,7 @@ export class IncidentPdfService {
           </table>
           ` : ''}
 
-          <div class="section-hdr">12. Lessons Learned</div>
+          <div class="section-hdr">12. Incident Learning</div>
           <div class="comment-box">${inv.lessonsLearned || inv.lessons_learned || inv.lessons || 'Ensure pre-task risk assessments explicitly include site safety controls and risk mitigation measures.'}</div>
 
           <div class="section-hdr">13. Photos from Incident Location</div>

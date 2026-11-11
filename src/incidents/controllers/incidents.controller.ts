@@ -80,7 +80,7 @@ export class IncidentsController {
   }
 
   /**
-   * Stage 1: Submit Heads-Up Notification (within 2 hours)
+   * Stage 1: Submit Heads-Up Notification (within 1 hour)
    * POST /incidents/headsup
    */
   @Post('headsup')

@@ -13,6 +13,9 @@ export class IncidentHeadsUp {
   @JoinColumn({ name: 'incident_id' })
   incident: Incident;
 
+  @Column({ name: 'categories', type: 'json', nullable: true })
+  categories?: string[];
+
   @Column({ name: 'description_what_happened', type: 'text', nullable: true })
   descriptionWhatHappened?: string;
 

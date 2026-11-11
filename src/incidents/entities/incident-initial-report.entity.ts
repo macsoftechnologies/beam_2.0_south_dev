@@ -18,6 +18,9 @@ export class IncidentInitialReport {
   @JoinColumn({ name: 'incident_id' })
   incident: Incident;
 
+  @Column({ name: 'categories', type: 'json', nullable: true })
+  categories?: string[];
+
   @Column({ name: 'photos', type: 'json', nullable: true })
   photos?: string[];
 
