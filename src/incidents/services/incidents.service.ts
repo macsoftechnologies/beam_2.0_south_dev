@@ -35,6 +35,50 @@ export class IncidentsService implements OnModuleInit {
   ) {}
 
   /**
+   * Parses YYYY-MM-DD and HH:mm(:ss) as Europe/Copenhagen local time regardless of host timezone.
+   */
+  private parseCopenhagenDateTime(dateStr?: string, timeStr = '00:00'): Date | null {
+    if (!dateStr) return null;
+    const dateParts = String(dateStr).trim().split('-').map(Number);
+    if (dateParts.length !== 3 || dateParts.some(isNaN)) return null;
+    const [year, month, day] = dateParts;
+    const timeParts = String(timeStr || '00:00').trim().split(':').map(Number);
+    const hour = Number.isFinite(timeParts[0]) ? timeParts[0] : 0;
+    const minute = Number.isFinite(timeParts[1]) ? timeParts[1] : 0;
+    const second = Number.isFinite(timeParts[2]) ? timeParts[2] : 0;
+
+    const targetUtcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+    if (isNaN(targetUtcGuess)) return null;
+
+    const getCphAsUtc = (utcMs: number): number => {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Europe/Copenhagen',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).formatToParts(new Date(utcMs));
+      const map: Record<string, number> = {};
+      for (const p of parts) {
+        if (p.type !== 'literal') map[p.type] = Number(p.value);
+      }
+      const h = map.hour === 24 ? 0 : map.hour;
+      return Date.UTC(map.year, map.month - 1, map.day, h, map.minute, map.second);
+    };
+
+    const offset1 = getCphAsUtc(targetUtcGuess) - targetUtcGuess;
+    let resultMs = targetUtcGuess - offset1;
+    const offset2 = getCphAsUtc(resultMs) - resultMs;
+    if (offset2 !== offset1) {
+      resultMs = targetUtcGuess - offset2;
+    }
+    return new Date(resultMs);
+  }
+
+  /**
    * Auto-creates missing incident tables in MySQL upon NestJS application startup
    */
   async onModuleInit() {
@@ -339,9 +383,9 @@ export class IncidentsService implements OnModuleInit {
   async submitHeadsUp(dto: CreateHeadsUpDto): Promise<{ incident: Incident; headsUp: IncidentHeadsUp }> {
     const caseNumber = await this.generateCaseNumber();
 
-    // Parse timestamp
+    // Parse timestamp as Europe/Copenhagen local time
     const incidentDateTimeStr = `${dto.incidentDate}T${dto.incidentTime}:00`;
-    const incidentTimestamp = new Date(incidentDateTimeStr);
+    const incidentTimestamp = this.parseCopenhagenDateTime(dto.incidentDate, dto.incidentTime) || new Date(incidentDateTimeStr);
     const validTimestamp = isNaN(incidentTimestamp.getTime()) ? new Date() : incidentTimestamp;
 
     // SLAs: 1h, 24h, 7d
@@ -527,7 +571,7 @@ export class IncidentsService implements OnModuleInit {
     if (dto.incidentDate || dto.incidentTime) {
       const d = dto.incidentDate || incident.incidentDate;
       const t = dto.incidentTime || incident.incidentTime || '00:00';
-      const parsed = new Date(`${d}T${t}:00`);
+      const parsed = this.parseCopenhagenDateTime(d, t) || new Date(`${d}T${t}:00`);
       if (!isNaN(parsed.getTime())) {
         incident.incidentTimestamp = parsed;
         incident.slaHeadsUpDue = new Date(parsed.getTime() + 1 * 60 * 60 * 1000);
