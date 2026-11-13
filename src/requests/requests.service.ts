@@ -535,6 +535,18 @@ export class RequestsService implements OnModuleInit {
         }
       }
     }
+
+    // Rule E: Transition to closed
+    if (normalizedNew === 'closed') {
+      if (role !== 'admin' && role !== 'multi_dept' && role !== 'contractor') {
+        if (isBothConstruction && role !== 'CoNM') {
+          throw new BadRequestException('Closing Construction-only permits must be done by a ConM department user');
+        }
+        if (isBothCommissioning && role !== 'C&Q') {
+          throw new BadRequestException('Closing Commissioning-only permits must be done by a C&Q department user');
+        }
+      }
+    }
   }
 
   // Generate unique PermitNo
