@@ -1924,16 +1924,16 @@ export class IncidentPdfService {
         { keys: ["permitsToWork", "permitToWork", "ptw", "permit"], label: "Permit to Work (PTW)", match: "permit", idx: 4 },
         { keys: ["safePlanOfAction", "spa", "tsti", "preTaskBriefing"], label: "Safe Plan of Action (SPA)", match: "spa", idx: 3 },
         { keys: ["evidenceForActionsTaken", "evidenceActions", "actionsEvidence"], label: "Evidence for Actions Taken", match: "evidence", idx: 7 },
-        { keys: ["equipmentDataSheets", "equipmentSheets", "equipmentData"], label: "Equipment Data Sheets (when applicable)", match: "equipment", idx: 8 },
-        { keys: ["easyDocument", "easyCodeDocument", "easyReport", "easyCodeNumbering"], label: "EASY Document / EASY Code", match: "easy", idx: 9, isEasy: true },
-        { keys: ["otherRelevantDocumentation", "otherDocumentation", "otherDocuments"], label: "Other Relevant Documentation (when applicable)", match: "other", idx: 10 },
-        { keys: ["wasteDisposalInvoice", "wasteDisposal", "wasteInvoice"], label: "Waste Disposal Invoice (when applicable)", match: "waste", idx: 11 },
-        { keys: ["safetyDataSheet", "sds", "safetyDataSheets"], label: "Safety Data Sheet (SDS) (when applicable)", match: "sds", idx: 12 },
-        { keys: ["soilAnalysisReports", "soilAnalysis", "soilReports"], label: "Soil Analysis Reports (when applicable)", match: "soil", idx: 13 },
-        { keys: ["waterAnalysisReports", "waterAnalysis", "waterReports"], label: "Water Analysis Reports (when applicable)", match: "water", idx: 14 }
+        { keys: ["equipmentDataSheets", "equipmentSheets", "equipmentData"], label: "Equipment data sheets", match: "equipment", idx: 8 },
+        { keys: ["easyDocument", "easyCodeDocument", "easyReport", "easyCodeNumbering"], label: "EASY code numbering", match: "easy", idx: 9, isEasy: true },
+        { keys: ["otherRelevantDocumentation", "otherDocumentation", "otherDocuments"], label: "Other relevant documentation", match: "other", idx: 10 },
+        { keys: ["wasteDisposalInvoice", "wasteDisposal", "wasteInvoice"], label: "Waste Disposal Invoice (if applicable)", match: "waste", idx: 11, isEnvironmental: true },
+        { keys: ["safetyDataSheet", "sds", "safetyDataSheets"], label: "Safety Data Sheet (SDS)", match: "sds", idx: 12, isEnvironmental: true },
+        { keys: ["soilAnalysisReports", "soilAnalysis", "soilReports"], label: "Soil analysis reports (if applicable)", match: "soil", idx: 13, isEnvironmental: true },
+        { keys: ["waterAnalysisReports", "waterAnalysis", "waterReports"], label: "Water analysis reports (if applicable)", match: "water", idx: 14, isEnvironmental: true }
       ];
 
-      const missingExplain = att.missingExplanation || att.missingAttachmentsExplanation || inv.missingExplain || 'All mandatory attachments collected and uploaded.';
+      const missingExplain = att.missingExplanation || att.missingAttachmentsExplanation || inv.missingExplain || 'All supporting attachments collected and uploaded.';
 
       const rowsHtml = items.map(item => {
         const info = getAttachmentInfo(item.keys, item.match || item.label, item.idx);
@@ -1941,7 +1941,16 @@ export class IncidentPdfService {
         const isAttached = info.checked || !!info.fileUrl || (item.isEasy && !!easyNum);
         const displayFileName = info.fileName || '';
         const easySubText = (item.isEasy && easyNum) ? `<div style="font-size: 8px; color: #0284c7; font-weight: 600; margin-top: 2px;">EASY Code / Number: <strong>${easyNum}</strong></div>` : '';
+        const envHeaderRow = item.keys.includes("wasteDisposalInvoice") ? `
+        <tr>
+          <td colspan="2" style="background: #f1f5f9; font-weight: 700; font-size: 9.5px; padding: 6px 10px; color: #0f172a; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+            For environmental incidents:
+          </td>
+        </tr>
+        ` : '';
+
         return `
+        ${envHeaderRow}
         <tr>
           <td style="width: 70%; font-weight: 600;">
             ${item.label}
@@ -2954,7 +2963,7 @@ export class IncidentPdfService {
 
           ${includeWitnesses ? `
           <div class="section-hdr">3. Witness Statements</div>
-          <div class="sub-hdr-bar">Witness statements collected as part of the investigation. Signed forms attached in Mandatory Attachments.</div>
+          <div class="sub-hdr-bar">Witness statements collected as part of the investigation. Signed forms attached in Supporting Attachments.</div>
           <table class="sc-grid">
             <thead>
               <tr class="chk-table-hdr">
@@ -3011,7 +3020,8 @@ export class IncidentPdfService {
             </tbody>
           </table>
 
-          <div class="section-hdr">10. Corrective Actions & Preventive Actions (CAPA)</div>
+          <div class="section-hdr">10. Corrective Action</div>
+          <div class="sub-hdr-bar" style="color: #b91c1c; font-style: italic;">An action taken to eliminate the cause of an incident or nonconformity and prevent it from happening again.</div>
           <table class="sc-grid">
             <thead>
               <tr class="chk-table-hdr">
@@ -3073,8 +3083,8 @@ export class IncidentPdfService {
           ${renderPhotosGrid(resolvedInvPhotos)}
 
           ${includeAttachments ? `
-          <div class="section-hdr">14. Mandatory Attachments Checklist</div>
-          <div class="sub-hdr-bar">Checklist of mandatory project documents and evidence attached to this investigation.</div>
+          <div class="section-hdr">14. Supporting Attachments Checklist</div>
+          <div class="sub-hdr-bar">Checklist of supporting project documents and evidence attached to this investigation.</div>
           ${renderMandatoryAttachmentsTable()}
           ` : ''}
 

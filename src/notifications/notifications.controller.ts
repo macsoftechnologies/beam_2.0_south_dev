@@ -64,8 +64,8 @@ export class NotificationsController {
    */
   @Post('read-all')
   @HttpCode(HttpStatus.OK)
-  async markAllRead(@Request() req: any) {
-    const success = await this.notificationsService.markAllAsRead(req.user.userId);
+  async markAllRead(@Request() req: any, @Query('module') module?: string) {
+    const success = await this.notificationsService.markAllAsRead(req.user.userId, module);
     return { success };
   }
 

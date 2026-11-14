@@ -184,10 +184,6 @@ export class AuthService {
     const isUserAdmin = ['admin', 'superadmin'].includes(String(user.userType || '').toLowerCase());
     const moduleAccess = isUserAdmin ? allModules : (employee?.moduleAccess || 'permit-to-work');
 
-    // Generate JWT token directly (for development and fallback support)
-    const payload = { sub: user.id, username: user.username };
-    const access_token = this.jwtService.sign(payload);
-
     const isBoth = shouldSendEmail && shouldSendSms;
     const isEmail = shouldSendEmail && !shouldSendSms;
     const resolvedOtpType = isBoth ? 'BOTH' : (isEmail ? 'EMAIL' : 'SMS');
@@ -238,7 +234,6 @@ export class AuthService {
       maskedEmail,
       moduleAccess,
       auth_token: authToken,
-      access_token,
       sms_sent: smsSent,
       email_sent: emailSent,
     };
@@ -256,14 +251,10 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    // OTP validation bypassed for development - allows any random OTP to log in
-    // const staticOtp = process.env.DEV_STATIC_OTP;
-    // const isStaticOtpMatch = staticOtp && otp === staticOtp;
-    // if (!isStaticOtpMatch) {
-    //   if (!user.otp || user.otp !== otp) {
-    //     throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
-    //   }
-    // }
+    // Strictly verify OTP sent via SMS or Email
+    if (!user.otp || String(user.otp).trim() !== String(otp).trim()) {
+      throw new UnauthorizedException('Invalid OTP. Please enter the verification code sent to your registered email or phone.');
+    }
 
     // Clear OTP after successful verification
     await this.usersService.clearOtp(user.id);
@@ -439,14 +430,10 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    // OTP validation bypassed for development - allows any random OTP
-    // const staticOtp = process.env.DEV_STATIC_OTP;
-    // const isStaticOtpMatch = staticOtp && otp === staticOtp;
-    // if (!isStaticOtpMatch) {
-    //   if (!user.otp || user.otp !== otp) {
-    //     throw new UnauthorizedException('Invalid OTP. Please check the code sent to your phone.');
-    //   }
-    // }
+    // Strictly verify OTP sent via SMS or Email
+    if (!user.otp || String(user.otp).trim() !== String(otp).trim()) {
+      throw new UnauthorizedException('Invalid OTP. Please enter the verification code sent to your registered email or phone.');
+    }
 
     // Clear OTP
     await this.usersService.clearOtp(user.id);
@@ -591,6 +578,11 @@ export class AuthService {
     const user = await this.usersService.findById(id);
     if (!user) {
       throw new UnauthorizedException('User not found');
+    }
+
+    // Strictly verify OTP sent via SMS or Email
+    if (!user.otp || String(user.otp).trim() !== String(otp).trim()) {
+      throw new UnauthorizedException('Invalid OTP. Please enter the verification code sent to your registered email or phone.');
     }
 
     // Clear OTP after verification

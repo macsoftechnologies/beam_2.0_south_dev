@@ -2308,23 +2308,29 @@ export class NotificationsService {
   /**
    * Mark all notifications as read for a user.
    */
-  async markAllAsRead(userId: number): Promise<boolean> {
+  async markAllAsRead(userId: number, module?: string): Promise<boolean> {
     const uIdNum = Number(userId);
     const isSuperOrAdmin = uIdNum === 0 || uIdNum === 1 || uIdNum === 785;
 
+    const qb = this.notificationRepo.createQueryBuilder()
+      .update(Notification)
+      .set({ isRead: 1 });
+
     if (isSuperOrAdmin) {
-      const result = await this.notificationRepo.createQueryBuilder()
-        .update(Notification)
-        .set({ isRead: 1 })
-        .where('isRead = 0 AND (receiverUserId = :userId OR receiverUserId IN (0, 1, 785))', { userId: uIdNum })
-        .execute();
-      return (result.affected ?? 0) > 0;
+      qb.where('isRead = 0 AND (receiverUserId = :userId OR receiverUserId IN (0, 1, 785))', { userId: uIdNum });
+    } else {
+      qb.where('isRead = 0 AND receiverUserId = :userId', { userId: uIdNum });
     }
 
-    const result = await this.notificationRepo.update(
-      { receiverUserId: uIdNum, isRead: 0 },
-      { isRead: 1 },
-    );
+    if (module === 'observations') {
+      qb.andWhere("(notificationType LIKE 'OBSERVATION%' OR metadata LIKE '%\"module\":\"OBSERVATIONS\"%')");
+    } else if (module === 'incidents') {
+      qb.andWhere("(notificationType LIKE 'INCIDENT%' OR metadata LIKE '%\"module\":\"INCIDENTS\"%')");
+    } else if (module === 'permits') {
+      qb.andWhere("(notificationType NOT LIKE 'OBSERVATION%' AND notificationType NOT LIKE 'INCIDENT%' AND (metadata IS NULL OR (metadata NOT LIKE '%\"module\":\"OBSERVATIONS\"%' AND metadata NOT LIKE '%\"module\":\"INCIDENTS\"%')))");
+    }
+
+    const result = await qb.execute();
     return (result.affected ?? 0) > 0;
   }
 
