@@ -782,7 +782,7 @@ export class NotificationsService {
     try {
       const rawUsers = await this.userRepo.createQueryBuilder('user')
         .leftJoin('employees', 'emp', '(user.empId = emp.id OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
-          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
+          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor'],
         })
         .leftJoin('departments', 'dept', '(emp.departId = dept.id OR (user.userType IN (:...deptTypes) AND user.typeId = dept.id))', {
           deptTypes: ['Department', 'Department1'],
@@ -1160,7 +1160,7 @@ export class NotificationsService {
     try {
       const qb = this.userRepo.createQueryBuilder('user')
         .leftJoin('employees', 'emp', '(user.empId = emp.id OR user.username = emp.username OR (user.typeId = emp.id AND user.userType IN (:...empTypes)))', {
-          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor', 'Department', 'Department1', 'Subcontractor'],
+          empTypes: ['Employee', 'Site Manager', 'Admin', 'Safety Officer', 'Supervisor'],
         })
         .select([
           'user.id AS id',
