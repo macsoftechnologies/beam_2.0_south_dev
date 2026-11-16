@@ -635,67 +635,137 @@ export class IncidentPdfService {
 
     // 2. Stage 2: Initial Report Form 2 Specific Categories
     const initialCategoriesList: string[] = [];
-    if (Array.isArray(initial.categories) && initial.categories.length > 0) {
-      initialCategoriesList.push(...initial.categories);
-    } else if (initial.categories) {
-      initialCategoriesList.push(String(initial.categories));
+    const parseInitialCatValue = (val: any) => {
+      if (!val) return;
+      if (Array.isArray(val)) {
+        val.forEach(parseInitialCatValue);
+      } else if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (!trimmed) return;
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(parseInitialCatValue);
+              return;
+            }
+          } catch {}
+        }
+        initialCategoriesList.push(trimmed);
+      }
+    };
+
+    if (initial.categories) {
+      parseInitialCatValue(initial.categories);
     } else if (initial.category) {
-      initialCategoriesList.push(String(initial.category));
-    } else if (Array.isArray(inc.categories)) {
-      initialCategoriesList.push(...inc.categories);
+      parseInitialCatValue(initial.category);
+    } else if (inc.categories) {
+      parseInitialCatValue(inc.categories);
     } else if (inc.category) {
-      initialCategoriesList.push(String(inc.category));
+      parseInitialCatValue(inc.category);
     }
-
-    // Initial Report Treatment inference
-    const flatTreatments: string[] = [];
-    if (Array.isArray(initial.treatmentProvided)) {
-      initial.treatmentProvided.forEach((t: any) => {
-        if (Array.isArray(t)) flatTreatments.push(...t.map(String));
-        else if (t) flatTreatments.push(String(t));
-      });
-    }
-    if (initial.treatmentPrescribed) flatTreatments.push(String(initial.treatmentPrescribed));
-    if (initial.medicalTreatmentClass) flatTreatments.push(String(initial.medicalTreatmentClass));
-
-    flatTreatments.forEach((t: string) => {
-      const lowerT = t.toLowerCase();
-      if (lowerT.includes('medical treatment') || lowerT === 'treatment') initialCategoriesList.push('Medical Treatment Injury');
-      if (lowerT.includes('first aid')) initialCategoriesList.push('First Aid Injury');
-      if (lowerT.includes('hospitalization') || lowerT.includes('lost time')) initialCategoriesList.push('Loss Time Injury');
-      if (lowerT.includes('no treatment')) initialCategoriesList.push('No Treatment Injury');
-      if (lowerT.includes('restricted work')) initialCategoriesList.push('Restricted Work Injury');
-    });
 
     const hasEnvDataInitial = Boolean(
       initial.environmentalDetails && typeof initial.environmentalDetails === 'object' && Object.keys(initial.environmentalDetails).length > 0
     );
-    if (hasEnvDataInitial) {
+    if (hasEnvDataInitial && !initialCategoriesList.some(c => c.toLowerCase().includes('environmental'))) {
       initialCategoriesList.push('Environmental Incident');
     }
 
     const hasPropDataInitial = Boolean(
       initial.propertyDamageDetails && typeof initial.propertyDamageDetails === 'object' && Object.keys(initial.propertyDamageDetails).length > 0
     );
-    if (hasPropDataInitial) {
+    if (hasPropDataInitial && !initialCategoriesList.some(c => c.toLowerCase().includes('property'))) {
       initialCategoriesList.push('Property Damage');
     }
 
     const uniqueInitialCats = Array.from(new Set(initialCategoriesList.filter(Boolean)));
-    const initialCatsStr = uniqueInitialCats.join(' , ').toLowerCase();
+    const initialCatsNorm = uniqueInitialCats.map(c => c.toLowerCase().trim());
 
     const isInitialCat = (catName: string) => {
-      const lower = catName.toLowerCase();
+      const lower = catName.toLowerCase().trim();
       if (lower === 'loss time' || lower === 'lost time') {
-        return initialCatsStr.includes('loss time') || initialCatsStr.includes('lost time') || initialCatsStr.includes('lti');
+        return initialCatsNorm.some(c => c.includes('loss time') || c.includes('lost time') || c.includes('lti'));
       }
-      return initialCatsStr.includes(lower);
+      if (lower === 'no treatment' || lower === 'no treatment injury') {
+        return initialCatsNorm.some(c => c === 'no treatment' || c === 'no treatment injury' || c.includes('no treatment'));
+      }
+      if (lower === 'medical treatment' || lower === 'medical treatment injury') {
+        return initialCatsNorm.some(c => (c === 'medical treatment' || c === 'medical treatment injury' || c.includes('medical treatment')) && !c.includes('no treatment'));
+      }
+      if (lower === 'first aid' || lower === 'first aid injury') {
+        return initialCatsNorm.some(c => c.includes('first aid'));
+      }
+      if (lower === 'restricted work' || lower === 'restricted work injury') {
+        return initialCatsNorm.some(c => c.includes('restricted work') || c.includes('rwi'));
+      }
+      return initialCatsNorm.some(c => c.includes(lower));
     };
 
     const initialOtherCustomCats = uniqueInitialCats.filter(c => {
       const lower = String(c).toLowerCase().trim();
       if (!lower) return false;
       return !standardCats.some(std => lower.includes(std));
+    });
+
+    // 3. Stage 2: Initial Report Form 2 Specific Treatment Provided (kept separate from Incident Category)
+    const initialTreatmentsList: string[] = [];
+    const parseTreatmentValue = (val: any) => {
+      if (!val) return;
+      if (Array.isArray(val)) {
+        val.forEach(parseTreatmentValue);
+      } else if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (!trimmed) return;
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(parseTreatmentValue);
+              return;
+            }
+          } catch {}
+        }
+        initialTreatmentsList.push(trimmed);
+      }
+    };
+
+    parseTreatmentValue(initial.treatmentProvided);
+    if (initial.treatmentPrescribed) {
+      parseTreatmentValue(initial.treatmentPrescribed);
+    }
+    if (initial.medicalTreatmentClass) {
+      parseTreatmentValue(initial.medicalTreatmentClass);
+    }
+
+    const uniqueInitialTreatments = Array.from(new Set(initialTreatmentsList.filter(Boolean)));
+    const initialTreatmentsNorm = uniqueInitialTreatments.map(t => t.toLowerCase().trim());
+
+    const isInitialTreatment = (treatmentName: string) => {
+      const lower = treatmentName.toLowerCase().trim();
+      if (lower === 'no treatment') {
+        return initialTreatmentsNorm.some(t => t === 'no treatment' || t === 'none' || t === 'nil' || t === 'none reported');
+      }
+      if (lower === 'first aid') {
+        return initialTreatmentsNorm.some(t => t === 'first aid' || t.includes('first aid'));
+      }
+      if (lower === 'medical treatment') {
+        return initialTreatmentsNorm.some(t => (t === 'medical treatment' || t.includes('medical treatment') || t.includes('medical center') || t.includes('off-site treatment') || t === 'medical') && !t.includes('no treatment'));
+      }
+      if (lower === 'restricted work') {
+        return initialTreatmentsNorm.some(t => t === 'restricted work' || t.includes('restricted work') || t === 'rwi' || t.includes('light duties'));
+      }
+      if (lower === 'lost time' || lower === 'loss time') {
+        return initialTreatmentsNorm.some(t => t.includes('lost time') || t.includes('loss time') || t.includes('hospitalization') || t === 'lti');
+      }
+      return initialTreatmentsNorm.some(t => t.includes(lower));
+    };
+
+    const standardTreatments = ['no treatment', 'first aid', 'medical treatment', 'restricted work', 'lost time', 'loss time', 'hospitalization'];
+    const initialOtherTreatments = uniqueInitialTreatments.filter(t => {
+      const lower = String(t).toLowerCase().trim();
+      if (!lower) return false;
+      return !standardTreatments.some(std => lower.includes(std));
     });
 
     // Overview category for Form 3
@@ -2604,6 +2674,28 @@ export class IncidentPdfService {
                 <td colspan="4" style="background: #f8fafc; padding: 4px 8px;">
                   <span class="chk-label" style="color: #475569; font-size: 8.5px; font-weight: 700; margin-right: 6px;">Other Categories:</span>
                   ${initialOtherCustomCats.map(c => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${c}</span></span>`).join('')}
+                </td>
+              </tr>
+              ` : ''}
+            </tbody>
+          </table>
+
+          <div class="section-hdr">Treatment Provided</div>
+          <div class="sub-hdr-bar">Select all that apply. Initial medical or first aid treatment provided.</div>
+          <table class="sc-grid">
+            <tbody>
+              <tr>
+                <td style="width: 20%;">${renderCheckbox(isInitialTreatment('No Treatment'), 'No Treatment')}</td>
+                <td style="width: 20%;">${renderCheckbox(isInitialTreatment('First Aid'), 'First Aid')}</td>
+                <td style="width: 20%;">${renderCheckbox(isInitialTreatment('Medical Treatment'), 'Medical Treatment')}</td>
+                <td style="width: 20%;">${renderCheckbox(isInitialTreatment('Restricted Work'), 'Restricted Work')}</td>
+                <td style="width: 20%;">${renderCheckbox(isInitialTreatment('Lost Time'), 'Lost Time')}</td>
+              </tr>
+              ${initialOtherTreatments.length > 0 ? `
+              <tr>
+                <td colspan="5" style="background: #f8fafc; padding: 4px 8px;">
+                  <span class="chk-label" style="color: #475569; font-size: 8.5px; font-weight: 700; margin-right: 6px;">Other Treatment:</span>
+                  ${initialOtherTreatments.map(t => `<span class="chk-item" style="margin-right: 10px;"><span class="chk-box checked">✓</span> <span class="chk-label" style="font-weight: 700;">${t}</span></span>`).join('')}
                 </td>
               </tr>
               ` : ''}
