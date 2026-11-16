@@ -223,6 +223,20 @@ export class IncidentPdfService {
           const project = inc.projectName || 'M3 South';
           const caseNo = inc.caseNumber || inc.id || 'INC-Report';
 
+          const isTruthy = (v: any) => v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
+          const isNoFurtherInvestigation = isTruthy(inc?.noFurtherInvestigation) ||
+            isTruthy(inc?.no_further_investigation) ||
+            isTruthy(headsUp?.noFurtherInvestigation) ||
+            isTruthy(headsUp?.no_further_investigation) ||
+            isTruthy(initial?.noFurtherInvestigation) ||
+            isTruthy(initial?.no_further_investigation) ||
+            isTruthy(details?.noFurtherInvestigation) ||
+            isTruthy(details?.no_further_investigation) ||
+            isTruthy(details?.incident?.noFurtherInvestigation) ||
+            isTruthy(details?.incident?.no_further_investigation);
+
+          const includeForm3Attachments = !isNoFurtherInvestigation && formType !== 'headsUp' && formType !== '1' && formType !== 'initialReport' && formType !== '2';
+
           let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || details.mandatoryAttachments || {};
           if (typeof att === 'string') {
             try { att = JSON.parse(att); } catch (e) {}
@@ -263,32 +277,34 @@ export class IncidentPdfService {
           };
 
           // A. From mandatory attachments (Form 3)
-          if (Array.isArray(att.items)) {
-            att.items.forEach((it: any) => collectAttachment(it.label || it.key, it, it.key));
-          }
-          Object.keys(att).forEach((k) => {
-            if (k !== 'items' && k !== 'missingExplanation') {
-              collectAttachment(k, att[k], k);
+          if (includeForm3Attachments) {
+            if (Array.isArray(att.items)) {
+              att.items.forEach((it: any) => collectAttachment(it.label || it.key, it, it.key));
             }
-          });
-
-          // B. From action items (Corrective / Preventive Actions in Form 3)
-          const actionItems = details.actionItems || details.actions || [];
-          if (Array.isArray(actionItems)) {
-            actionItems.forEach((ai: any) => {
-              if (ai.attachmentUrl) {
-                collectAttachment(`Action Item #${ai.id} Attachment: ${ai.action || ''}`, {
-                  fileUrl: ai.attachmentUrl,
-                  fileName: ai.attachmentName,
-                  fileType: ai.fileType,
-                });
-              }
-              if (Array.isArray(ai.attachments)) {
-                ai.attachments.forEach((subAtt: any) => {
-                  collectAttachment(`Action Item #${ai.id} Attachment: ${ai.action || ''}`, subAtt);
-                });
+            Object.keys(att).forEach((k) => {
+              if (k !== 'items' && k !== 'missingExplanation') {
+                collectAttachment(k, att[k], k);
               }
             });
+
+            // B. From action items (Corrective / Preventive Actions in Form 3)
+            const actionItems = details.actionItems || details.actions || [];
+            if (Array.isArray(actionItems)) {
+              actionItems.forEach((ai: any) => {
+                if (ai.attachmentUrl) {
+                  collectAttachment(`Action Item #${ai.id} Attachment: ${ai.action || ''}`, {
+                    fileUrl: ai.attachmentUrl,
+                    fileName: ai.attachmentName,
+                    fileType: ai.fileType,
+                  });
+                }
+                if (Array.isArray(ai.attachments)) {
+                  ai.attachments.forEach((subAtt: any) => {
+                    collectAttachment(`Action Item #${ai.id} Attachment: ${ai.action || ''}`, subAtt);
+                  });
+                }
+              });
+            }
           }
 
           // C. From Form 1 / Form 2 attachments if any
@@ -2081,19 +2097,24 @@ export class IncidentPdfService {
 
     const currentStage = inc.stage || (details.investigation ? 'INVESTIGATION' : details.initialReport ? 'INITIAL_REPORT' : 'HEADS_UP');
 
-    const isNoFurtherInvestigation = Boolean(
-      inc.noFurtherInvestigation ||
-      headsUp.noFurtherInvestigation ||
-      initial.noFurtherInvestigation ||
-      details.noFurtherInvestigation
-    );
+    const isTruthy = (v: any) => v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
+    const isNoFurtherInvestigation = isTruthy(inc?.noFurtherInvestigation) ||
+      isTruthy(inc?.no_further_investigation) ||
+      isTruthy(headsUp?.noFurtherInvestigation) ||
+      isTruthy(headsUp?.no_further_investigation) ||
+      isTruthy(initial?.noFurtherInvestigation) ||
+      isTruthy(initial?.no_further_investigation) ||
+      isTruthy(details?.noFurtherInvestigation) ||
+      isTruthy(details?.no_further_investigation) ||
+      isTruthy(details?.incident?.noFurtherInvestigation) ||
+      isTruthy(details?.incident?.no_further_investigation);
 
     const hasInitialReportData = Boolean(
-      (details.initialReport && (details.initialReport.submittedBy || details.initialReport.signature || details.initialReport.submittedTime || details.initialReport.injuredPersonName)) ||
-      (details.initial_report && (details.initial_report.submittedBy || details.initial_report.signature || details.initial_report.submittedTime || details.initial_report.injured_person_name))
+      (details.initialReport && (details.initialReport.id || details.initialReport.submittedBy || details.initialReport.signature || details.initialReport.submittedTime || details.initialReport.injuredPersonName)) ||
+      (details.initial_report && (details.initial_report.id || details.initial_report.submittedBy || details.initial_report.signature || details.initial_report.submittedTime || details.initial_report.injured_person_name))
     );
 
-    const hasInvestigationData = Boolean(
+    const hasInvestigationData = !isNoFurtherInvestigation && Boolean(
       details.investigation?.id ||
       details.investigation?.investigationDetails ||
       details.investigation?.problemStatement ||
@@ -2106,7 +2127,7 @@ export class IncidentPdfService {
       details.incident_investigation?.submittedBy ||
       details.incident_investigation?.reviewedBy ||
       inc.stage === 'INVESTIGATION' ||
-      inc.stage === 'CLOSED'
+      (inc.stage === 'CLOSED' && !isNoFurtherInvestigation)
     );
 
     let includeForm1 = true;
@@ -2124,7 +2145,11 @@ export class IncidentPdfService {
     } else if (formType === 'investigation' || formType === '3' || formType === 'INVESTIGATION') {
       includeForm1 = false;
       includeForm2 = false;
-      includeForm3 = true;
+      includeForm3 = !isNoFurtherInvestigation;
+    }
+
+    if (isNoFurtherInvestigation) {
+      includeForm3 = false;
     }
 
     let p1 = 0, p2 = 0, p3 = 0, pageCounter = 0;
