@@ -741,7 +741,8 @@ export class IncidentsService implements OnModuleInit {
     const savedIncident = await this.incidentRepo.save(incident);
 
     let initialReport = await this.initialReportRepo.findOne({ where: { incidentId } });
-    if (initialReport && initialReport.approvedBy) {
+    const isReopenedIrCheck = Array.isArray(incident.reopenLogs) && incident.reopenLogs.length > 0 && !incident.closedBy;
+    if (initialReport && initialReport.approvedBy && !isReopenedIrCheck) {
       throw new BadRequestException(
         `Stage 2 Initial Incident Report for Incident ${incident.caseNumber} (ID: ${incidentId}) has already been reviewed and approved, and cannot be modified.`
       );
@@ -1481,9 +1482,11 @@ export class IncidentsService implements OnModuleInit {
 
     if (targetStage === 'HEADS_UP') {
       if (headsUp) {
-        headsUp.approvedBy = null as any;
-        headsUp.approvedTime = null as any;
-        headsUp.approverSignature = null as any;
+        // Preserve headsUp approval data upon reopen; never destructively wipe approval history
+        if (!headsUp.approvedBy && headsUp.approverRole) {
+          const resolvedName = await this.resolveApproverName(headsUp.approverRole);
+          if (resolvedName) headsUp.approvedBy = resolvedName;
+        }
         const huLog = {
           action: 'Incident Reopened by Department User',
           status: 'REOPENED',
@@ -1495,6 +1498,9 @@ export class IncidentsService implements OnModuleInit {
           timestamp: nowIso,
           returnedTime: nowIso,
           editedTime: nowIso,
+          previousApprovedBy: headsUp.approvedBy || undefined,
+          previousApproverRole: headsUp.approverRole || undefined,
+          previousApprovedTime: headsUp.approvedTime ? headsUp.approvedTime.toISOString() : undefined,
         };
         headsUp.editHistory = Array.isArray(headsUp.editHistory)
           ? [...headsUp.editHistory, huLog]
@@ -1509,9 +1515,11 @@ export class IncidentsService implements OnModuleInit {
         await this.headsUpRepo.save(headsUp);
       }
       if (initialReport) {
-        initialReport.approvedBy = null as any;
-        initialReport.approvedTime = null as any;
-        initialReport.approverSignature = null as any;
+        // Preserve initialReport approval data upon reopen; never destructively wipe approval history
+        if (!initialReport.approvedBy && initialReport.approverRole) {
+          const resolvedName = await this.resolveApproverName(initialReport.approverRole);
+          if (resolvedName) initialReport.approvedBy = resolvedName;
+        }
         const irLog = {
           action: 'Incident Reopened by Department User',
           status: 'REOPENED',
@@ -1523,6 +1531,9 @@ export class IncidentsService implements OnModuleInit {
           timestamp: nowIso,
           returnedTime: nowIso,
           editedTime: nowIso,
+          previousApprovedBy: initialReport.approvedBy || undefined,
+          previousApproverRole: initialReport.approverRole || undefined,
+          previousApprovedTime: initialReport.approvedTime ? initialReport.approvedTime.toISOString() : undefined,
         };
         (initialReport as any).editHistory = Array.isArray((initialReport as any).editHistory)
           ? [...(initialReport as any).editHistory, irLog]
@@ -1594,6 +1605,86 @@ export class IncidentsService implements OnModuleInit {
   }
 
   /**
+   * Resolves approver name dynamically from database by matching approver initials / username / email.
+   * Safe against generic role titles, handles NNE initials patterns, and never throws.
+   */
+  async resolveApproverName(approverRole?: string): Promise<string | null> {
+    if (!approverRole || typeof approverRole !== 'string') return null;
+    const roleTrim = approverRole.trim();
+    if (!roleTrim) return null;
+
+    // Guard: Ignore generic roles / titles to prevent false positive matches
+    const genericTitles = [
+      'site hse manager', 'customer approver', 'hse director', 'project director',
+      'department hse user', 'contractor', 'subcontractor', 'reviewer', 'approver',
+      'site team', 'site admin', 'user', 'site hse', 'superadmin', 'admin'
+    ];
+    if (genericTitles.includes(roleTrim.toLowerCase())) {
+      return null;
+    }
+
+    try {
+      // 1. Exact match on employees.username or employees.badgeId
+      const empsExact = await this.incidentRepo.manager.query(
+        'SELECT employeeName FROM employees WHERE UPPER(username) = UPPER(?) OR badgeId = ? LIMIT 1',
+        [roleTrim, roleTrim]
+      );
+      if (empsExact && empsExact.length > 0 && empsExact[0].employeeName) {
+        return empsExact[0].employeeName;
+      }
+
+      // 2. Exact match on users.username joined with employees
+      const usersExact = await this.incidentRepo.manager.query(
+        'SELECT e.employeeName FROM users u INNER JOIN employees e ON u.empId = e.id WHERE UPPER(u.username) = UPPER(?) LIMIT 1',
+        [roleTrim]
+      );
+      if (usersExact && usersExact.length > 0 && usersExact[0].employeeName) {
+        return usersExact[0].employeeName;
+      }
+
+      // 3. Prefix match on users.username (e.g. "OZUS-NNE-Observer", "CYAJ-NNE")
+      const usersPrefix = await this.incidentRepo.manager.query(
+        'SELECT e.employeeName FROM users u INNER JOIN employees e ON u.empId = e.id WHERE u.username LIKE ? LIMIT 1',
+        [`${roleTrim}-%`]
+      );
+      if (usersPrefix && usersPrefix.length > 0 && usersPrefix[0].employeeName) {
+        return usersPrefix[0].employeeName;
+      }
+
+      // 4. Match on employees email prefix (e.g. "OZUS@nne.com")
+      const empsEmail = await this.incidentRepo.manager.query(
+        'SELECT employeeName FROM employees WHERE email LIKE ? LIMIT 1',
+        [`${roleTrim}@%`]
+      );
+      if (empsEmail && empsEmail.length > 0 && empsEmail[0].employeeName) {
+        return empsEmail[0].employeeName;
+      }
+
+      // 5. Match on employees.username prefix (e.g. "OZUS-NNE")
+      const empsUserPrefix = await this.incidentRepo.manager.query(
+        'SELECT employeeName FROM employees WHERE username LIKE ? LIMIT 1',
+        [`${roleTrim}-%`]
+      );
+      if (empsUserPrefix && empsUserPrefix.length > 0 && empsUserPrefix[0].employeeName) {
+        return empsUserPrefix[0].employeeName;
+      }
+
+      // 6. Exact match on employees.employeeName (if someone passed the full name as approverRole)
+      const empsName = await this.incidentRepo.manager.query(
+        'SELECT employeeName FROM employees WHERE UPPER(employeeName) = UPPER(?) LIMIT 1',
+        [roleTrim]
+      );
+      if (empsName && empsName.length > 0 && empsName[0].employeeName) {
+        return empsName[0].employeeName;
+      }
+    } catch (e: any) {
+      this.logger.warn(`[IncidentsService] Failed to resolve approver name for role "${roleTrim}": ${e?.message || e}`);
+    }
+
+    return roleTrim;
+  }
+
+  /**
    * Get single incident with all details
    */
   async getIncidentDetails(id: number) {
@@ -1607,10 +1698,53 @@ export class IncidentsService implements OnModuleInit {
     const investigation = await this.investigationRepo.findOne({ where: { incidentId: id } });
     const actionItems = await this.actionItemRepo.find({ where: { incidentId: id } });
 
+    // Auto-heal missing approvedBy if approverRole is present (e.g. if previously wiped upon reopen)
+    if (initialReport && !initialReport.approvedBy && initialReport.approverRole) {
+      const resolvedName = await this.resolveApproverName(initialReport.approverRole);
+      if (resolvedName) {
+        initialReport.approvedBy = resolvedName;
+        if (!initialReport.approvedTime) {
+          initialReport.approvedTime = incident.updatedTime || new Date();
+        }
+        await this.initialReportRepo.save(initialReport);
+      }
+    }
+    if (headsUp && !headsUp.approvedBy && headsUp.approverRole) {
+      const resolvedName = await this.resolveApproverName(headsUp.approverRole);
+      if (resolvedName) {
+        headsUp.approvedBy = resolvedName;
+        if (!headsUp.approvedTime) {
+          headsUp.approvedTime = incident.updatedTime || new Date();
+        }
+        await this.headsUpRepo.save(headsUp);
+      }
+    }
+
     if (headsUp && (!headsUp.categories || headsUp.categories.length === 0)) {
       const hasInitial = Boolean(initialReport && (initialReport.submittedBy || initialReport.submittedTime));
       if (!hasInitial && incident.categories) {
         headsUp.categories = incident.categories;
+      }
+    }
+
+    // Ensure noFurtherInvestigation consistency across incident and its reports
+    const isWaived = Boolean(
+      incident.noFurtherInvestigation ||
+      headsUp?.noFurtherInvestigation ||
+      initialReport?.noFurtherInvestigation
+    );
+    if (isWaived) {
+      let needsSave = false;
+      if (!incident.noFurtherInvestigation) {
+        incident.noFurtherInvestigation = true;
+        needsSave = true;
+      }
+      if (initialReport && !initialReport.noFurtherInvestigation && (initialReport.approvedBy || initialReport.approvedTime)) {
+        initialReport.noFurtherInvestigation = true;
+        await this.initialReportRepo.save(initialReport);
+      }
+      if (needsSave) {
+        await this.incidentRepo.save(incident);
       }
     }
 

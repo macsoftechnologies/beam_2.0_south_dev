@@ -41,7 +41,7 @@ export class IncidentPdfService {
                 headless: true,
                 args: launchArgs,
               });
-            } catch (e3) {}
+            } catch (e3) { }
           }
         }
         throw e1;
@@ -65,13 +65,13 @@ export class IncidentPdfService {
     const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext);
     const mimeType = isPdf ? 'application/pdf'
       : ext === 'png' ? 'image/png'
-      : ext === 'svg' ? 'image/svg+xml'
-      : ext === 'webp' ? 'image/webp'
-      : ext === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      : ext === 'doc' ? 'application/msword'
-      : ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      : isImage ? 'image/jpeg'
-      : 'application/octet-stream';
+        : ext === 'svg' ? 'image/svg+xml'
+          : ext === 'webp' ? 'image/webp'
+            : ext === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+              : ext === 'doc' ? 'application/msword'
+                : ext === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                  : isImage ? 'image/jpeg'
+                    : 'application/octet-stream';
 
     // 2. Check local disk candidate paths
     const candidatePaths = [
@@ -88,7 +88,7 @@ export class IncidentPdfService {
         try {
           const buffer = readFileSync(p);
           return { buffer, filename, mimeType, isPdf, isImage };
-        } catch (e) {}
+        } catch (e) { }
       }
     }
 
@@ -111,10 +111,10 @@ export class IncidentPdfService {
             const cacheDir = join(process.cwd(), 'uploads', 'incidents');
             if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
             writeFileSync(join(cacheDir, filename), buffer);
-          } catch (writeErr) {}
+          } catch (writeErr) { }
           return { buffer, filename, mimeType, isPdf, isImage };
         }
-      } catch (netErr) {}
+      } catch (netErr) { }
     }
 
     return null;
@@ -124,7 +124,7 @@ export class IncidentPdfService {
     const inv = details.investigation || details.incident_investigation || {};
     let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || details.mandatoryAttachments || {};
     if (typeof att === 'string') {
-      try { att = JSON.parse(att); } catch (e) {}
+      try { att = JSON.parse(att); } catch (e) { }
     }
 
     const urlsToFetch = new Set<string>();
@@ -180,7 +180,7 @@ export class IncidentPdfService {
       Array.from(urlsToFetch).map(async (u) => {
         try {
           await this.fetchAttachmentBuffer(u);
-        } catch (e) {}
+        } catch (e) { }
       })
     );
   }
@@ -239,7 +239,7 @@ export class IncidentPdfService {
 
           let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || details.mandatoryAttachments || {};
           if (typeof att === 'string') {
-            try { att = JSON.parse(att); } catch (e) {}
+            try { att = JSON.parse(att); } catch (e) { }
           }
 
           const attachmentsToMerge: { label: string; fileUrl: string; fileName?: string; mimeType?: string }[] = [];
@@ -665,7 +665,7 @@ export class IncidentPdfService {
               parsed.forEach(parseInitialCatValue);
               return;
             }
-          } catch {}
+          } catch { }
         }
         initialCategoriesList.push(trimmed);
       }
@@ -740,7 +740,7 @@ export class IncidentPdfService {
               parsed.forEach(parseTreatmentValue);
               return;
             }
-          } catch {}
+          } catch { }
         }
         initialTreatmentsList.push(trimmed);
       }
@@ -1014,8 +1014,8 @@ export class IncidentPdfService {
           <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px;">
             ${photosToRender.map((imgUri, i) => `
               <div style="border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; background: #fff; text-align: center;">
-                <img src="${imgUri}" style="width: 145px; height: 95px; object-fit: cover; border-radius: 3px;" alt="Incident Photo ${i+1}" />
-                <div style="font-size: 8px; font-weight: 600; color: #334155; margin-top: 3px;">Photo ${i+1}: Incident Location Evidence</div>
+                <img src="${imgUri}" style="width: 145px; height: 95px; object-fit: cover; border-radius: 3px;" alt="Incident Photo ${i + 1}" />
+                <div style="font-size: 8px; font-weight: 600; color: #334155; margin-top: 3px;">Photo ${i + 1}: Incident Location Evidence</div>
               </div>
             `).join('')}
           </div>
@@ -1041,7 +1041,7 @@ export class IncidentPdfService {
       if (typeof historyData === 'string') {
         try {
           historyList = JSON.parse(historyData);
-        } catch (e) {}
+        } catch (e) { }
       } else if (Array.isArray(historyData)) {
         historyList = historyData;
       }
@@ -1073,7 +1073,7 @@ export class IncidentPdfService {
     const renderEditAndRevisionHistory = (historyData: any, stageTitle: string = 'Stage') => {
       let historyList: any[] = [];
       if (typeof historyData === 'string') {
-        try { historyList = JSON.parse(historyData); } catch (e) {}
+        try { historyList = JSON.parse(historyData); } catch (e) { }
       } else if (Array.isArray(historyData)) {
         historyList = historyData;
       }
@@ -1105,16 +1105,16 @@ export class IncidentPdfService {
             </thead>
             <tbody>
               ${historyList.map((item: any, idx: number) => {
-                const isReturned = item.status === 'RETURNED_FOR_REVISION' || (item.action && String(item.action).toLowerCase().includes('return'));
-                const badgeColor = isReturned ? '#b91c1c' : '#1d4ed8';
-                const badgeBg = isReturned ? '#fee2e2' : '#dbeafe';
-                const actionText = isReturned ? 'Returned for Revision' : (item.action || 'Updated / Revised');
-                const byText = item.returnedBy || item.editedBy || item.name || 'User';
-                const roleText = item.role ? ` (${item.role})` : '';
-                const reasonText = item.reason || item.changes || '—';
-                const timeText = formatDt(item.returnedTime || item.editedTime || item.timestamp || item.date);
+        const isReturned = item.status === 'RETURNED_FOR_REVISION' || (item.action && String(item.action).toLowerCase().includes('return'));
+        const badgeColor = isReturned ? '#b91c1c' : '#1d4ed8';
+        const badgeBg = isReturned ? '#fee2e2' : '#dbeafe';
+        const actionText = isReturned ? 'Returned for Revision' : (item.action || 'Updated / Revised');
+        const byText = item.returnedBy || item.editedBy || item.name || 'User';
+        const roleText = item.role ? ` (${item.role})` : '';
+        const reasonText = item.reason || item.changes || '—';
+        const timeText = formatDt(item.returnedTime || item.editedTime || item.timestamp || item.date);
 
-                return `
+        return `
                   <tr style="border-bottom: ${idx < historyList.length - 1 ? '1px solid #e2e8f0' : 'none'}; background: ${idx % 2 === 0 ? '#ffffff' : '#fafafa'};">
                     <td style="padding: 4px 6px;">
                       <span style="display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 7.5px; font-weight: 700; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeColor}33;">
@@ -1126,7 +1126,7 @@ export class IncidentPdfService {
                     <td style="padding: 4px 6px; color: #64748b;">${timeText}</td>
                   </tr>
                 `;
-              }).join('')}
+      }).join('')}
             </tbody>
           </table>
         </div>
@@ -1138,13 +1138,13 @@ export class IncidentPdfService {
       let closureList: any[] = [];
 
       if (typeof inc.reopenLogs === 'string') {
-        try { reopenList = JSON.parse(inc.reopenLogs); } catch (e) {}
+        try { reopenList = JSON.parse(inc.reopenLogs); } catch (e) { }
       } else if (Array.isArray(inc.reopenLogs)) {
         reopenList = inc.reopenLogs;
       }
 
       if (typeof inc.closureHistory === 'string') {
-        try { closureList = JSON.parse(inc.closureHistory); } catch (e) {}
+        try { closureList = JSON.parse(inc.closureHistory); } catch (e) { }
       } else if (Array.isArray(inc.closureHistory)) {
         closureList = inc.closureHistory;
       }
@@ -1252,7 +1252,7 @@ export class IncidentPdfService {
       const list: any[] = [];
       let huActs = headsUp.immediateActions;
       if (typeof huActs === 'string') {
-        try { huActs = JSON.parse(huActs); } catch (e) {}
+        try { huActs = JSON.parse(huActs); } catch (e) { }
       }
       if (huActs && Array.isArray(huActs)) {
         list.push(...huActs);
@@ -1260,7 +1260,7 @@ export class IncidentPdfService {
       if (list.length === 0) {
         let incActs = inc.immediateActions;
         if (typeof incActs === 'string') {
-          try { incActs = JSON.parse(incActs); } catch (e) {}
+          try { incActs = JSON.parse(incActs); } catch (e) { }
         }
         if (incActs && Array.isArray(incActs)) {
           list.push(...incActs);
@@ -1273,7 +1273,7 @@ export class IncidentPdfService {
       const list: any[] = [];
       let irActs = initial.immediateActions;
       if (typeof irActs === 'string') {
-        try { irActs = JSON.parse(irActs); } catch (e) {}
+        try { irActs = JSON.parse(irActs); } catch (e) { }
       }
       if (irActs && Array.isArray(irActs)) {
         list.push(...irActs);
@@ -1291,7 +1291,7 @@ export class IncidentPdfService {
     const headsUpSig = headsUp.signature || headsUp.submittedBySignature || headsUp.submitted_by_signature || inc.signature || null;
     const headsUpSubmitter = headsUp.submittedBy || headsUp.submitted_by || reportedBy;
     const headsUpApprSig = headsUp.approverSignature || headsUp.approver_signature || null;
-    const headsUpApprName = headsUp.approvedBy || headsUp.approved_by || 'Site HSE Manager';
+    const headsUpApprName = headsUp.approvedBy || headsUp.approved_by || headsUp.approverRole || 'Site HSE Manager';
 
     const formatActionDate = (dVal: any): string => {
       if (!dVal) return date || '—';
@@ -1483,7 +1483,7 @@ export class IncidentPdfService {
       if (!catName) return false;
       let accCats = initial.accidentCategories || [];
       if (typeof accCats === 'string') {
-        try { accCats = JSON.parse(accCats); } catch (e) {}
+        try { accCats = JSON.parse(accCats); } catch (e) { }
       }
       if (!Array.isArray(accCats)) accCats = [accCats];
       const target = normalizeCat(catName);
@@ -1524,7 +1524,7 @@ export class IncidentPdfService {
       if (!type) return false;
       let types = initial.injuryTypes || [];
       if (typeof types === 'string') {
-        try { types = JSON.parse(types); } catch (e) {}
+        try { types = JSON.parse(types); } catch (e) { }
       }
       if (!Array.isArray(types)) types = [types];
       const target = normalizeCat(type);
@@ -1569,7 +1569,7 @@ export class IncidentPdfService {
       if (!initial.bodyPartsInjured) return [];
       let bp = initial.bodyPartsInjured;
       if (typeof bp === 'string') {
-        try { bp = JSON.parse(bp); } catch (e) {}
+        try { bp = JSON.parse(bp); } catch (e) { }
       }
       if (Array.isArray(bp)) return bp.map((x: any) => typeof x === 'string' ? x : `${x.part || x.name}${x.side ? ` (${x.side})` : ''}`);
       if (bp && bp.selections && Array.isArray(bp.selections)) {
@@ -1603,7 +1603,7 @@ export class IncidentPdfService {
         if (!side) return matchesPart;
         const sideLower = side.toLowerCase();
         const hasSide = lowerItem.includes(`(${sideLower})`) || lowerItem.includes(` ${sideLower}`) || lowerItem.includes(`_${sideLower}`);
-        
+
         // If the DB item didn't specify side (e.g. "Hand" or "Wrist"), light up both sides
         const itemHasNoSide = !lowerItem.includes('(l)') && !lowerItem.includes('(r)') && !lowerItem.includes(' left') && !lowerItem.includes(' right');
 
@@ -1628,7 +1628,7 @@ export class IncidentPdfService {
 
       let rawData = inv.fishboneData || inv.fishbone_data || details.fishboneData || inc.fishboneData;
       if (typeof rawData === 'string') {
-        try { rawData = JSON.parse(rawData); } catch (e) {}
+        try { rawData = JSON.parse(rawData); } catch (e) { }
       }
 
       if (Array.isArray(rawData)) {
@@ -1794,7 +1794,7 @@ export class IncidentPdfService {
     const renderFiveWhysRows = (): string => {
       let whysList: any[] = inv.fiveWhysData || inv.five_whys_data || details.fiveWhysData || inc.fiveWhysData || [];
       if (typeof whysList === 'string') {
-        try { whysList = JSON.parse(whysList); } catch (e) {}
+        try { whysList = JSON.parse(whysList); } catch (e) { }
       }
 
       if (Array.isArray(whysList) && whysList.length > 0) {
@@ -1853,7 +1853,7 @@ export class IncidentPdfService {
     const renderInvTeamRows = (): string => {
       let team: any[] = inv.investigationTeam || inv.teamMembers || inv.team || [];
       if (typeof team === 'string') {
-        try { team = JSON.parse(team); } catch (e) {}
+        try { team = JSON.parse(team); } catch (e) { }
       }
       if (Array.isArray(team) && team.length > 0) {
         return team.map((m, i) => `
@@ -1878,12 +1878,12 @@ export class IncidentPdfService {
     const renderWitnessRows = (): string => {
       let witnesses: any[] = inv.witnessStatements || inv.witnesses || [];
       if (typeof witnesses === 'string') {
-        try { witnesses = JSON.parse(witnesses); } catch (e) {}
+        try { witnesses = JSON.parse(witnesses); } catch (e) { }
       }
       if (Array.isArray(witnesses) && witnesses.length > 0) {
         return witnesses.map((w, i) => `
           <tr>
-            <td style="font-weight: 700;">${w.name || `Witness ${i+1}`}</td>
+            <td style="font-weight: 700;">${w.name || `Witness ${i + 1}`}</td>
             <td>${w.badge || w.badgeNo || 'N/A'}</td>
             <td>${w.employer || w.company || 'N/A'}</td>
             <td>${w.occupation || w.role || 'N/A'}</td>
@@ -1903,7 +1903,7 @@ export class IncidentPdfService {
     const renderRootCausesRows = (): string => {
       let rcs: any[] = inv.rootCauses || inv.root_causes || [];
       if (typeof rcs === 'string') {
-        try { rcs = JSON.parse(rcs); } catch (e) {}
+        try { rcs = JSON.parse(rcs); } catch (e) { }
       }
       if (!Array.isArray(rcs) || rcs.length === 0) {
         const fallbackRc = inc.rootCause || initial.initialRootCause || 'Investigation root cause analysis recorded.';
@@ -1919,7 +1919,7 @@ export class IncidentPdfService {
     const renderFactorsRows = (): string => {
       let factors: any[] = inv.contributingFactors || inv.contributing_factors || [];
       if (typeof factors === 'string') {
-        try { factors = JSON.parse(factors); } catch (e) {}
+        try { factors = JSON.parse(factors); } catch (e) { }
       }
       if (!Array.isArray(factors) || factors.length === 0) {
         factors = ['Human Factor: Operational awareness', 'Environmental Factor: Lighting / Site access'];
@@ -1968,7 +1968,7 @@ export class IncidentPdfService {
     const renderMandatoryAttachmentsTable = (): string => {
       let att = inv.mandatoryAttachments || inv.mandatory_attachments || inv.attachments || {};
       if (typeof att === 'string') {
-        try { att = JSON.parse(att); } catch (e) {}
+        try { att = JSON.parse(att); } catch (e) { }
       }
 
       const getAttachmentInfo = (keys: string[], labelMatch?: string, legacyIdx?: number) => {
@@ -1983,8 +1983,8 @@ export class IncidentPdfService {
           val = att[legacyIdx];
         }
         if (!val && Array.isArray(att.items)) {
-          val = att.items.find((it: any) => 
-            (it.key && keys.includes(it.key)) || 
+          val = att.items.find((it: any) =>
+            (it.key && keys.includes(it.key)) ||
             (labelMatch && it.label && it.label.toLowerCase().includes(labelMatch.toLowerCase())) ||
             (it.key && labelMatch && labelMatch.toLowerCase().includes(it.key.toLowerCase()))
           );
@@ -2076,7 +2076,7 @@ export class IncidentPdfService {
     const initialSig = initial.signature || initial.submittedBySignature || initial.submitted_by_signature || null;
     const initialSubmitter = initial.submittedBy || initial.submitted_by || reportedBy;
     const initialApprSig = initial.approverSignature || initial.approver_signature || null;
-    const initialApprName = initial.approvedBy || initial.approved_by || 'Site HSE Manager';
+    const initialApprName = initial.approvedBy || initial.approved_by || initial.approverRole || 'Site HSE Manager';
 
     // Form 3 Signatures (Investigator + Reviewer)
     let investigatorSig = inv.investigatorSignature || inv.investigator_signature || inv.signature || null;
@@ -2098,16 +2098,48 @@ export class IncidentPdfService {
     const currentStage = inc.stage || (details.investigation ? 'INVESTIGATION' : details.initialReport ? 'INITIAL_REPORT' : 'HEADS_UP');
 
     const isTruthy = (v: any) => v === true || v === 1 || v === '1' || String(v).toLowerCase() === 'true';
-    const isNoFurtherInvestigation = isTruthy(inc?.noFurtherInvestigation) ||
-      isTruthy(inc?.no_further_investigation) ||
-      isTruthy(headsUp?.noFurtherInvestigation) ||
-      isTruthy(headsUp?.no_further_investigation) ||
-      isTruthy(initial?.noFurtherInvestigation) ||
-      isTruthy(initial?.no_further_investigation) ||
-      isTruthy(details?.noFurtherInvestigation) ||
-      isTruthy(details?.no_further_investigation) ||
-      isTruthy(details?.incident?.noFurtherInvestigation) ||
-      isTruthy(details?.incident?.no_further_investigation);
+
+    // Step 1: Was waiver checked at Heads-Up?
+    const isStep1Waived = isTruthy(headsUp?.noFurtherInvestigation) || isTruthy(headsUp?.no_further_investigation);
+    let step1WaiverUser = '';
+    let step1WaiverTime: any = null;
+    if (isStep1Waived) {
+      step1WaiverTime = headsUp.approvedTime || headsUp.approved_time || headsUp.updatedTime || headsUp.updated_time || headsUp.submittedTime || headsUp.submitted_time;
+      step1WaiverUser = headsUpApprName
+        ? `${headsUpApprName}${headsUp.approverRole && !headsUpApprName.includes(headsUp.approverRole) ? ` (${headsUp.approverRole})` : ''}`
+        : (headsUp.approverRole || headsUp.approver_role || headsUpSubmitter || 'Site HSE Lead');
+    }
+    const step1WaiverFormattedDate = step1WaiverTime ? formatTimestamp(step1WaiverTime) : '—';
+
+    // Step 2: Was waiver checked at Initial Report?
+    const isStep2Waived = isTruthy(initial?.noFurtherInvestigation) || isTruthy(initial?.no_further_investigation) ||
+      (!isStep1Waived && (isTruthy(inc?.noFurtherInvestigation) || isTruthy(inc?.no_further_investigation)));
+    let step2WaiverUser = '';
+    let step2WaiverTime: any = null;
+    if (isStep2Waived) {
+      step2WaiverTime = initial.approvedTime || initial.approved_time || initial.updatedTime || initial.updated_time || initial.submittedTime || initial.submitted_time || inc.closedTime || inc.closed_time;
+      step2WaiverUser = initialApprName
+        ? `${initialApprName}${initial.approverRole && !initialApprName.includes(initial.approverRole) ? ` (${initial.approverRole})` : ''}`
+        : (initial.approverRole || initial.approver_role || initialSubmitter || inc.closedBy || inc.closed_by || 'Site HSE Approver');
+
+      if (!step2WaiverTime && (inc.closureHistory || inc.closure_history)) {
+        let ch = inc.closureHistory || inc.closure_history;
+        if (typeof ch === 'string') {
+          try { ch = JSON.parse(ch); } catch (e) { }
+        }
+        if (Array.isArray(ch) && ch.length > 0) {
+          const lastC = ch[ch.length - 1];
+          step2WaiverTime = lastC.closedTime || lastC.closed_time || lastC.timestamp;
+          if (!step2WaiverUser) step2WaiverUser = lastC.closedBy || lastC.closed_by;
+        }
+      }
+    }
+    const step2WaiverFormattedDate = step2WaiverTime ? formatTimestamp(step2WaiverTime) : '—';
+
+    // Overall waiver status
+    const isNoFurtherInvestigation = isStep1Waived || isStep2Waived;
+
+    const slaInvestigationDue = inc.slaInvestigationDue ? formatTimestamp(inc.slaInvestigationDue) : (inc.incidentDate ? formatTimestamp(new Date(new Date(inc.incidentDate).getTime() + 7 * 86400000)) : 'Within 7 days');
 
     const hasInitialReportData = Boolean(
       (details.initialReport && (details.initialReport.id || details.initialReport.submittedBy || details.initialReport.signature || details.initialReport.submittedTime || details.initialReport.injuredPersonName)) ||
@@ -2387,10 +2419,10 @@ export class IncidentPdfService {
         ================================================================== -->
         <div class="form-page">
           ${renderPageHeader(
-            'Heads-up Notification',
-            `Project: ${project} &nbsp;|&nbsp; Location: ${building} &nbsp;|&nbsp; System No: ${caseNo} &nbsp;|&nbsp; Must be completed within 1 hour of occurrence`,
-            'Form 1 / Stage 1 · Controlled EHS Form'
-          )}
+      'Heads-up Notification',
+      `Project: ${project} &nbsp;|&nbsp; Location: ${building} &nbsp;|&nbsp; System No: ${caseNo} &nbsp;|&nbsp; Must be completed within 1 hour of occurrence`,
+      'Form 1 / Stage 1 · Controlled EHS Form'
+    )}
 
           <div class="section-hdr">1. Project Details & Location</div>
           <table class="sc-grid">
@@ -2425,7 +2457,11 @@ export class IncidentPdfService {
               </tr>
               <tr>
                 <td class="lbl">Further Investigation:</td>
-                <td class="val"><strong>${isNoFurtherInvestigation ? 'Not Required (Waived)' : 'Required'}</strong></td>
+                <td class="val">
+                  <strong>${isStep1Waived
+                    ? `<span style="color: #059669;">Not Required (Waived)</span> &bull; <span style="color: #334155; font-size: 8px;">Waived by: ${step1WaiverUser} (${step1WaiverFormattedDate})</span>`
+                    : '<span style="color: #2563eb;">Required</span>'}</strong>
+                </td>
                 <td class="lbl">Reported By:</td>
                 <td class="val">${reportedBy}</td>
               </tr>
@@ -2501,10 +2537,9 @@ export class IncidentPdfService {
             <tbody>
               <tr>
                 <td class="lbl" style="width: 22%;">Type of Spillage:</td>
-                <td class="val" style="width: 28%;"><strong>${
-                  Array.isArray(headsUp.spillType) ? headsUp.spillType.join(', ') :
-                  (headsUp.spillType || '-')
-                }</strong></td>
+                <td class="val" style="width: 28%;"><strong>${Array.isArray(headsUp.spillType) ? headsUp.spillType.join(', ') :
+            (headsUp.spillType || '-')
+          }</strong></td>
                 <td class="lbl" style="width: 22%;">Substance Spilled:</td>
                 <td class="val" style="width: 28%;"><strong>${headsUp.spillSubstance || '-'}</strong></td>
               </tr>
@@ -2516,10 +2551,9 @@ export class IncidentPdfService {
               </tr>
               <tr>
                 <td class="lbl">System / Media Entered:</td>
-                <td class="val" colspan="3">${
-                  Array.isArray(headsUp.spillSystemEntered) ? headsUp.spillSystemEntered.join(', ') :
-                  (headsUp.spillSystemEntered || '-')
-                }</td>
+                <td class="val" colspan="3">${Array.isArray(headsUp.spillSystemEntered) ? headsUp.spillSystemEntered.join(', ') :
+            (headsUp.spillSystemEntered || '-')
+          }</td>
               </tr>
               <tr>
                 <td class="lbl">Gatekeeper Informed?</td>
@@ -2583,10 +2617,10 @@ export class IncidentPdfService {
                 <td class="lbl" style="width: 25%;">Submission Date &amp; Time:</td>
                 <td class="val" style="width: 25%;">${formatTimestamp(headsUp.submittedTime || headsUp.createdAt || inc.createdTime)}</td>
               </tr>
-              ${(headsUpApprName && headsUpApprName !== 'Site HSE Manager') || headsUpApprSig || headsUp.approvedTime ? `
+              ${(headsUpApprName && headsUpApprName !== 'Site HSE Manager') || headsUpApprSig || headsUp.approvedTime || headsUp.approverRole ? `
               <tr>
                 <td class="lbl" style="width: 25%;">Reviewed &amp; Approved By:</td>
-                <td class="val" style="width: 25%;"><strong>${headsUpApprName}</strong></td>
+                <td class="val" style="width: 25%;"><strong>${headsUpApprName}${headsUp.approverRole && !headsUpApprName.includes(headsUp.approverRole) ? ` (${headsUp.approverRole})` : ''}</strong></td>
                 <td class="lbl" style="width: 25%;">Approval Date &amp; Time:</td>
                 <td class="val" style="width: 25%;">${formatTimestamp(headsUp.approvedTime || inc.headsUpApprovedTime || inc.updatedTime)}</td>
               </tr>
@@ -2598,6 +2632,17 @@ export class IncidentPdfService {
                 <td class="val" style="width: 25%;"><span style="color: #16a34a; font-weight: 700;">Verified &amp; Approved</span></td>
               </tr>
               `}
+              ${isStep1Waived ? `
+              <tr>
+                <td class="lbl" style="width: 25%;">Further Investigation:</td>
+                <td class="val" colspan="3">
+                  <div style="color: #059669; font-weight: 700; font-size: 9px;">✓ No Further Investigation Required (Waived)</div>
+                  <div style="color: #475569; font-size: 8px; margin-top: 2px;">
+                    <strong>Waived By:</strong> ${step1WaiverUser} &nbsp;|&nbsp; <strong>Waived On:</strong> ${step1WaiverFormattedDate}
+                  </div>
+                </td>
+              </tr>
+              ` : ''}
             </tbody>
           </table>
 
@@ -2648,7 +2693,13 @@ export class IncidentPdfService {
                 <td class="lbl">Contractor(s) Involved:</td>
                 <td class="val">${contractor}</td>
                 <td class="lbl">Further Investigation:</td>
-                <td class="val"><strong>${isNoFurtherInvestigation ? 'Not Required (Waived)' : 'Required'}</strong></td>
+                <td class="val">
+                  <strong>${isStep2Waived
+                    ? `<span style="color: #059669;">Not Required (Waived)</span> &bull; <span style="color: #334155; font-size: 8px;">Waived by: ${step2WaiverUser} (${step2WaiverFormattedDate})</span>`
+                    : (isStep1Waived
+                      ? `<span style="color: #059669;">Not Required (Waived at Step 1 by ${step1WaiverUser})</span>`
+                      : '<span style="color: #2563eb;">Required (Stage 3 within 7 days)</span>')}</strong>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -2984,10 +3035,10 @@ export class IncidentPdfService {
                 <td class="lbl" style="width: 25%;">Submission Date &amp; Time:</td>
                 <td class="val" style="width: 25%;">${formatTimestamp(initial.submittedTime || initial.createdAt)}</td>
               </tr>
-              ${(initialApprName && initialApprName !== 'Site HSE Manager') || initialApprSig || initial.approvedTime ? `
+              ${(initialApprName && initialApprName !== 'Site HSE Manager') || initialApprSig || initial.approvedTime || initial.approverRole ? `
               <tr>
                 <td class="lbl" style="width: 25%;">Approved By:</td>
-                <td class="val" style="width: 25%;"><strong>${initialApprName}</strong></td>
+                <td class="val" style="width: 25%;"><strong>${initialApprName}${initial.approverRole && !initialApprName.includes(initial.approverRole) ? ` (${initial.approverRole})` : ''}</strong></td>
                 <td class="lbl" style="width: 25%;">Approval Date &amp; Time:</td>
                 <td class="val" style="width: 25%;">${formatTimestamp(initial.approvedTime || inc.initialReportApprovedTime || inc.updatedTime)}</td>
               </tr>
@@ -2999,6 +3050,30 @@ export class IncidentPdfService {
                 <td class="val" style="width: 25%;"><span style="color: #16a34a; font-weight: 700;">Verified &amp; Approved</span></td>
               </tr>
               `}
+              <tr>
+                <td class="lbl" style="width: 25%;">Further Investigation:</td>
+                <td class="val" colspan="3">
+                  ${isStep2Waived ? `
+                    <div style="font-weight: 700; color: #059669; font-size: 9.5px; margin-bottom: 2px;">
+                      ✓ No further investigation required (Incident can be closed after approval)
+                    </div>
+                    <div style="font-size: 8.5px; color: #334155; margin-top: 2px;">
+                      <strong>Waived By:</strong> ${step2WaiverUser} &nbsp;|&nbsp; <strong>Waived On:</strong> ${step2WaiverFormattedDate}
+                    </div>
+                  ` : (isStep1Waived ? `
+                    <div style="font-weight: 700; color: #059669; font-size: 9.5px; margin-bottom: 2px;">
+                      ✓ No further investigation required (Waived at Heads-Up)
+                    </div>
+                    <div style="font-size: 8.5px; color: #334155; margin-top: 2px;">
+                      <strong>Waived By:</strong> ${step1WaiverUser} &nbsp;|&nbsp; <strong>Waived On:</strong> ${step1WaiverFormattedDate}
+                    </div>
+                  ` : `
+                    <span style="font-weight: 700; color: #2563eb;">
+                      Further investigation required (Stage 3 Investigation within 7 days &bull; Due: ${slaInvestigationDue})
+                    </span>
+                  `)}
+                </td>
+              </tr>
             </tbody>
           </table>
 
