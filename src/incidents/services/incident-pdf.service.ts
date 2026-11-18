@@ -4,6 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 import * as mammoth from 'mammoth';
 import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
 
 @Injectable()
 export class IncidentPdfService {
@@ -206,6 +207,7 @@ export class IncidentPdfService {
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
+      await optimizePageImagesForPdf(page);
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -402,6 +404,7 @@ export class IncidentPdfService {
                       </html>
                     `;
                     await page.setContent(docHtml, { waitUntil: ['domcontentloaded', 'load'], timeout: 25000 });
+                    await optimizePageImagesForPdf(page);
                     const docPdfBytes = await page.pdf({
                       format: 'A4',
                       printBackground: true,
@@ -476,6 +479,7 @@ export class IncidentPdfService {
                       </html>
                     `;
                     await page.setContent(imgHtml, { waitUntil: ['domcontentloaded', 'load'], timeout: 25000 });
+                    await optimizePageImagesForPdf(page);
                     const imgPdfBytes = await page.pdf({
                       format: 'A4',
                       printBackground: true,
@@ -2227,6 +2231,9 @@ export class IncidentPdfService {
     `;
 
     const renderSeverityBadge = (level: any) => {
+      if (level === null || level === undefined || level === '' || String(level).trim().toUpperCase() === 'N/A') {
+        return `<span style="display: inline-block; padding: 2px 7px; border-radius: 3px; font-weight: 700; font-size: 8.5px; background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1;">N/A</span>`;
+      }
       const num = Number(level);
       const meta: Record<number, { label: string; bg: string; color: string }> = {
         1: { label: 'Insignificant', bg: '#dcfce7', color: '#166534' },
@@ -2467,9 +2474,9 @@ export class IncidentPdfService {
               </tr>
               <tr>
                 <td class="lbl">Actual Severity Assessment:</td>
-                <td class="val">${renderSeverityBadge(headsUp.actualSeverity || inc.actualSeverity || 1)}</td>
+                <td class="val">${renderSeverityBadge(headsUp.actualSeverity ?? inc.actualSeverity ?? null)}</td>
                 <td class="lbl">Potential Severity Assessment:</td>
-                <td class="val">${renderSeverityBadge(headsUp.potentialSeverity || inc.potentialSeverity || 1)}</td>
+                <td class="val">${renderSeverityBadge(headsUp.potentialSeverity ?? inc.potentialSeverity ?? null)}</td>
               </tr>
             </tbody>
           </table>

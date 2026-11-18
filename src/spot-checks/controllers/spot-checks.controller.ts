@@ -88,6 +88,7 @@ export class SpotChecksController {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${ref}_HSE_Spot_Check.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.end(pdfBuffer);
   }
 
@@ -109,6 +110,7 @@ export class SpotChecksController {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${ref}_HSE_Spot_Check.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.end(pdfBuffer);
   }
 

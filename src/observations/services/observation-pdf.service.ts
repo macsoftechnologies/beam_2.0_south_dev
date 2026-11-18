@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
 import { Observation, ObservationType, ObservationStatus } from '../entities/observation.entity';
 import { ObservationActionLog, ObservationActionType } from '../entities/observation-action-log.entity';
+import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
 
 @Injectable()
 export class ObservationPdfService {
@@ -141,6 +142,9 @@ export class ObservationPdfService {
         // Non-blocking fallback
       }
 
+      // Downscale & compress oversized embedded photos before PDF serialization
+      await optimizePageImagesForPdf(page);
+
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -195,12 +199,21 @@ export class ObservationPdfService {
    * Resolves an image path or URL directly to a Base64 data URI string.
    * Checks local filesystem paths first, and falls back to remote API endpoints.
    */
-  private async resolveImageAsBase64(src: string): Promise<string> {
+  private async resolveImageAsBase64(src: string, cache?: Map<string, string>): Promise<string> {
     if (!src) return '';
     if (src.startsWith('data:image')) return src;
 
+    if (cache && cache.has(src)) {
+      return cache.get(src) || '';
+    }
+
     const filename = String(src).split('/').pop()?.split('\\').pop();
     if (!filename) return '';
+
+    const storeAndReturn = (val: string) => {
+      if (cache) cache.set(src, val);
+      return val;
+    };
 
     // 1. Check local file paths on disk
     const localCandidates = [
@@ -215,7 +228,7 @@ export class ObservationPdfService {
         try {
           const ext = extname(cand).toLowerCase().replace('.', '') || 'jpeg';
           const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-          return `data:${mime};base64,${readFileSync(cand).toString('base64')}`;
+          return storeAndReturn(`data:${mime};base64,${readFileSync(cand).toString('base64')}`);
         } catch (err) {
           this.logger.warn(`Failed reading local file ${cand}: ${err}`);
         }
@@ -227,6 +240,7 @@ export class ObservationPdfService {
     if (src.startsWith('http://') || src.startsWith('https://')) {
       remoteCandidates.push(src);
     }
+    remoteCandidates.push(`https://api.beam.safesiteworks.com/m3south/observations/${filename}`);
     remoteCandidates.push(`https://api.beam.safesiteworks.com/development/m3south/observations/${filename}`);
     remoteCandidates.push(`https://api.beam.safesiteworks.com/uploads/observations/${filename}`);
     remoteCandidates.push(`http://localhost:5200/uploads/observations/${filename}`);
@@ -237,17 +251,18 @@ export class ObservationPdfService {
         if (res.ok) {
           const buf = await res.arrayBuffer();
           const contentType = res.headers.get('content-type') || 'image/jpeg';
-          return `data:${contentType};base64,${Buffer.from(buf).toString('base64')}`;
+          return storeAndReturn(`data:${contentType};base64,${Buffer.from(buf).toString('base64')}`);
         }
       } catch {
         // Try next candidate
       }
     }
 
-    return '';
+    return storeAndReturn('');
   }
 
   private async buildHtml(obs: Observation, history: ObservationActionLog[] = []): Promise<string> {
+    const imageCache = new Map<string, string>();
     // Load Logos from src/images/logos/
     const nneLogoPath = join(process.cwd(), 'src', 'images', 'logos', 'nne_logo.png');
     const projectLogoPath = join(process.cwd(), 'src', 'images', 'logos', 'Logo.jpeg');
@@ -271,22 +286,22 @@ export class ObservationPdfService {
 
     // Resolve observation initial evidence photos to Base64
     const rawPhotos = this.parseJsonArray(obs.photos);
-    const resolvedPhotos = (await Promise.all(rawPhotos.map((p) => this.resolveImageAsBase64(p)))).filter((b) => !!b);
+    const resolvedPhotos = (await Promise.all(rawPhotos.map((p) => this.resolveImageAsBase64(p, imageCache)))).filter((b) => !!b);
 
     // Resolve resolution photos to Base64
     const rawResolutionPhotos = this.parseJsonArray(obs.resolutionPhotos);
-    const resolvedResolutionPhotos = (await Promise.all(rawResolutionPhotos.map((p) => this.resolveImageAsBase64(p)))).filter((b) => !!b);
+    const resolvedResolutionPhotos = (await Promise.all(rawResolutionPhotos.map((p) => this.resolveImageAsBase64(p, imageCache)))).filter((b) => !!b);
 
     // Resolve closure digital signature to Base64 if available
     let closureSigBase64 = '';
     if (obs.closureSignature) {
-      closureSigBase64 = await this.resolveImageAsBase64(obs.closureSignature);
+      closureSigBase64 = await this.resolveImageAsBase64(obs.closureSignature, imageCache);
     }
 
     // Resolve location floor map snapshot to Base64 if available
     let locationMapBase64 = '';
     if (obs.locationMapImage) {
-      locationMapBase64 = await this.resolveImageAsBase64(obs.locationMapImage);
+      locationMapBase64 = await this.resolveImageAsBase64(obs.locationMapImage, imageCache);
     }
 
     // Closed By value: show actual user name who closed or created it, never generic 'HSE Lead / Site Manager'
@@ -327,7 +342,7 @@ export class ObservationPdfService {
     const resolvedHistory = await Promise.all(
       rawHistory.map(async (log) => {
         const logPhotos = this.parseJsonArray(log.photos);
-        const resolvedLogPhotos = (await Promise.all(logPhotos.map((p) => this.resolveImageAsBase64(p)))).filter((b) => !!b);
+        const resolvedLogPhotos = (await Promise.all(logPhotos.map((p) => this.resolveImageAsBase64(p, imageCache)))).filter((b) => !!b);
         return {
           ...log,
           resolvedLogPhotos,

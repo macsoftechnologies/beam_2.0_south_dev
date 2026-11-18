@@ -4,6 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { SpotCheck } from '../entities/spot-check.entity';
+import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
 
 @Injectable()
 export class SpotCheckPdfService {
@@ -62,6 +63,7 @@ export class SpotCheckPdfService {
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
+      await optimizePageImagesForPdf(page);
       const pdfBytes = await page.pdf({
         format: 'A4',
         printBackground: true,
@@ -135,7 +137,7 @@ export class SpotCheckPdfService {
         // Case 3: Remote URL
         if (!pdfBytes && (previewUrl.startsWith('http://') || previewUrl.startsWith('https://'))) {
           try {
-            const res = await fetch(previewUrl);
+            const res = await fetch(previewUrl, { signal: AbortSignal.timeout(15000) });
             if (res.ok) {
               const arrayBuf = await res.arrayBuffer();
               pdfBytes = Buffer.from(arrayBuf);

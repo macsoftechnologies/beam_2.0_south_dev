@@ -72,10 +72,10 @@ export class Incident {
   categories?: string[];
 
   @Column({ name: 'actual_severity', type: 'int', nullable: true })
-  actualSeverity?: number; // 1-5 scale (N/A for Near Miss)
+  actualSeverity?: number | null; // 1-5 scale (N/A / null for Near Miss)
 
   @Column({ name: 'potential_severity', type: 'int', nullable: true })
-  potentialSeverity?: number; // 1-5 scale
+  potentialSeverity?: number | null; // 1-5 scale (N/A / null for Fatality)
 
   @Column({ name: 'is_hipo', type: 'boolean', default: false })
   isHipo: boolean; // Auto-derived if potentialSeverity >= 4 or manually set

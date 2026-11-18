@@ -20,20 +20,34 @@ export class BodyPartsInjuredDto {
   notes?: string;
 }
 
-export class CreateInitialReportDto {
-  @IsNumber()
-  @IsOptional()
-  @Min(1)
-  @Max(5)
-  @Type(() => Number)
-  actualSeverity?: number;
+const parseOptionalSeverity = ({ value }: { value: any }) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toUpperCase();
+    if (trimmed === '' || trimmed === 'N/A' || trimmed === 'NA' || trimmed === 'NULL' || trimmed === 'UNDEFINED') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isNaN(parsed) ? value : parsed;
+  }
+  return typeof value === 'number' && Number.isNaN(value) ? null : value;
+};
 
+export class CreateInitialReportDto {
+  @Transform(parseOptionalSeverity)
+  @IsOptional()
   @IsNumber()
-  @IsNotEmpty()
   @Min(1)
   @Max(5)
-  @Type(() => Number)
-  potentialSeverity: number;
+  actualSeverity?: number | null;
+
+  @Transform(parseOptionalSeverity)
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  potentialSeverity?: number | null;
 
   @IsBoolean()
   @IsOptional()

@@ -325,6 +325,7 @@ export class IncidentsController {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${caseName}${formSuffix}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.end(pdfBuffer);
   }
 

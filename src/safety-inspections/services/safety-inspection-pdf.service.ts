@@ -7,6 +7,7 @@ import { join } from 'path';
 import { SafetyInspection } from '../entities/safety-inspection.entity';
 import { SafetyInspectionItem } from '../entities/safety-inspection-item.entity';
 import { Observation } from '../../observations/entities/observation.entity';
+import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
 
 const STANDARD_CATEGORIES = [
   '1. Access / Exit',
@@ -178,6 +179,9 @@ export class SafetyInspectionPdfService {
       } catch (evalErr) {
         // Non-blocking fallback
       }
+
+      // Downscale & compress oversized embedded photos before PDF serialization
+      await optimizePageImagesForPdf(page);
 
       const pdfBytes = await page.pdf({
         format: 'A4',

@@ -357,12 +357,12 @@ export class IncidentsService implements OnModuleInit {
   /**
    * Calculates HiPo (High Potential) status and Investigation Depth Level (L1, L2, L3)
    */
-  private deriveSeverityAndLevel(actualSeverity?: number, potentialSeverity?: number) {
-    const pot = potentialSeverity || 1;
-    const act = actualSeverity || 1;
+  private deriveSeverityAndLevel(actualSeverity?: number | null, potentialSeverity?: number | null) {
+    const pot = potentialSeverity ?? 0;
+    const act = actualSeverity ?? 0;
 
-    // HiPo if potential is 4 or 5
-    const isHipo = pot >= 4;
+    // HiPo if potential is 4 or 5, or actual is 4 or 5 (e.g. Fatality where potential is N/A)
+    const isHipo = pot >= 4 || act >= 4;
 
     // Determine Investigation Level
     let investigationLevel = InvestigationLevel.L1;
@@ -375,6 +375,30 @@ export class IncidentsService implements OnModuleInit {
     }
 
     return { isHipo, investigationLevel };
+  }
+
+  private normalizeCategorySeverities(
+    categories: string[] | undefined | null,
+    actualSeverity: number | null | undefined,
+    potentialSeverity: number | null | undefined,
+  ): { actualSeverity: number | null; potentialSeverity: number | null } {
+    const catsLower = (Array.isArray(categories) ? categories : []).map((c) => String(c || '').toLowerCase());
+    const isNearMiss = catsLower.some((c) => c.includes('near miss'));
+    const isFatality = catsLower.some((c) => c.includes('fatality'));
+
+    const resolvedActual = isNearMiss
+      ? null
+      : (actualSeverity !== undefined && actualSeverity !== null && !Number.isNaN(Number(actualSeverity))
+          ? Number(actualSeverity)
+          : null);
+
+    const resolvedPotential = isFatality || resolvedActual === 5
+      ? null
+      : (potentialSeverity !== undefined && potentialSeverity !== null && !Number.isNaN(Number(potentialSeverity))
+          ? Number(potentialSeverity)
+          : null);
+
+    return { actualSeverity: resolvedActual, potentialSeverity: resolvedPotential };
   }
 
   /**
@@ -393,7 +417,8 @@ export class IncidentsService implements OnModuleInit {
     const slaInitialDue = new Date(validTimestamp.getTime() + 24 * 60 * 60 * 1000);
     const slaInvestigationDue = new Date(validTimestamp.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    const { isHipo, investigationLevel } = this.deriveSeverityAndLevel(dto.actualSeverity, dto.potentialSeverity);
+    const normalizedSev = this.normalizeCategorySeverities(dto.categories, dto.actualSeverity, dto.potentialSeverity);
+    const { isHipo, investigationLevel } = this.deriveSeverityAndLevel(normalizedSev.actualSeverity, normalizedSev.potentialSeverity);
 
     const incident = this.incidentRepo.create({
       caseNumber,
@@ -410,8 +435,8 @@ export class IncidentsService implements OnModuleInit {
       specificLocation: dto.specificLocation,
       contractorsInvolved: dto.contractorsInvolved,
       categories: dto.categories || [],
-      actualSeverity: dto.actualSeverity,
-      potentialSeverity: dto.potentialSeverity,
+      actualSeverity: normalizedSev.actualSeverity,
+      potentialSeverity: normalizedSev.potentialSeverity,
       isHipo: dto.isHipo !== undefined ? dto.isHipo : isHipo,
       investigationLevel,
       gatekeeperInformed: dto.gatekeeperInformed || false,
@@ -560,8 +585,18 @@ export class IncidentsService implements OnModuleInit {
         incident.categories = cats;
       }
     }
-    if (dto.actualSeverity !== undefined) incident.actualSeverity = dto.actualSeverity ? Number(dto.actualSeverity) : undefined;
-    if (dto.potentialSeverity !== undefined) incident.potentialSeverity = dto.potentialSeverity ? Number(dto.potentialSeverity) : undefined;
+    const activeCatsForSev = dto.categories !== undefined
+      ? (Array.isArray(dto.categories) ? dto.categories : [dto.categories])
+      : incident.categories;
+    if (dto.actualSeverity !== undefined || dto.potentialSeverity !== undefined || dto.categories !== undefined) {
+      const normalizedUpdateSev = this.normalizeCategorySeverities(
+        activeCatsForSev,
+        dto.actualSeverity !== undefined ? dto.actualSeverity : incident.actualSeverity,
+        dto.potentialSeverity !== undefined ? dto.potentialSeverity : incident.potentialSeverity,
+      );
+      incident.actualSeverity = normalizedUpdateSev.actualSeverity;
+      incident.potentialSeverity = normalizedUpdateSev.potentialSeverity;
+    }
     if (dto.isHipo !== undefined) incident.isHipo = dto.isHipo;
     else if ((incident.actualSeverity ?? 0) >= 4 || (incident.potentialSeverity ?? 0) >= 4) incident.isHipo = true;
     if (dto.gatekeeperInformed !== undefined) incident.gatekeeperInformed = dto.gatekeeperInformed;
@@ -720,10 +755,21 @@ export class IncidentsService implements OnModuleInit {
       );
     }
 
-    const { isHipo, investigationLevel } = this.deriveSeverityAndLevel(dto.actualSeverity, dto.potentialSeverity);
+    const effectiveIrCategories = (dto.categories && Array.isArray(dto.categories) && dto.categories.length > 0)
+      ? dto.categories
+      : incident.categories;
+    const normalizedIrSev = this.normalizeCategorySeverities(
+      effectiveIrCategories,
+      dto.actualSeverity !== undefined ? dto.actualSeverity : incident.actualSeverity,
+      dto.potentialSeverity !== undefined ? dto.potentialSeverity : incident.potentialSeverity,
+    );
+    const { isHipo, investigationLevel } = this.deriveSeverityAndLevel(
+      normalizedIrSev.actualSeverity,
+      normalizedIrSev.potentialSeverity,
+    );
 
-    incident.actualSeverity = dto.actualSeverity;
-    incident.potentialSeverity = dto.potentialSeverity;
+    incident.actualSeverity = normalizedIrSev.actualSeverity;
+    incident.potentialSeverity = normalizedIrSev.potentialSeverity;
     incident.isHipo = dto.isHipo !== undefined ? dto.isHipo : isHipo;
     incident.investigationLevel = investigationLevel;
     incident.stage = IncidentStage.INITIAL_REPORT;

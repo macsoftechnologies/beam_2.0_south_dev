@@ -31,6 +31,7 @@ export class ObservationsController {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${ref}_Safety_Observation.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
     res.end(pdfBuffer);
   }
 

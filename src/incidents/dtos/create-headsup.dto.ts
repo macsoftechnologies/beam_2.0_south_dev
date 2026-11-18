@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsDateString, IsNumber } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsBoolean, IsArray, IsDateString, IsNumber, Min, Max } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
 export class ImmediateActionDto {
@@ -76,15 +76,43 @@ export class CreateHeadsUpDto {
   @IsOptional()
   categories?: string[];
 
-  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value === 'string') {
+      const trimmed = value.trim().toUpperCase();
+      if (trimmed === '' || trimmed === 'N/A' || trimmed === 'NA' || trimmed === 'NULL' || trimmed === 'UNDEFINED') {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      return Number.isNaN(parsed) ? value : parsed;
+    }
+    return typeof value === 'number' && Number.isNaN(value) ? null : value;
+  })
   @IsOptional()
-  @Type(() => Number)
-  actualSeverity?: number;
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  actualSeverity?: number | null;
 
-  @IsNumber()
+  @Transform(({ value }) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value === 'string') {
+      const trimmed = value.trim().toUpperCase();
+      if (trimmed === '' || trimmed === 'N/A' || trimmed === 'NA' || trimmed === 'NULL' || trimmed === 'UNDEFINED') {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      return Number.isNaN(parsed) ? value : parsed;
+    }
+    return typeof value === 'number' && Number.isNaN(value) ? null : value;
+  })
   @IsOptional()
-  @Type(() => Number)
-  potentialSeverity?: number;
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  potentialSeverity?: number | null;
 
   @IsBoolean()
   @IsOptional()
