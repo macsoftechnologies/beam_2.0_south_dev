@@ -4,7 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 import * as mammoth from 'mammoth';
 import { readFileSync, existsSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
+import { renderOptimizedHtmlToPdf } from '../../common/utils/pdf-image-optimizer';
 
 @Injectable()
 export class IncidentPdfService {
@@ -205,15 +205,11 @@ export class IncidentPdfService {
     const browser = await this.launchBrowser();
 
     try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
-      await optimizePageImagesForPdf(page);
-      const pdfBytes = await page.pdf({
+      let currentPdfBuffer = await renderOptimizedHtmlToPdf(browser, html, {
         format: 'A4',
         printBackground: true,
         margin: { top: '8mm', bottom: '8mm', left: '8mm', right: '8mm' },
       });
-      let currentPdfBuffer = Buffer.from(pdfBytes);
 
       // 3. Combine ALL uploaded attachments if includeAttachments is true
       if (includeAttachments) {
@@ -403,12 +399,10 @@ export class IncidentPdfService {
                       </body>
                       </html>
                     `;
-                    await page.setContent(docHtml, { waitUntil: ['domcontentloaded', 'load'], timeout: 25000 });
-                    await optimizePageImagesForPdf(page);
-                    const docPdfBytes = await page.pdf({
+                    const docPdfBytes = await renderOptimizedHtmlToPdf(browser, docHtml, {
                       format: 'A4',
                       printBackground: true,
-                      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' }
+                      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
                     });
                     const donorDoc = await PDFDocument.load(docPdfBytes);
                     const pageIndices = donorDoc.getPageIndices();
@@ -478,12 +472,10 @@ export class IncidentPdfService {
                       </body>
                       </html>
                     `;
-                    await page.setContent(imgHtml, { waitUntil: ['domcontentloaded', 'load'], timeout: 25000 });
-                    await optimizePageImagesForPdf(page);
-                    const imgPdfBytes = await page.pdf({
+                    const imgPdfBytes = await renderOptimizedHtmlToPdf(browser, imgHtml, {
                       format: 'A4',
                       printBackground: true,
-                      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' }
+                      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
                     });
                     const donorDoc = await PDFDocument.load(imgPdfBytes);
                     const pageIndices = donorDoc.getPageIndices();
@@ -538,11 +530,10 @@ export class IncidentPdfService {
                       </body>
                       </html>
                     `;
-                    await page.setContent(recordHtml, { waitUntil: ['domcontentloaded', 'load'], timeout: 25000 });
-                    const recordPdfBytes = await page.pdf({
+                    const recordPdfBytes = await renderOptimizedHtmlToPdf(browser, recordHtml, {
                       format: 'A4',
                       printBackground: true,
-                      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' }
+                      margin: { top: '10mm', bottom: '10mm', left: '10mm', right: '10mm' },
                     });
                     const donorDoc = await PDFDocument.load(recordPdfBytes);
                     const pageIndices = donorDoc.getPageIndices();

@@ -192,6 +192,7 @@ export class RequestsController {
       reject_reason?: string;
       cancel_reason?: string;
       close_note?: string;
+      close_reason?: string;
       Start_Time?: string;
       End_Time?: string;
       night_shift?: number;

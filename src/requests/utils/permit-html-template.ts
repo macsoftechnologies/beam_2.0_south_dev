@@ -2217,7 +2217,11 @@ export function generatePermitHtml(data: any): string {
             <div class="info-label">Cancel Reason</div>
             <div class="info-value mb-2">${data.cancel_reason || 'N/A'}</div>
             <div class="info-label">Close Note</div>
-            <div class="info-value">${data.close_note || 'N/A'}</div>
+            <div class="info-value${data.close_reason ? ' mb-2' : ''}">${data.close_note || 'N/A'}</div>
+            ${data.close_reason ? `
+            <div class="info-label">Close Reason (Admin Override)</div>
+            <div class="info-value">${data.close_reason}</div>
+            ` : ''}
           </div>
         </div>
       </div>

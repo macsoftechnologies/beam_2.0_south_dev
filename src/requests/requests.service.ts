@@ -127,6 +127,18 @@ export class RequestsService implements OnModuleInit {
     } catch (err) {
       // Ignored if column already modified or table not ready
     }
+    try {
+      const cols: any[] = await this.requestRepo.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'request_extra_misc' AND COLUMN_NAME = 'close_reason'`,
+      );
+      if (!cols || cols.length === 0) {
+        await this.requestRepo.query(
+          'ALTER TABLE request_extra_misc ADD COLUMN close_reason TEXT NULL',
+        );
+      }
+    } catch (err) {
+      // Ignored if column already exists or table not ready
+    }
   }
 
   private areEqual(val1: any, val2: any): boolean {
@@ -799,6 +811,7 @@ export class RequestsService implements OnModuleInit {
           rejectReason: dto.reject_reason || '',
           cancelReason: dto.cancel_reason || '',
           closeNote: dto.close_note || '',
+          closeReason: dto.close_reason || '',
           newSubContractor: dto.new_sub_contractor || '',
           workType: dto.work_type || '',
           ramsNumber: dto.rams_number,
@@ -1042,28 +1055,62 @@ export class RequestsService implements OnModuleInit {
       where: { requestId: id },
     });
 
+    const currentStatus = (existing.requestStatus || '').toLowerCase().trim();
+    const incomingStatus = (dto.Request_status || '').toLowerCase().trim();
+    const isClosingOpenedPermit =
+      currentStatus === 'opened' && incomingStatus === 'closed';
+    let isAdminZoneChangeClose = false;
+
     // 1. Validate zone status and set permit_under dynamically
-    await this.checkZoneStatusAndAssignPermitUnder(dto, existing.zoneId, existing.buildingId);
+    // If closing an Opened permit whose zone status has changed after creation,
+    // restrict regular users and allow only Admin to close with a mandatory close_reason.
+    if (isClosingOpenedPermit) {
+      const zoneChangeInfo = await this.evaluatePermitZoneStatusChange(existing);
+      if (zoneChangeInfo.isZoneStatusChanged) {
+        const actorIsAdmin = await this.isActorAdmin(dto.userId, activeUserType);
+        if (!actorIsAdmin) {
+          throw new ForbiddenException(
+            `Cannot close this permit because the zone status has changed (${zoneChangeInfo.currentStatusLabels.join(', ')}) from ${existing.permitUnder || 'its original status'}. Only an Admin can close this permit with a close reason.`,
+          );
+        }
+        const closeReasonVal = (dto.close_reason ?? '').toString().trim();
+        if (!closeReasonVal) {
+          throw new BadRequestException(
+            'A close reason is required for Admin to close a permit after its zone status has changed.',
+          );
+        }
+        dto.close_reason = closeReasonVal;
+        isAdminZoneChangeClose = true;
+      } else {
+        await this.checkZoneStatusAndAssignPermitUnder(dto, existing.zoneId, existing.buildingId);
+      }
+    } else {
+      await this.checkZoneStatusAndAssignPermitUnder(dto, existing.zoneId, existing.buildingId);
+    }
 
     // 2. Validate mandatory fields (non-draft)
-    this.validateMandatoryFields(dto, existing, {
-      chem,
-      conf,
-      elec,
-      energElec,
-      energMech,
-      exc,
-      ext,
-      fire,
-      gen,
-      hgt,
-      lift,
-      ppe,
-      press,
-    });
+    this.validateMandatoryFields(
+      dto,
+      existing,
+      {
+        chem,
+        conf,
+        elec,
+        energElec,
+        energMech,
+        exc,
+        ext,
+        fire,
+        gen,
+        hgt,
+        lift,
+        ppe,
+        press,
+      },
+      { isAdminZoneChangeClose },
+    );
 
     // Validate status transition
-    const currentStatus = (existing.requestStatus || '').toLowerCase().trim();
     let isStatusChanged = false;
     let finalRequestStatusForLog = 'Edited';
 
@@ -1433,6 +1480,7 @@ export class RequestsService implements OnModuleInit {
       compare('reject_reason', ext.rejectReason, dto.reject_reason);
       compare('cancel_reason', ext.cancelReason, dto.cancel_reason);
       compare('close_note', ext.closeNote, dto.close_note);
+      compare('close_reason', ext.closeReason, dto.close_reason);
       compare(
         'new_sub_contractor',
         ext.newSubContractor,
@@ -1946,6 +1994,7 @@ export class RequestsService implements OnModuleInit {
       rejectReason: dto.reject_reason,
       cancelReason: dto.cancel_reason,
       closeNote: dto.close_note,
+      closeReason: dto.close_reason,
       newSubContractor: dto.new_sub_contractor,
       workType: dto.work_type,
       ramsNumber: dto.rams_number,
@@ -2176,6 +2225,7 @@ export class RequestsService implements OnModuleInit {
       reject_reason?: string;
       cancel_reason?: string;
       close_note?: string;
+      close_reason?: string;
       Start_Time?: string;
       End_Time?: string;
       night_shift?: number;
@@ -2205,6 +2255,7 @@ export class RequestsService implements OnModuleInit {
       reject_reason,
       cancel_reason,
       close_note,
+      close_reason,
       Start_Time,
       End_Time,
       night_shift,
@@ -2276,6 +2327,25 @@ export class RequestsService implements OnModuleInit {
           }
 
           await this.validateStatusTransitionAndRole(existing, targetStatus, userId || 0, activeUserType);
+          if (
+            currentStatusClean === 'opened' &&
+            (targetStatusClean === 'closed' || resolvedStatusClean === 'closed')
+          ) {
+            const zoneChangeInfo = await this.evaluatePermitZoneStatusChange(existing);
+            if (zoneChangeInfo.isZoneStatusChanged) {
+              const actorIsAdmin = await this.isActorAdmin(userId, activeUserType);
+              if (!actorIsAdmin) {
+                throw new ForbiddenException(
+                  `Cannot close this permit because the zone status has changed (${zoneChangeInfo.currentStatusLabels.join(', ')}) from ${existing.permitUnder || 'its original status'}. Only an Admin can close this permit with a close reason.`,
+                );
+              }
+              if (!(close_reason || '').trim()) {
+                throw new BadRequestException(
+                  'A close reason is required for Admin to close a permit after its zone status has changed.',
+                );
+              }
+            }
+          }
           if (Request_status !== undefined) {
             updateData.requestStatus = resolvedStatus;
           }
@@ -2302,6 +2372,10 @@ export class RequestsService implements OnModuleInit {
         }
         if (close_note !== undefined && close_note !== '') {
           ext.closeNote = close_note;
+          isExtUpdated = true;
+        }
+        if (close_reason !== undefined && close_reason.trim() !== '') {
+          ext.closeReason = close_reason.trim();
           isExtUpdated = true;
         }
 
@@ -2451,12 +2525,20 @@ export class RequestsService implements OnModuleInit {
         // Create log if status changed
         if (targetStatus !== '') {
           const finalStatus = resolvedStatus || (status === 1 ? 'Pending' : 'Cancelled');
+          const statusFieldChanges: Array<{ field_name: string; previous: string; present: string }> = [];
+          if (close_reason !== undefined && close_reason.trim() !== '') {
+            statusFieldChanges.push({
+              field_name: 'close_reason',
+              previous: '',
+              present: close_reason.trim(),
+            });
+          }
           await this.createLogs(
             existing.id,
             userId || 0,
             finalStatus,
             new Date(),
-            [],
+            statusFieldChanges,
             0,
           );
 
@@ -3433,7 +3515,7 @@ export class RequestsService implements OnModuleInit {
         const [rawRequests, totalCount] = await qb.getManyAndCount();
 
         // Build zone lookup for all zone IDs present in the search results
-        const zoneLookupMap = new Map<number, { zone: string; building_id?: number }>();
+        const zoneLookupMap = new Map<number, { zone: string; building_id?: number; status?: string }>();
         const allZoneIdsSet = new Set<number>();
         rawRequests.forEach((req) => {
           if (req.zoneId) {
@@ -3445,7 +3527,9 @@ export class RequestsService implements OnModuleInit {
         });
         if (allZoneIdsSet.size > 0) {
           const zoneEntities = await this.zoneRepo.findBy({ id: In([...allZoneIdsSet]) });
-          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, { zone: z.zone, building_id: z.building_id }));
+          zoneEntities.forEach((z) =>
+            zoneLookupMap.set(z.id, { zone: z.zone, building_id: z.building_id, status: z.status }),
+          );
         }
 
         // Fetch Opened & Closed logs for all requests in batch
@@ -3491,10 +3575,11 @@ export class RequestsService implements OnModuleInit {
           // Resolve room names
           const resolvedRooms = await this.resolveRoomNames(req.roomNos);
 
-          // Resolve all zone names string
+          // Resolve all zone names string & detect live zone status changes
           let resolvedZoneNames = '';
+          const matchedZoneStatuses: string[] = [];
           if (req.zoneId) {
-            const names = String(req.zoneId)
+            const matchedItems = String(req.zoneId)
               .split(',')
               .map((id) => {
                 const item = zoneLookupMap.get(Number(id.trim()));
@@ -3502,12 +3587,17 @@ export class RequestsService implements OnModuleInit {
                 if (req.buildingId && item.building_id && Number(item.building_id) !== Number(req.buildingId)) {
                   return null;
                 }
-                return item.zone;
+                return item;
               })
-              .filter(Boolean);
+              .filter(Boolean) as Array<{ zone: string; building_id?: number; status?: string }>;
+            const names = matchedItems.map((m) => m.zone).filter(Boolean);
             if (names.length > 0) {
               resolvedZoneNames = names.join(', ');
             }
+            matchedItems.forEach((m) => {
+              const st = (m.status || '').toUpperCase().trim();
+              if (st) matchedZoneStatuses.push(st);
+            });
           }
           if (!resolvedZoneNames && typeof req.zone === 'string') {
             resolvedZoneNames = req.zone;
@@ -3515,6 +3605,20 @@ export class RequestsService implements OnModuleInit {
           if (!resolvedZoneNames && (req as any).zone?.zone) {
             resolvedZoneNames = (req as any).zone.zone;
           }
+
+          const uniqueMatchedZoneStatuses = Array.from(new Set(matchedZoneStatuses));
+          const permitUnderLower = (req.permitUnder || '').trim().toLowerCase();
+          const expectedZoneStatus =
+            permitUnderLower === 'commissioning'
+              ? 'C'
+              : permitUnderLower === 'construction'
+                ? 'UC'
+                : null;
+          const isZoneStatusChanged =
+            uniqueMatchedZoneStatuses.length > 0 &&
+            (uniqueMatchedZoneStatuses.includes('HO') ||
+              uniqueMatchedZoneStatuses.length > 1 ||
+              (expectedZoneStatus !== null && uniqueMatchedZoneStatuses[0] !== expectedZoneStatus));
 
           // Join safety fields back into flat properties to match legacy output
           const flatObj: any = {
@@ -3546,6 +3650,8 @@ export class RequestsService implements OnModuleInit {
             Zone_Id: req.zoneId || '',
             zone_name: resolvedZoneNames || '',
             zone: resolvedZoneNames || '',
+            current_zone_status: uniqueMatchedZoneStatuses.join(','),
+            is_zone_status_changed: isZoneStatusChanged,
             Room_Nos: resolvedRooms || '',
             room_names: resolvedRooms,
             Room_Type: req.roomType || '',
@@ -4050,7 +4156,7 @@ export class RequestsService implements OnModuleInit {
         const [rawRequests, totalCount] = await qb.getManyAndCount();
 
         // Build zone lookup for all zone IDs present in the search results
-        const zoneLookupMap = new Map<number, { zone: string; building_id?: number }>();
+        const zoneLookupMap = new Map<number, { zone: string; building_id?: number; status?: string }>();
         const allZoneIdsSet = new Set<number>();
         rawRequests.forEach((req) => {
           if (req.zoneId) {
@@ -4062,7 +4168,9 @@ export class RequestsService implements OnModuleInit {
         });
         if (allZoneIdsSet.size > 0) {
           const zoneEntities = await this.zoneRepo.findBy({ id: In([...allZoneIdsSet]) });
-          zoneEntities.forEach((z) => zoneLookupMap.set(z.id, { zone: z.zone, building_id: z.building_id }));
+          zoneEntities.forEach((z) =>
+            zoneLookupMap.set(z.id, { zone: z.zone, building_id: z.building_id, status: z.status }),
+          );
         }
 
         // Fetch Opened & Closed logs for all requests in batch
@@ -4958,6 +5066,200 @@ export class RequestsService implements OnModuleInit {
     );
   }
 
+  private async isActorAdmin(
+    actorUserId?: number,
+    activeUserType?: string,
+  ): Promise<boolean> {
+    const activeHeader = (activeUserType || '').trim().toLowerCase();
+    if (activeHeader) {
+      if (activeHeader.includes('observer')) return false;
+      if (activeHeader.includes('admin') || activeHeader.includes('superadmin')) {
+        return true;
+      }
+      if (
+        activeHeader.includes('contractor') ||
+        activeHeader.includes('subcontractor') ||
+        activeHeader.includes('department') ||
+        activeHeader.includes('conm') ||
+        activeHeader.includes('c&q') ||
+        activeHeader.includes('comm') ||
+        activeHeader.includes('hse')
+      ) {
+        return false;
+      }
+    }
+
+    if (!actorUserId) {
+      return false;
+    }
+
+    const user = await this.userRepo.findOne({ where: { id: actorUserId } });
+    if (!user) {
+      return false;
+    }
+
+    const scope = await this.resolveUserScope(actorUserId, activeUserType);
+    if (scope.role === 'admin') {
+      return true;
+    }
+
+    const userTypes = (user.userType || '')
+      .split(',')
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+    return userTypes.includes('admin') || userTypes.includes('superadmin');
+  }
+
+  private async evaluatePermitZoneStatusChange(existing: RequestEntity): Promise<{
+    isZoneStatusChanged: boolean;
+    hasHO: boolean;
+    hasMixedStatuses: boolean;
+    hasStatusMismatch: boolean;
+    currentStatuses: string[];
+    currentStatusLabels: string[];
+    expectedZoneStatus: string | null;
+    zones: Zone[];
+  }> {
+    const statusLabels: Record<string, string> = {
+      UC: 'Construction',
+      C: 'Commissioning',
+      HO: 'Hand Over',
+    };
+
+    let zoneIds: number[] = [];
+    if (existing.zoneId !== undefined && existing.zoneId !== null && String(existing.zoneId).trim() !== '') {
+      zoneIds = String(existing.zoneId)
+        .split(',')
+        .map((id) => Number(id.trim()))
+        .filter((id) => !isNaN(id) && id > 0);
+    }
+
+    let zones: Zone[] = [];
+    if (zoneIds.length > 0) {
+      zones = await this.zoneRepo.find({ where: { id: In(zoneIds) } });
+    }
+
+    const targetBuildingId =
+      existing.buildingId !== undefined && existing.buildingId !== null
+        ? Number(existing.buildingId)
+        : null;
+
+    if (zones.length > 0 && targetBuildingId && !isNaN(targetBuildingId)) {
+      const filteredByBuilding = zones.filter(
+        (z) => Number(z.building_id) === targetBuildingId,
+      );
+      if (filteredByBuilding.length > 0) {
+        zones = filteredByBuilding;
+      }
+    }
+
+    if (
+      zones.length > 0 &&
+      existing.floorId !== undefined &&
+      existing.floorId !== null &&
+      String(existing.floorId).trim() !== ''
+    ) {
+      const allowedFloorIds = new Set(
+        String(existing.floorId)
+          .split(',')
+          .map((f) => Number(f.trim()))
+          .filter((n) => !isNaN(n) && n > 0),
+      );
+      if (allowedFloorIds.size > 0) {
+        const filteredByFloor = zones.filter(
+          (z) => z.floor_id && allowedFloorIds.has(Number(z.floor_id)),
+        );
+        if (filteredByFloor.length > 0) {
+          zones = filteredByFloor;
+        }
+      }
+    }
+
+    if (
+      existing.roomNos !== undefined &&
+      existing.roomNos !== null &&
+      String(existing.roomNos).trim() !== ''
+    ) {
+      const roomTokens = String(existing.roomNos)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (roomTokens.length > 0) {
+        const numericRoomIds = roomTokens
+          .map((t) => Number(t))
+          .filter((n) => !isNaN(n) && n > 0);
+        let matchedRooms: Room[] = [];
+        if (numericRoomIds.length > 0) {
+          matchedRooms = await this.roomRepo.find({
+            where: { room_id: In(numericRoomIds) },
+          });
+        }
+        if (matchedRooms.length === 0) {
+          matchedRooms = await this.roomRepo.find({
+            where: { room_name: In(roomTokens) },
+          });
+        }
+        if (targetBuildingId && !isNaN(targetBuildingId)) {
+          const bRooms = matchedRooms.filter(
+            (r) => Number(r.building_id) === targetBuildingId,
+          );
+          if (bRooms.length > 0) matchedRooms = bRooms;
+        }
+        const roomZoneIds = Array.from(
+          new Set(
+            matchedRooms
+              .map((r) => Number(r.zone_id))
+              .filter((id) => !isNaN(id) && id > 0),
+          ),
+        );
+        if (roomZoneIds.length > 0) {
+          if (zones.length > 0) {
+            const roomZoneSet = new Set(roomZoneIds);
+            const filteredByRoom = zones.filter((z) => roomZoneSet.has(z.id));
+            if (filteredByRoom.length > 0) {
+              zones = filteredByRoom;
+            }
+          } else {
+            zones = await this.zoneRepo.find({ where: { id: In(roomZoneIds) } });
+          }
+        }
+      }
+    }
+
+    const statuses = zones
+      .map((z) => (z.status || '').toUpperCase().trim())
+      .filter(Boolean);
+    const uniqueStatuses = Array.from(new Set(statuses));
+
+    const permitUnderNorm = (existing.permitUnder || '').trim().toLowerCase();
+    const expectedZoneStatus =
+      permitUnderNorm === 'commissioning'
+        ? 'C'
+        : permitUnderNorm === 'construction'
+          ? 'UC'
+          : null;
+
+    const hasHO = statuses.includes('HO');
+    const hasMixedStatuses = uniqueStatuses.length > 1;
+    const hasStatusMismatch =
+      expectedZoneStatus !== null &&
+      uniqueStatuses.length === 1 &&
+      uniqueStatuses[0] !== expectedZoneStatus;
+    const isZoneStatusChanged =
+      zones.length > 0 && (hasHO || hasMixedStatuses || hasStatusMismatch);
+
+    return {
+      isZoneStatusChanged,
+      hasHO,
+      hasMixedStatuses,
+      hasStatusMismatch,
+      currentStatuses: uniqueStatuses,
+      currentStatusLabels: uniqueStatuses.map((s) => statusLabels[s] || s),
+      expectedZoneStatus,
+      zones,
+    };
+  }
+
   private async checkZoneStatusAndAssignPermitUnder(
     dto: CreateRequestDto | UpdateRequestDto,
     existingZoneId?: any,
@@ -5092,6 +5394,7 @@ export class RequestsService implements OnModuleInit {
     dto: CreateRequestDto | UpdateRequestDto,
     existing?: RequestEntity,
     subTables?: any,
+    options?: { isAdminZoneChangeClose?: boolean },
   ) {
     const currentStatus = (existing?.requestStatus || '').toLowerCase().trim();
     const requestStatusVal =
@@ -5739,8 +6042,13 @@ export class RequestsService implements OnModuleInit {
       const cancelReason = getSubField('cancel_reason', subTables?.ext?.cancelReason);
       checkRequiredSubField('cancel_reason', cancelReason);
     } else if (newStatus === 'closed') {
-      const closeNote = getSubField('close_note', subTables?.ext?.closeNote);
-      checkRequiredSubField('close_note', closeNote);
+      if (options?.isAdminZoneChangeClose) {
+        const closeReason = getSubField('close_reason', subTables?.ext?.closeReason);
+        checkRequiredSubField('close_reason', closeReason);
+      } else {
+        const closeNote = getSubField('close_note', subTables?.ext?.closeNote);
+        checkRequiredSubField('close_note', closeNote);
+      }
     }
 
     if (errors.length > 0) {
@@ -6043,6 +6351,7 @@ export class RequestsService implements OnModuleInit {
           rejectReason: null,
           cancelReason: null,
           closeNote: null,
+          closeReason: null,
           requestId
         }));
       } else {

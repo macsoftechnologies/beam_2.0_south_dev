@@ -4,7 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { SpotCheck } from '../entities/spot-check.entity';
-import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
+import { renderOptimizedHtmlToPdf } from '../../common/utils/pdf-image-optimizer';
 
 @Injectable()
 export class SpotCheckPdfService {
@@ -61,15 +61,11 @@ export class SpotCheckPdfService {
 
     let basePdfBuffer: Buffer;
     try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
-      await optimizePageImagesForPdf(page);
-      const pdfBytes = await page.pdf({
+      basePdfBuffer = await renderOptimizedHtmlToPdf(browser, html, {
         format: 'A4',
         printBackground: true,
         margin: { top: '8mm', bottom: '8mm', left: '8mm', right: '8mm' },
       });
-      basePdfBuffer = Buffer.from(pdfBytes);
     } catch (err) {
       this.logger.error('Failed to generate Spot Check PDF with Puppeteer:', err);
       throw err;

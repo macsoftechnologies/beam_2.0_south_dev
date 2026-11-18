@@ -82,6 +82,7 @@ export class ZonesService {
   async update(id: number, updateZoneDto: UpdateZoneDto): Promise<Zone | null> {
     await this.zonesRepo.update(id, updateZoneDto);
     await this.redisCacheService.deleteByPattern('zones:*');
+    await this.redisCacheService.deleteByPattern('requests:*');
     return await this.findOne(id);
   }
 
@@ -90,6 +91,7 @@ export class ZonesService {
     if (zone) {
       await this.zonesRepo.delete(id);
       await this.redisCacheService.deleteByPattern('zones:*');
+      await this.redisCacheService.deleteByPattern('requests:*');
     }
     return zone;
   }

@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join, extname } from 'path';
 import { Observation, ObservationType, ObservationStatus } from '../entities/observation.entity';
 import { ObservationActionLog, ObservationActionType } from '../entities/observation-action-log.entity';
-import { optimizePageImagesForPdf } from '../../common/utils/pdf-image-optimizer';
+import { renderOptimizedHtmlToPdf } from '../../common/utils/pdf-image-optimizer';
 
 @Injectable()
 export class ObservationPdfService {
@@ -78,79 +78,73 @@ export class ObservationPdfService {
     const browser = await this.launchBrowser();
 
     try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: ['domcontentloaded', 'load'], timeout: 30000 });
+      return await renderOptimizedHtmlToPdf(
+        browser,
+        html,
+        {
+          format: 'A4',
+          printBackground: true,
+          margin: { top: '10mm', bottom: '10mm', left: '14mm', right: '14mm' },
+        },
+        async (page) => {
+          // Sanitize composite location map image subheaders so they are never trimmed
+          await page.evaluate(() => {
+            const imgs = Array.from(document.querySelectorAll('img[alt="Location Map"]')) as HTMLImageElement[];
+            for (const img of imgs) {
+              if (!img.naturalWidth || !img.naturalHeight) continue;
+              const nw = img.naturalWidth;
+              const nh = img.naturalHeight;
+              const canvas = document.createElement('canvas');
+              canvas.width = nw;
+              canvas.height = nh;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) continue;
+              ctx.drawImage(img, 0, 0);
 
-      // Sanitize composite location map image subheaders so they are never trimmed
-      try {
-        await page.evaluate(() => {
-          const imgs = Array.from(document.querySelectorAll('img[alt="Location Map"]')) as HTMLImageElement[];
-          for (const img of imgs) {
-            if (!img.naturalWidth || !img.naturalHeight) continue;
-            const nw = img.naturalWidth;
-            const nh = img.naturalHeight;
-            const canvas = document.createElement('canvas');
-            canvas.width = nw;
-            canvas.height = nh;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) continue;
-            ctx.drawImage(img, 0, 0);
+              let modified = false;
 
-            let modified = false;
+              if (nh > 900 && nw >= 1200) {
+                const scaleY = nh / 1120;
+                const splitY = Math.round(516 * scaleY);
+                const subH = Math.round(32 * scaleY);
 
-            if (nh > 900 && nw >= 1200) {
-              const scaleY = nh / 1120;
-              const splitY = Math.round(516 * scaleY);
-              const subH = Math.round(32 * scaleY);
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(0, splitY, nw, subH);
 
-              ctx.fillStyle = '#f8fafc';
-              ctx.fillRect(0, splitY, nw, subH);
+                ctx.strokeStyle = '#cbd5e1';
+                ctx.lineWidth = Math.max(1.5, Math.round(2 * scaleY));
+                ctx.beginPath();
+                ctx.moveTo(0, splitY);
+                ctx.lineTo(nw, splitY);
+                ctx.stroke();
 
-              ctx.strokeStyle = '#cbd5e1';
-              ctx.lineWidth = Math.max(1.5, Math.round(2 * scaleY));
-              ctx.beginPath();
-              ctx.moveTo(0, splitY);
-              ctx.lineTo(nw, splitY);
-              ctx.stroke();
+                ctx.fillStyle = '#15803d';
+                ctx.font = `bold ${Math.max(11, Math.round(13 * scaleY))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', 16, splitY + subH / 2);
+                modified = true;
+              } else if (nw >= 1400 && nh <= 1000) {
+                const splitX = Math.round(nw * 0.38);
+                const contentY = 42;
+                const subH = 32;
 
-              ctx.fillStyle = '#15803d';
-              ctx.font = `bold ${Math.max(11, Math.round(13 * scaleY))}px -apple-system, BlinkMacSystemFont, sans-serif`;
-              ctx.textBaseline = 'middle';
-              ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', 16, splitY + subH / 2);
-              modified = true;
-            } else if (nw >= 1400 && nh <= 1000) {
-              const splitX = Math.round(nw * 0.38);
-              const contentY = 42;
-              const subH = 32;
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(splitX, contentY, nw - splitX, subH);
 
-              ctx.fillStyle = '#f8fafc';
-              ctx.fillRect(splitX, contentY, nw - splitX, subH);
+                ctx.fillStyle = '#15803d';
+                ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', splitX + 16, contentY + subH / 2);
+                modified = true;
+              }
 
-              ctx.fillStyle = '#15803d';
-              ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, sans-serif';
-              ctx.textBaseline = 'middle';
-              ctx.fillText('🎯 SPECIFIC WORK AREA — SELECTED ROOMS DETAIL', splitX + 16, contentY + subH / 2);
-              modified = true;
+              if (modified) {
+                img.src = canvas.toDataURL('image/jpeg', 0.85);
+              }
             }
-
-            if (modified) {
-              img.src = canvas.toDataURL('image/jpeg', 0.95);
-            }
-          }
-        });
-      } catch (evalErr) {
-        // Non-blocking fallback
-      }
-
-      // Downscale & compress oversized embedded photos before PDF serialization
-      await optimizePageImagesForPdf(page);
-
-      const pdfBytes = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: { top: '10mm', bottom: '10mm', left: '14mm', right: '14mm' },
-      });
-      return Buffer.from(pdfBytes);
+          });
+        },
+      );
     } catch (err) {
       this.logger.error('Failed to generate Observation PDF with Puppeteer:', err);
       throw err;
@@ -225,13 +219,7 @@ export class ObservationPdfService {
 
     for (const cand of localCandidates) {
       if (existsSync(cand)) {
-        try {
-          const ext = extname(cand).toLowerCase().replace('.', '') || 'jpeg';
-          const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-          return storeAndReturn(`data:${mime};base64,${readFileSync(cand).toString('base64')}`);
-        } catch (err) {
-          this.logger.warn(`Failed reading local file ${cand}: ${err}`);
-        }
+        return storeAndReturn(`pdf-local-file://${encodeURIComponent(cand)}`);
       }
     }
 

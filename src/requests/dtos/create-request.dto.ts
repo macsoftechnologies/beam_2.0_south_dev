@@ -581,6 +581,10 @@ export class CreateRequestDto {
 
   @IsString()
   @IsOptional()
+  close_reason?: string;
+
+  @IsString()
+  @IsOptional()
   new_sub_contractor?: string;
 
   @IsString()

@@ -290,6 +290,9 @@ export class RequestExtraMisc {
   @Column({ name: 'close_note', type: 'text', nullable: true })
   closeNote?: string;
 
+  @Column({ name: 'close_reason', type: 'text', nullable: true })
+  closeReason?: string;
+
   @Column({ name: 'new_sub_contractor', type: 'varchar', length: 200, nullable: true })
   newSubContractor?: string;
 
