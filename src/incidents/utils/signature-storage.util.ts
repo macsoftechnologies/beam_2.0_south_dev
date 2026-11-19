@@ -49,13 +49,13 @@ export function saveBase64Signature(base64Data: string, filenamePrefix: string):
 }
 
 /**
- * Saves a Base64 incident photo string to disk as a PNG/JPG image file in uploads/incidents
+ * Saves a Base64 incident photo/document string to disk in uploads/incidents
  * and returns the clean relative path `/incidents/${filename}`.
  * If already an incident URL or clean filename, normalizes to `/incidents/...`.
  */
 export function saveBase64IncidentPhoto(base64OrUrl: string, filenamePrefix: string): string {
   if (!base64OrUrl) return base64OrUrl;
-  if (!base64OrUrl.startsWith('data:image')) {
+  if (!base64OrUrl.startsWith('data:')) {
     if (base64OrUrl.startsWith('http://') || base64OrUrl.startsWith('https://')) return base64OrUrl;
     const clean = base64OrUrl
       .replace(/^\/?uploads\/incidents\//, '')
@@ -70,17 +70,31 @@ export function saveBase64IncidentPhoto(base64OrUrl: string, filenamePrefix: str
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    const matches = base64OrUrl.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+    const matches = base64OrUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!matches || matches.length !== 3) {
       return base64OrUrl;
     }
 
-    const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-    const imageBuffer = Buffer.from(matches[2], 'base64');
+    const mime = matches[1].toLowerCase();
+    let ext = 'jpg';
+    if (mime.includes('pdf')) ext = 'pdf';
+    else if (mime.includes('presentationml')) ext = 'pptx';
+    else if (mime.includes('powerpoint')) ext = 'ppt';
+    else if (mime.includes('wordprocessingml')) ext = 'docx';
+    else if (mime.includes('msword')) ext = 'doc';
+    else if (mime.includes('spreadsheetml')) ext = 'xlsx';
+    else if (mime.includes('excel')) ext = 'xls';
+    else if (mime.includes('png')) ext = 'png';
+    else if (mime.includes('jpeg') || mime.includes('jpg')) ext = 'jpg';
+    else if (mime.includes('webp')) ext = 'webp';
+    else if (mime.includes('plain')) ext = 'txt';
+    else if (mime.includes('csv')) ext = 'csv';
+
+    const fileBuffer = Buffer.from(matches[2], 'base64');
     const filename = `${filenamePrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
     const filePath = path.join(uploadsDir, filename);
 
-    fs.writeFileSync(filePath, imageBuffer);
+    fs.writeFileSync(filePath, fileBuffer);
     return `/incidents/${filename}`;
   } catch (error) {
     console.error('Error saving incident photo file:', error);
