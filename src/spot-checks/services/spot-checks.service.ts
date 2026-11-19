@@ -303,6 +303,61 @@ export class SpotChecksService implements OnModuleInit {
       qb.andWhere('sc.date <= :dateTo', { dateTo: query.dateTo });
     }
 
+    // Exclude heavy columns (attachments with multi-MB base64 images, polygon maps, signature canvases)
+    // from list/dashboard queries to keep response sizes ~14KB instead of 60MB+
+    qb.select([
+      'sc.id',
+      'sc.spotCheckRef',
+      'sc.workPackage',
+      'sc.date',
+      'sc.time',
+      'sc.buildingId',
+      'sc.buildingName',
+      'sc.floorLevel',
+      'sc.location',
+      'sc.selectedRooms',
+      'sc.weather',
+      'sc.activityName',
+      'sc.companyInvolved',
+      'sc.permitId',
+      'sc.ramsId',
+      'sc.highRiskActivities',
+      'sc.ifHotWork',
+      'sc.chk1_2',
+      'sc.chk1_3',
+      'sc.chk1_4',
+      'sc.chk1_5',
+      'sc.chk1_6',
+      'sc.chk1_7',
+      'sc.chk1_8',
+      'sc.chk2_1',
+      'sc.briefingDate',
+      'sc.briefingTime',
+      'sc.conductedBy',
+      'sc.participants',
+      'sc.keyTopics',
+      'sc.otherTopic',
+      'sc.chk2_1_5',
+      'sc.explainNoBriefing',
+      'sc.chk3_2',
+      'sc.safetyIssueCreated',
+      'sc.safetyIssueRef',
+      'sc.findings',
+      'sc.correctiveActions',
+      'sc.foremanName',
+      'sc.foremanCompany',
+      'sc.foremanDate',
+      'sc.inspectorName',
+      'sc.inspectorCompany',
+      'sc.inspectorDate',
+      'sc.status',
+      'sc.createdByUserId',
+      'sc.createdByUserName',
+      'sc.createdByRole',
+      'sc.createdTime',
+      'sc.updatedTime',
+    ]);
+
     qb.orderBy('sc.created_time', 'DESC')
       .skip(skip)
       .take(limit);
